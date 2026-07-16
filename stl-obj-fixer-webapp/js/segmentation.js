@@ -248,9 +248,8 @@
       return a;
     }
 
-    // Classifica gli spigoli manifold: le pieghe concave marcate diventano
-    // confini; tutto il resto (piatto o convesso) unisce le regioni.
-    const creaseEdges = []; // [f1, f2, dotNormali]
+    // Raccogli tutti gli spigoli manifold con angolo diedro e concavita'.
+    const eF1 = [], eF2 = [], eDot = [], eConcave = [];
     edgeMap.forEach((occ) => {
       if (occ.length !== 2) return;
       const f1 = occ[0].face, f2 = occ[1].face;
@@ -263,13 +262,44 @@
       const sy = centroids[f2 * 3 + 1] - centroids[f1 * 3 + 1];
       const sz = centroids[f2 * 3 + 2] - centroids[f1 * 3 + 2];
       const side = normals[f1 * 3] * sx + normals[f1 * 3 + 1] * sy + normals[f1 * 3 + 2] * sz;
-      const isConcaveCrease = side > 1e-12 && dot < creaseCos;
-      if (isConcaveCrease) {
-        creaseEdges.push([f1, f2, dot]);
-      } else {
-        union(f1, f2);
-      }
+      eF1.push(f1); eF2.push(f2); eDot.push(dot);
+      eConcave.push(side > 1e-12 ? 1 : 0);
     });
+
+    // Soglia ADATTIVA: su una mesh densa e levigata (tipica dei generatori
+    // IA) i solchi sono arrotondati su tante piccole pieghe, ognuna ben
+    // sotto una soglia fissa "da spigolo netto". La soglia viene quindi
+    // calcolata dalla distribuzione degli angoli concavi del modello stesso
+    // (75° percentile, ridotto del 10%), limitata tra 5° e creaseAngleDeg:
+    // su una mesh spigolosa resta alta, su una mesh densa scende quanto
+    // basta per agganciare le "valli" reali; il rumore in eccesso viene poi
+    // riassorbito dalle fusioni successive.
+    let creaseDotThreshold = creaseCos;
+    {
+      const concaveAngles = [];
+      for (let i = 0; i < eDot.length; i++) {
+        if (eConcave[i]) concaveAngles.push(Math.acos(eDot[i]));
+      }
+      if (concaveAngles.length > 0) {
+        concaveAngles.sort((a, b) => a - b);
+        const p75 = concaveAngles[Math.min(concaveAngles.length - 1, Math.floor(concaveAngles.length * 0.75))];
+        const minAngle = (5 * Math.PI) / 180;
+        const maxAngle = (creaseAngleDeg * Math.PI) / 180;
+        const adaptive = Math.min(maxAngle, Math.max(minAngle, p75 * 0.9));
+        creaseDotThreshold = Math.cos(adaptive);
+      }
+    }
+
+    // Classifica: le pieghe concave sopra soglia diventano confini; tutto il
+    // resto (piatto o convesso) unisce le regioni.
+    const creaseEdges = []; // [f1, f2, dotNormali]
+    for (let i = 0; i < eF1.length; i++) {
+      if (eConcave[i] && eDot[i] < creaseDotThreshold) {
+        creaseEdges.push([eF1[i], eF2[i], eDot[i]]);
+      } else {
+        union(eF1[i], eF2[i]);
+      }
+    }
 
     function computeSizes() {
       const sizes = new Map();
@@ -284,7 +314,9 @@
 
     // Assorbi i frammenti piccoli nel vicino (via pieghe) con cui condividono
     // piu' spigoli: sono rumore di tassellazione, non parti stampabili.
-    for (let pass = 0; pass < 4; pass++) {
+    // Con la soglia adattiva bassa le regioni iniziali possono essere molte:
+    // servono piu' passate perche' le catene di fusioni convergano.
+    for (let pass = 0; pass < 8; pass++) {
       const sizes = computeSizes();
       const neighborCount = new Map(); // rootPiccolo -> Map(rootVicino -> nSpigoli)
       for (const [f1, f2] of creaseEdges) {
