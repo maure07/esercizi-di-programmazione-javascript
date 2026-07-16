@@ -77,3 +77,6 @@
   * La mia rubrica
 * **Difficili**
   * Il carcere di Gotham City
+
+## Altri progetti in questo repository
+* [`stl-obj-fixer-webapp/`](./stl-obj-fixer-webapp/) — web app da telefono per riparare, solidificare e segmentare automaticamente modelli STL/OBJ per la stampa 3D multi-parte (vedi il README della cartella per l'uso).
