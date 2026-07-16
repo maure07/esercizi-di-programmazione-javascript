@@ -229,7 +229,27 @@
           list.push(triList[i]); // indice GLOBALE originale
         }
         const compEntries = [...byComp.values()].sort((a, b) => b.length - a.length);
+
+        // Su mesh reali con difetti di topologia (geometria duplicata,
+        // cuciture non saldate) lo split per componenti connesse puo'
+        // generare centinaia di "isolette" di pochi triangoli che non sono
+        // parti vere, solo rumore. Le componenti troppo piccole rispetto al
+        // gruppo (soglia relativa, cosi' funziona sia su mesh semplici che
+        // su mesh da centinaia di migliaia di triangoli) vengono riassorbite
+        // nella componente principale invece di diventare una parte a se'.
+        const minComponentSize = Math.max(3, Math.ceil(triList.length * 0.02));
+        const kept = [];
+        let absorbed = [];
         compEntries.forEach((subTriList, i) => {
+          if (i === 0 || subTriList.length >= minComponentSize) {
+            kept.push(subTriList);
+          } else {
+            absorbed = absorbed.concat(subTriList);
+          }
+        });
+        if (absorbed.length > 0) kept[0] = kept[0].concat(absorbed);
+
+        kept.forEach((subTriList, i) => {
           const finalName = i === 0 ? label : `${label} (${i + 1})`;
           groups.set(finalName, { triangles: subTriList, color });
         });
