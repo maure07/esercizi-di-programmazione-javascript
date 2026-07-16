@@ -149,6 +149,51 @@
   }
 
   // ---------------------------------------------------------------------
+  // Voto di maggioranza tra triangoli adiacenti: ripulisce le etichette
+  // "sale e pepe" isolate (un triangolo con colore diverso da TUTTI i
+  // vicini) che compaiono ai bordi tra due zone su texture rumorose.
+  // Un vero confine resta stabile (i vicini sono divisi ~a meta'), solo i
+  // triangoli davvero isolati vengono riassegnati.
+  // ---------------------------------------------------------------------
+  function smoothLabelsMajority(labels, indices, iterations) {
+    iterations = iterations === undefined ? 2 : iterations;
+    const nTris = indices.length / 3;
+    const edgeMap = MeshCore.buildEdgeMap(indices);
+    const adjacency = Array.from({ length: nTris }, () => []);
+    edgeMap.forEach((occurrences) => {
+      if (occurrences.length < 2) return;
+      for (let i = 0; i < occurrences.length; i++) {
+        for (let j = i + 1; j < occurrences.length; j++) {
+          adjacency[occurrences[i].face].push(occurrences[j].face);
+          adjacency[occurrences[j].face].push(occurrences[i].face);
+        }
+      }
+    });
+
+    let current = labels.slice();
+    for (let iter = 0; iter < iterations; iter++) {
+      const next = current.slice();
+      let changedAny = false;
+      for (let t = 0; t < nTris; t++) {
+        const neigh = adjacency[t];
+        if (neigh.length === 0) continue;
+        const counts = new Map();
+        for (const nb of neigh) counts.set(current[nb], (counts.get(current[nb]) || 0) + 1);
+        let bestLabel = current[t];
+        let bestCount = counts.get(current[t]) || 0;
+        counts.forEach((cnt, l) => { if (cnt > bestCount) { bestCount = cnt; bestLabel = l; } });
+        if (bestLabel !== current[t] && bestCount > neigh.length / 2) {
+          next[t] = bestLabel;
+          changedAny = true;
+        }
+      }
+      current = next;
+      if (!changedAny) break;
+    }
+    return current;
+  }
+
+  // ---------------------------------------------------------------------
   // Pipeline completa: dati grezzi parser -> lista di parti riparate.
   // options: { weldEpsilon, colorThreshold, repairOptions }
   // ---------------------------------------------------------------------
@@ -160,14 +205,34 @@
     const { positions, indices } = MeshCore.weldVertices(parsed.rawPositions, weldEpsilon);
     const nTris = indices.length / 3;
 
-    const { labels, labelColors, mode } = Segmentation.buildTriangleLabels(parsed, options);
+    let { labels, labelColors, mode } = Segmentation.buildTriangleLabels(parsed, options);
 
     let groups; // Map name -> {triangles:[...], color:[r,g,b]}
     if (labels) {
+      const smoothIterations = options.labelSmoothIterations === undefined ? 2 : options.labelSmoothIterations;
+      if (smoothIterations > 0) labels = smoothLabelsMajority(labels, indices, smoothIterations);
+
       groups = new Map();
       const byLabel = groupByLabel(labels);
       byLabel.forEach((triList, label) => {
-        groups.set(label, { triangles: triList, color: labelColors.get(label) || [0.8, 0.8, 0.8] });
+        const color = labelColors.get(label) || [0.8, 0.8, 0.8];
+        // ulteriore split per componenti connesse: stesso colore/materiale
+        // ma zone fisicamente separate (es. cappello nero + stivali neri)
+        // diventano parti distinte invece di un unico file "che porta tutto".
+        const sub = MeshCore.extractSubMesh(positions, indices, triList);
+        const localComp = MeshCore.connectedComponents(sub.indices);
+        const byComp = new Map();
+        for (let i = 0; i < triList.length; i++) {
+          const cid = localComp.faceComponentId[i];
+          let list = byComp.get(cid);
+          if (!list) { list = []; byComp.set(cid, list); }
+          list.push(triList[i]); // indice GLOBALE originale
+        }
+        const compEntries = [...byComp.values()].sort((a, b) => b.length - a.length);
+        compEntries.forEach((subTriList, i) => {
+          const finalName = i === 0 ? label : `${label} (${i + 1})`;
+          groups.set(finalName, { triangles: subTriList, color });
+        });
       });
     } else {
       const comp = MeshCore.connectedComponents(indices);
