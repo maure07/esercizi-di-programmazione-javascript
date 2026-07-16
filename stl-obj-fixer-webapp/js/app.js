@@ -17,6 +17,10 @@
     colorThreshold: document.getElementById('colorThreshold'),
     thresholdValue: document.getElementById('thresholdValue'),
     resegmentBtn: document.getElementById('resegmentBtn'),
+    scaleRow: document.getElementById('scaleRow'),
+    scaleHeight: document.getElementById('scaleHeight'),
+    scaleApplyBtn: document.getElementById('scaleApplyBtn'),
+    scaleHint: document.getElementById('scaleHint'),
     logTitle: document.getElementById('logTitle'),
     log: document.getElementById('log'),
     partsTitle: document.getElementById('partsTitle'),
@@ -29,6 +33,7 @@
 
   let currentParsed = null; // dati grezzi dell'ultimo modello caricato
   let currentResult = null; // { parts, mode, warnings }
+  let currentScaleFactor = 1; // fattore di scala applicato (persiste tra un ricalcolo e l'altro)
 
   function setLoading(visible, text) {
     el.loadingOverlay.classList.toggle('visible', visible);
@@ -48,12 +53,15 @@
     el.fileInput.value = '';
   });
 
+  const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp'];
+
   async function handleFiles(files) {
     setLoading(true, 'Lettura del file…');
     try {
       const stlFile = files.find((f) => ext(f.name) === 'stl');
       const objFile = files.find((f) => ext(f.name) === 'obj');
       const mtlFile = files.find((f) => ext(f.name) === 'mtl');
+      const imageFiles = files.filter((f) => IMAGE_EXTENSIONS.includes(ext(f.name)));
 
       let parsed;
       if (objFile) {
@@ -76,7 +84,31 @@
         return;
       }
 
+      if (parsed.hasTextureInfo && imageFiles.length > 0) {
+        setLoading(true, 'Lettura colori dalla texture…');
+        await new Promise((r) => setTimeout(r, 30));
+        try {
+          const imageData = await TextureSampler.decodeImageFile(imageFiles[0]);
+          const nTris = parsed.rawPositions.length / 9;
+          const sampled = TextureSampler.sampleTriangleColors(imageData, parsed.rawUV, nTris);
+          parsed.rawColors = sampled;
+          parsed.hasColorInfo = true;
+          // la texture da' un segnale di colore per-triangolo molto piu' utile
+          // di un singolo materiale piatto condiviso da tutta la mesh: se i
+          // materiali distinti sono <= 1 (caso tipico dei modelli IA con
+          // texture unica), diamo priorita' al colore campionato.
+          if (parsed.materialCount <= 1) {
+            parsed.hasMaterialInfo = false;
+          }
+          parsed.textureApplied = true;
+        } catch (err) {
+          console.error(err);
+          parsed.textureError = err.message;
+        }
+      }
+
       currentParsed = parsed;
+      currentScaleFactor = 1; // nuovo file: riparti dalla scala nativa del file
       const nTris = parsed.rawPositions.length / 9;
       if (nTris > 400000) {
         el.loadingText.textContent = `Modello grande (${nTris.toLocaleString('it-IT')} triangoli): potrebbe volerci un minuto…`;
@@ -108,9 +140,31 @@
       setLoading(false);
       return;
     }
+    // Segmentation.buildParts riparte sempre dai dati grezzi non scalati:
+    // se l'utente aveva gia' impostato una scala, la riapplichiamo qui.
+    if (currentScaleFactor !== 1) scaleAllParts(result.parts, currentScaleFactor);
     currentResult = result;
     renderResult(result);
     setLoading(false);
+  }
+
+  function computeOverallMaxDimension(parts) {
+    const min = [Infinity, Infinity, Infinity];
+    const max = [-Infinity, -Infinity, -Infinity];
+    parts.forEach((p) => {
+      for (let k = 0; k < 3; k++) {
+        if (p.stats.bboxMin[k] < min[k]) min[k] = p.stats.bboxMin[k];
+        if (p.stats.bboxMax[k] > max[k]) max[k] = p.stats.bboxMax[k];
+      }
+    });
+    return Math.max(max[0] - min[0], max[1] - min[1], max[2] - min[2]);
+  }
+
+  function scaleAllParts(parts, factor) {
+    parts.forEach((part) => {
+      for (let i = 0; i < part.positions.length; i++) part.positions[i] *= factor;
+      part.stats = MeshCore.computeStats(part.positions, part.indices);
+    });
   }
 
   el.colorThreshold.addEventListener('input', () => {
@@ -118,6 +172,21 @@
   });
   el.resegmentBtn.addEventListener('click', () => { runSegmentation(); });
   el.frameBtn.addEventListener('click', () => viewer.frameAll());
+
+  el.scaleApplyBtn.addEventListener('click', () => {
+    if (!currentResult || currentResult.parts.length === 0) return;
+    const targetCm = parseFloat(el.scaleHeight.value);
+    if (!targetCm || targetCm <= 0) {
+      alert('Inserisci un\'altezza valida in centimetri (es. 15).');
+      return;
+    }
+    const currentMaxMm = computeOverallMaxDimension(currentResult.parts);
+    if (!(currentMaxMm > 0)) return;
+    const incrementalFactor = (targetCm * 10) / currentMaxMm;
+    scaleAllParts(currentResult.parts, incrementalFactor);
+    currentScaleFactor *= incrementalFactor;
+    renderResult(currentResult);
+  });
 
   function fmt(n, digits) {
     return n.toLocaleString('it-IT', { maximumFractionDigits: digits === undefined ? 1 : digits });
@@ -128,9 +197,16 @@
     el.viewerHint.style.display = '';
     el.frameBtn.style.display = '';
     el.controlsRow.style.display = result.mode === 'color-cluster' ? 'flex' : 'none';
+    el.scaleRow.style.display = result.parts.length > 0 ? 'flex' : 'none';
     el.logTitle.style.display = '';
     el.partsTitle.style.display = '';
     el.exportRow.style.display = 'flex';
+
+    if (result.parts.length > 0) {
+      const maxMm = computeOverallMaxDimension(result.parts);
+      el.scaleHint.style.display = '';
+      el.scaleHint.textContent = `Dimensione massima rilevata: ${fmt(maxMm, 0)} mm. Se non corrisponde alla realtà, inserisci l'altezza vera sopra e tocca "Applica scala".`;
+    }
 
     viewer.clearParts();
     el.partsList.innerHTML = '';
@@ -158,6 +234,26 @@
       box.textContent = '⚠️ ' + w;
       el.warnings.appendChild(box);
     });
+
+    if (currentParsed && currentParsed.textureError) {
+      const box = document.createElement('div');
+      box.className = 'warning-box';
+      box.textContent = '⚠️ Non sono riuscito a leggere la texture: ' + currentParsed.textureError;
+      el.warnings.appendChild(box);
+    } else if (currentParsed && currentParsed.hasTextureInfo && !currentParsed.textureApplied) {
+      const box = document.createElement('div');
+      box.className = 'warning-box';
+      box.textContent = '💡 Questo modello ha una texture (mappa UV) ma non hai selezionato il file immagine insieme a .obj e .mtl: caricali di nuovo tutti e tre insieme per segmentare per colore.';
+      el.warnings.appendChild(box);
+    } else if (currentParsed && currentParsed.textureApplied) {
+      const box = document.createElement('div');
+      box.className = 'warning-box';
+      box.style.background = 'rgba(63,208,138,0.12)';
+      box.style.borderColor = 'rgba(63,208,138,0.4)';
+      box.style.color = '#6be3ac';
+      box.textContent = '✔ Colori letti dalla texture del modello.';
+      el.warnings.appendChild(box);
+    }
 
     el.partsTitle.textContent = `Parti rilevate (${result.parts.length})`;
 

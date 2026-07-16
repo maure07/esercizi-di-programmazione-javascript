@@ -79,7 +79,7 @@
   // MTL (materiali OBJ)
   // ---------------------------------------------------------------------
   Parsers.parseMTL = function (text) {
-    const materials = new Map(); // name -> {r,g,b}
+    const materials = new Map(); // name -> {r,g,b,mapKd}
     let current = null;
     const lines = text.split('\n');
     for (let raw of lines) {
@@ -89,14 +89,20 @@
       const key = parts[0].toLowerCase();
       if (key === 'newmtl') {
         current = parts.slice(1).join(' ');
-        materials.set(current, { r: 0.8, g: 0.8, b: 0.8 });
+        materials.set(current, { r: 0.8, g: 0.8, b: 0.8, mapKd: null });
       } else if (key === 'kd' && current) {
         const r = parseFloat(parts[1]);
         const g = parseFloat(parts[2]);
         const b = parseFloat(parts[3]);
         if (!Number.isNaN(r) && !Number.isNaN(g) && !Number.isNaN(b)) {
-          materials.set(current, { r, g, b });
+          const m = materials.get(current);
+          m.r = r; m.g = g; m.b = b;
         }
+      } else if (key === 'map_kd' && current) {
+        // il nome file puo' contenere spazi/opzioni; prendiamo l'ultimo token
+        // come nome file (caso comune, niente opzioni -o/-s ecc.)
+        const fileName = parts[parts.length - 1];
+        materials.get(current).mapKd = fileName;
       }
     }
     return materials;
@@ -109,12 +115,17 @@
   Parsers.parseOBJ = function (text, materialsMap) {
     materialsMap = materialsMap || new Map();
     const v = []; // vertici [x,y,z]
+    const vt = []; // coordinate texture [u,v]
     const vColor = []; // colore per-vertice opzionale [r,g,b] o null per indice
     let anyVertexColor = false;
 
     const rawPositions = [];
     const rawColors = [];
     const rawGroupName = [];
+    const rawUV = []; // centroide UV per triangolo [u,v, u,v, ...]
+    const rawTextureFile = []; // nome file texture per triangolo (o null)
+    let anyUV = false;
+    let anyTexture = false;
     let materialNamesUsed = new Set();
 
     let currentMaterial = null;
@@ -136,18 +147,26 @@
         } else {
           vColor.push(null);
         }
+      } else if (key === 'vt') {
+        const nums = rest.split(/\s+/).map(Number);
+        vt.push([nums[0], nums[1]]);
       } else if (key === 'usemtl') {
         currentMaterial = rest;
         materialNamesUsed.add(currentMaterial);
       } else if (key === 'f') {
         // formati supportati: "v", "v/vt", "v/vt/vn", "v//vn"
         const tokens = rest.split(/\s+/).filter(Boolean).map((tok) => {
-          const vi = parseInt(tok.split('/')[0], 10);
-          return vi < 0 ? v.length + vi : vi - 1; // supporta indici negativi (relativi)
+          const parts = tok.split('/');
+          const vi = parseInt(parts[0], 10);
+          const vtiRaw = parts.length > 1 && parts[1] !== '' ? parseInt(parts[1], 10) : null;
+          const vIdx = vi < 0 ? v.length + vi : vi - 1;
+          const vtIdx = vtiRaw === null ? null : (vtiRaw < 0 ? vt.length + vtiRaw : vtiRaw - 1);
+          return { vIdx, vtIdx };
         });
         // fan-triangulation per facce con piu' di 3 vertici
         for (let k = 1; k < tokens.length - 1; k++) {
-          const triIdx = [tokens[0], tokens[k], tokens[k + 1]];
+          const triTok = [tokens[0], tokens[k], tokens[k + 1]];
+          const triIdx = triTok.map((t) => t.vIdx);
           for (const vi of triIdx) {
             const p = v[vi];
             if (!p) { rawPositions.push(0, 0, 0); continue; }
@@ -172,20 +191,46 @@
             rawColors.push(0.8, 0.8, 0.8);
           }
           rawGroupName.push(currentMaterial || null);
+
+          // centroide UV del triangolo (media dei 3 angoli), per il campionamento texture
+          let uSum = 0, vSum = 0, nUV = 0;
+          for (const t of triTok) {
+            if (t.vtIdx !== null && vt[t.vtIdx]) {
+              uSum += vt[t.vtIdx][0];
+              vSum += vt[t.vtIdx][1];
+              nUV++;
+            }
+          }
+          if (nUV === 3) {
+            rawUV.push(uSum / 3, vSum / 3);
+            anyUV = true;
+          } else {
+            rawUV.push(0, 0);
+          }
+
+          const mat = currentMaterial ? materialsMap.get(currentMaterial) : null;
+          const texFile = mat && mat.mapKd ? mat.mapKd : null;
+          rawTextureFile.push(texFile);
+          if (texFile) anyTexture = true;
         }
       }
     }
 
-    const hasMaterialInfo = materialNamesUsed.size > 0 && [...materialNamesUsed].some((n) => materialsMap.has(n));
-    const hasColorInfo = hasMaterialInfo || anyVertexColor;
+    const distinctMaterialCount = materialNamesUsed.size;
+    const hasMaterialInfo = distinctMaterialCount > 0 && [...materialNamesUsed].some((n) => materialsMap.has(n));
+    const hasTextureInfo = anyUV && anyTexture;
+    const hasColorInfo = hasMaterialInfo || anyVertexColor || hasTextureInfo;
 
     return {
       rawPositions: Float64Array.from(rawPositions),
       rawColors: hasColorInfo ? Float32Array.from(rawColors) : null,
       rawGroupName: hasMaterialInfo ? rawGroupName : null,
+      rawUV: hasTextureInfo ? Float32Array.from(rawUV) : null,
+      rawTextureFile: hasTextureInfo ? rawTextureFile : null,
       hasColorInfo,
       hasMaterialInfo,
-      materialCount: materialNamesUsed.size,
+      hasTextureInfo,
+      materialCount: distinctMaterialCount,
     };
   };
 
