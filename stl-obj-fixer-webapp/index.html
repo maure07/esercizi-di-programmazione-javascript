@@ -144,6 +144,27 @@
     font-size: 12px;
   }
 
+  #methodRow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--panel2);
+    border-radius: 10px;
+    padding: 8px 10px;
+    margin-bottom: 10px;
+  }
+  #methodRow label { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
+  #segMethod {
+    flex: 1;
+    min-width: 0;
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px;
+    font-size: 13px;
+  }
+
   #scaleRow {
     display: flex;
     align-items: center;
@@ -296,8 +317,16 @@
 <div id="sheet">
   <div id="warnings"></div>
 
+  <div id="methodRow" style="display:none">
+    <label for="segMethod">Dividi per</label>
+    <select id="segMethod">
+      <option value="color">Colore (texture/materiale)</option>
+      <option value="geometry">Forma (solo geometria)</option>
+    </select>
+  </div>
+
   <div id="controlsRow" style="display:none">
-    <label for="colorParts">N. parti per colore</label>
+    <label for="colorParts">N. parti (max)</label>
     <input type="range" id="colorParts" min="2" max="20" value="8" />
     <span id="colorPartsValue">8</span>
     <button id="resegmentBtn">Ricalcola</button>

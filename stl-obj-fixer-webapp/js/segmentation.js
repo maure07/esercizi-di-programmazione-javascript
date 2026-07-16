@@ -194,8 +194,202 @@
   }
 
   // ---------------------------------------------------------------------
+  // Segmentazione geometrica ("per forma"): ignora colori e texture.
+  // Fa crescere le regioni unendo i triangoli attraverso gli spigoli piatti
+  // o convessi e si ferma alle pieghe CONCAVE marcate (angolo diedro sopra
+  // soglia): sono le "valli" dove tipicamente un pezzo incontra l'altro
+  // (cappello->testa, collo->busto). Le regioni vengono poi consolidate:
+  // i frammenti minuscoli assorbiti, e fusioni progressive lungo le pieghe
+  // piu' deboli fino a scendere al numero massimo di parti richiesto.
+  // ---------------------------------------------------------------------
+  Segmentation.segmentByGeometry = function (positions, indices, targetParts, options) {
+    options = options || {};
+    const creaseAngleDeg = options.creaseAngleDeg === undefined ? 35 : options.creaseAngleDeg;
+    const creaseCos = Math.cos((creaseAngleDeg * Math.PI) / 180);
+    const nTris = indices.length / 3;
+    targetParts = Math.max(1, targetParts || 8);
+    if (nTris === 0) return { labelIds: new Int32Array(0), regionCount: 0 };
+
+    // Winding coerente e normali verso l'esterno: senza questo passaggio la
+    // distinzione concavo/convesso sarebbe casuale su mesh mal orientate.
+    const idx = Uint32Array.from(indices);
+    let edgeMap = MeshCore.buildEdgeMap(idx);
+    MeshCore.fixWindingConsistency(idx, edgeMap);
+    edgeMap = MeshCore.buildEdgeMap(idx);
+    const comp = MeshCore.connectedComponents(idx, edgeMap);
+    MeshCore.orientOutward(positions, idx, comp.faceComponentId, comp.componentCount);
+
+    const normals = new Float64Array(nTris * 3);
+    const centroids = new Float64Array(nTris * 3);
+    for (let t = 0; t < nTris; t++) {
+      const a = idx[t * 3], b = idx[t * 3 + 1], c = idx[t * 3 + 2];
+      const ax = positions[a * 3], ay = positions[a * 3 + 1], az = positions[a * 3 + 2];
+      const bx = positions[b * 3], by = positions[b * 3 + 1], bz = positions[b * 3 + 2];
+      const cx = positions[c * 3], cy = positions[c * 3 + 1], cz = positions[c * 3 + 2];
+      let nx = (by - ay) * (cz - az) - (bz - az) * (cy - ay);
+      let ny = (bz - az) * (cx - ax) - (bx - ax) * (cz - az);
+      let nz = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+      const len = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+      normals[t * 3] = nx / len; normals[t * 3 + 1] = ny / len; normals[t * 3 + 2] = nz / len;
+      centroids[t * 3] = (ax + bx + cx) / 3;
+      centroids[t * 3 + 1] = (ay + by + cy) / 3;
+      centroids[t * 3 + 2] = (az + bz + cz) / 3;
+    }
+
+    const parent = new Int32Array(nTris);
+    for (let i = 0; i < nTris; i++) parent[i] = i;
+    function find(x) {
+      while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+      return x;
+    }
+    function union(a, b) {
+      a = find(a); b = find(b);
+      if (a !== b) parent[b] = a;
+      return a;
+    }
+
+    // Classifica gli spigoli manifold: le pieghe concave marcate diventano
+    // confini; tutto il resto (piatto o convesso) unisce le regioni.
+    const creaseEdges = []; // [f1, f2, dotNormali]
+    edgeMap.forEach((occ) => {
+      if (occ.length !== 2) return;
+      const f1 = occ[0].face, f2 = occ[1].face;
+      if (f1 === f2) return;
+      let dot = normals[f1 * 3] * normals[f2 * 3]
+        + normals[f1 * 3 + 1] * normals[f2 * 3 + 1]
+        + normals[f1 * 3 + 2] * normals[f2 * 3 + 2];
+      if (dot > 1) dot = 1; else if (dot < -1) dot = -1;
+      const sx = centroids[f2 * 3] - centroids[f1 * 3];
+      const sy = centroids[f2 * 3 + 1] - centroids[f1 * 3 + 1];
+      const sz = centroids[f2 * 3 + 2] - centroids[f1 * 3 + 2];
+      const side = normals[f1 * 3] * sx + normals[f1 * 3 + 1] * sy + normals[f1 * 3 + 2] * sz;
+      const isConcaveCrease = side > 1e-12 && dot < creaseCos;
+      if (isConcaveCrease) {
+        creaseEdges.push([f1, f2, dot]);
+      } else {
+        union(f1, f2);
+      }
+    });
+
+    function computeSizes() {
+      const sizes = new Map();
+      for (let t = 0; t < nTris; t++) {
+        const r = find(t);
+        sizes.set(r, (sizes.get(r) || 0) + 1);
+      }
+      return sizes;
+    }
+
+    const minSize = Math.max(3, Math.ceil(nTris * 0.002));
+
+    // Assorbi i frammenti piccoli nel vicino (via pieghe) con cui condividono
+    // piu' spigoli: sono rumore di tassellazione, non parti stampabili.
+    for (let pass = 0; pass < 4; pass++) {
+      const sizes = computeSizes();
+      const neighborCount = new Map(); // rootPiccolo -> Map(rootVicino -> nSpigoli)
+      for (const [f1, f2] of creaseEdges) {
+        const r1 = find(f1), r2 = find(f2);
+        if (r1 === r2) continue;
+        if (sizes.get(r1) < minSize) {
+          let m = neighborCount.get(r1);
+          if (!m) { m = new Map(); neighborCount.set(r1, m); }
+          m.set(r2, (m.get(r2) || 0) + 1);
+        }
+        if (sizes.get(r2) < minSize) {
+          let m = neighborCount.get(r2);
+          if (!m) { m = new Map(); neighborCount.set(r2, m); }
+          m.set(r1, (m.get(r1) || 0) + 1);
+        }
+      }
+      let changed = false;
+      neighborCount.forEach((neighMap, smallRoot) => {
+        if (find(smallRoot) !== smallRoot) return; // gia' fuso in questa passata
+        let best = -1, bestCount = -1;
+        neighMap.forEach((cnt, other) => {
+          if (cnt > bestCount) { bestCount = cnt; best = other; }
+        });
+        if (best !== -1) { union(find(best), smallRoot); changed = true; }
+      });
+      if (!changed) break;
+    }
+
+    // Frammenti piccoli SENZA vicini via pieghe (isole sconnesse, geometria
+    // duplicata): assegnali alla regione grande piu' vicina nello spazio.
+    {
+      const sizes = computeSizes();
+      const bigRoots = [];
+      sizes.forEach((size, root) => { if (size >= minSize) bigRoots.push(root); });
+      if (bigRoots.length === 0) {
+        let largest = -1, largestSize = -1;
+        sizes.forEach((size, root) => { if (size > largestSize) { largestSize = size; largest = root; } });
+        if (largest !== -1) bigRoots.push(largest);
+      }
+      const centroidSum = new Map(); // root -> [x,y,z,n]
+      for (let t = 0; t < nTris; t++) {
+        const r = find(t);
+        let s = centroidSum.get(r);
+        if (!s) { s = [0, 0, 0, 0]; centroidSum.set(r, s); }
+        s[0] += centroids[t * 3]; s[1] += centroids[t * 3 + 1]; s[2] += centroids[t * 3 + 2]; s[3]++;
+      }
+      const bigCentroids = bigRoots.map((r) => {
+        const s = centroidSum.get(r);
+        return [s[0] / s[3], s[1] / s[3], s[2] / s[3], r];
+      });
+      sizes.forEach((size, root) => {
+        if (size >= minSize || find(root) !== root) return;
+        if (bigRoots.length === 1 && bigRoots[0] === root) return;
+        const s = centroidSum.get(root);
+        const cx = s[0] / s[3], cy = s[1] / s[3], cz = s[2] / s[3];
+        let best = -1, bestDist = Infinity;
+        for (const [bx, by, bz, br] of bigCentroids) {
+          if (br === root) continue;
+          const d = (bx - cx) ** 2 + (by - cy) ** 2 + (bz - cz) ** 2;
+          if (d < bestDist) { bestDist = d; best = br; }
+        }
+        if (best !== -1) union(find(best), root);
+      });
+    }
+
+    // Fusioni progressive lungo le pieghe piu' DEBOLI (angolo minore) finche'
+    // le regioni non scendono al numero massimo richiesto: restano cosi' solo
+    // i confini piu' marcati (es. il solco cappello-testa).
+    {
+      const pairAgg = new Map(); // "rMin_rMax" -> {r1, r2, sumDot, n}
+      for (const [f1, f2, dot] of creaseEdges) {
+        const r1 = find(f1), r2 = find(f2);
+        if (r1 === r2) continue;
+        const key = r1 < r2 ? r1 + '_' + r2 : r2 + '_' + r1;
+        let e = pairAgg.get(key);
+        if (!e) { e = { r1, r2, sumDot: 0, n: 0 }; pairAgg.set(key, e); }
+        e.sumDot += dot; e.n++;
+      }
+      const pairs = [...pairAgg.values()];
+      // dot alto = piega debole (quasi piatta) -> fondere per prima
+      pairs.sort((a, b) => (b.sumDot / b.n) - (a.sumDot / a.n));
+      let regionCount = computeSizes().size;
+      for (const p of pairs) {
+        if (regionCount <= targetParts) break;
+        const r1 = find(p.r1), r2 = find(p.r2);
+        if (r1 === r2) continue;
+        union(r1, r2);
+        regionCount--;
+      }
+    }
+
+    // Etichette finali: id sequenziali ordinati per dimensione decrescente
+    const finalSizes = computeSizes();
+    const roots = [...finalSizes.entries()].sort((a, b) => b[1] - a[1]).map((e) => e[0]);
+    const rootToId = new Map();
+    roots.forEach((r, i) => rootToId.set(r, i));
+    const labelIds = new Int32Array(nTris);
+    for (let t = 0; t < nTris; t++) labelIds[t] = rootToId.get(find(t));
+
+    return { labelIds, regionCount: roots.length };
+  };
+
+  // ---------------------------------------------------------------------
   // Pipeline completa: dati grezzi parser -> lista di parti riparate.
-  // options: { weldEpsilon, colorThreshold, repairOptions }
+  // options: { weldEpsilon, colorParts, segmentMode ('auto'|'geometry'), repairOptions }
   // ---------------------------------------------------------------------
   Segmentation.buildParts = function (parsed, options) {
     options = options || {};
@@ -204,6 +398,32 @@
 
     const { positions, indices } = MeshCore.weldVertices(parsed.rawPositions, weldEpsilon);
     const nTris = indices.length / 3;
+
+    const segmentMode = options.segmentMode || 'auto';
+
+    // costruisce i gruppi con la segmentazione geometrica (per forma)
+    function buildGeometryGroups() {
+      const target = options.colorParts === undefined ? 8 : options.colorParts;
+      const geo = Segmentation.segmentByGeometry(positions, indices, target, options.geometryOptions);
+      const byRegion = new Map();
+      for (let t = 0; t < nTris; t++) {
+        const id = geo.labelIds[t];
+        let list = byRegion.get(id);
+        if (!list) { list = []; byRegion.set(id, list); }
+        list.push(t);
+      }
+      const entries = [...byRegion.entries()].sort((a, b) => b[1].length - a[1].length);
+      const g = new Map();
+      entries.forEach(([, triList], i) => {
+        g.set('Parte ' + (i + 1), { triangles: triList, color: FALLBACK_PALETTE[i % FALLBACK_PALETTE.length] });
+      });
+      return g;
+    }
+
+    if (segmentMode === 'geometry') {
+      const groups = buildGeometryGroups();
+      return finalizeParts(groups, 'geometry', warnings, positions, indices, options);
+    }
 
     let { labels, labelColors, mode } = Segmentation.buildTriangleLabels(parsed, options);
 
@@ -270,10 +490,22 @@
         i++;
       });
       if (byComp.size <= 1) {
+        // niente colori e blocco unico fuso: prova la segmentazione per forma
+        const geoGroups = buildGeometryGroups();
+        if (geoGroups.size > 1) {
+          warnings.push('Nessuna informazione di colore: il modello è stato diviso lungo le pieghe della forma (metodo "Forma").');
+          return finalizeParts(geoGroups, 'geometry', warnings, positions, indices, options);
+        }
         warnings.push('Nessuna informazione di colore/materiale e nessuna componente separata trovata: il modello è un unico blocco fuso e non può essere segmentato automaticamente. Serve una versione colorata del modello oppure un taglio manuale.');
       }
     }
 
+    return finalizeParts(groups, mode, warnings, positions, indices, options);
+  };
+
+  // Estrazione, riparazione e ordinamento finale delle parti a partire dai
+  // gruppi di triangoli (comune a tutte le modalita' di segmentazione).
+  function finalizeParts(groups, mode, warnings, positions, indices, options) {
     const parts = [];
     let idx = 0;
     groups.forEach((group, name) => {
@@ -298,7 +530,7 @@
     parts.sort((a, b) => b.stats.volume - a.stats.volume);
 
     return { parts, mode, warnings };
-  };
+  }
 
   return Segmentation;
 });

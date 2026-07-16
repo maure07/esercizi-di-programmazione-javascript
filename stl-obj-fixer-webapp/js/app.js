@@ -13,6 +13,8 @@
     loadingOverlay: document.getElementById('loadingOverlay'),
     loadingText: document.getElementById('loadingText'),
     warnings: document.getElementById('warnings'),
+    methodRow: document.getElementById('methodRow'),
+    segMethod: document.getElementById('segMethod'),
     controlsRow: document.getElementById('controlsRow'),
     colorParts: document.getElementById('colorParts'),
     colorPartsValue: document.getElementById('colorPartsValue'),
@@ -114,6 +116,8 @@
 
       currentParsed = parsed;
       currentScaleFactor = 1; // nuovo file: riparti dalla scala nativa del file
+      // metodo predefinito: colore se il modello ha colori/texture, forma altrimenti
+      el.segMethod.value = parsed.hasColorInfo ? 'color' : 'geometry';
       const nTris = parsed.rawPositions.length / 9;
       if (nTris > 400000) {
         el.loadingText.textContent = `Modello grande (${nTris.toLocaleString('it-IT')} triangoli): potrebbe volerci un minuto…`;
@@ -136,9 +140,10 @@
     await new Promise((r) => setTimeout(r, 30));
 
     const colorParts = parseInt(el.colorParts.value, 10);
+    const segmentMode = el.segMethod.value === 'geometry' ? 'geometry' : 'auto';
     let result;
     try {
-      result = Segmentation.buildParts(currentParsed, { colorParts });
+      result = Segmentation.buildParts(currentParsed, { colorParts, segmentMode });
     } catch (err) {
       console.error(err);
       alert('Errore durante la riparazione/segmentazione: ' + err.message);
@@ -175,6 +180,7 @@
   el.colorParts.addEventListener('input', () => {
     el.colorPartsValue.textContent = el.colorParts.value;
   });
+  el.segMethod.addEventListener('change', () => { runSegmentation(); });
   el.resegmentBtn.addEventListener('click', () => { runSegmentation(); });
   el.frameBtn.addEventListener('click', () => viewer.frameAll());
 
@@ -201,7 +207,8 @@
     el.emptyState.style.display = 'none';
     el.viewerHint.style.display = '';
     el.frameBtn.style.display = '';
-    el.controlsRow.style.display = result.mode === 'color-cluster' ? 'flex' : 'none';
+    el.methodRow.style.display = 'flex';
+    el.controlsRow.style.display = (result.mode === 'color-cluster' || result.mode === 'geometry') ? 'flex' : 'none';
     el.scaleRow.style.display = result.parts.length > 0 ? 'flex' : 'none';
     el.logTitle.style.display = '';
     el.partsTitle.style.display = '';
@@ -222,6 +229,7 @@
     const modeLabel = {
       material: 'Segmentazione automatica per materiale/colore (dati OBJ)',
       'color-cluster': 'Segmentazione automatica per colore rilevato sul modello',
+      geometry: 'Segmentazione per forma: tagli lungo le pieghe della superficie (i dettagli solo dipinti, come gli occhi, non vengono separati)',
       none: 'Nessuna informazione di colore: separazione solo per parti geometricamente disgiunte',
     }[result.mode];
 
@@ -240,7 +248,9 @@
       el.warnings.appendChild(box);
     });
 
-    if (currentParsed && currentParsed.textureError) {
+    if (result.mode === 'geometry') {
+      // in modalita' forma le note sulla texture non sono pertinenti
+    } else if (currentParsed && currentParsed.textureError) {
       const box = document.createElement('div');
       box.className = 'warning-box';
       box.textContent = '⚠️ Non sono riuscito a leggere la texture: ' + currentParsed.textureError;
