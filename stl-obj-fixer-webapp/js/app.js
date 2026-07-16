@@ -14,8 +14,8 @@
     loadingText: document.getElementById('loadingText'),
     warnings: document.getElementById('warnings'),
     controlsRow: document.getElementById('controlsRow'),
-    colorThreshold: document.getElementById('colorThreshold'),
-    thresholdValue: document.getElementById('thresholdValue'),
+    colorParts: document.getElementById('colorParts'),
+    colorPartsValue: document.getElementById('colorPartsValue'),
     resegmentBtn: document.getElementById('resegmentBtn'),
     scaleRow: document.getElementById('scaleRow'),
     scaleHeight: document.getElementById('scaleHeight'),
@@ -130,10 +130,10 @@
     // lascia respirare la UI prima del lavoro pesante e sincrono
     await new Promise((r) => setTimeout(r, 30));
 
-    const colorThreshold = parseInt(el.colorThreshold.value, 10) / 100;
+    const colorParts = parseInt(el.colorParts.value, 10);
     let result;
     try {
-      result = Segmentation.buildParts(currentParsed, { colorThreshold });
+      result = Segmentation.buildParts(currentParsed, { colorParts });
     } catch (err) {
       console.error(err);
       alert('Errore durante la riparazione/segmentazione: ' + err.message);
@@ -167,8 +167,8 @@
     });
   }
 
-  el.colorThreshold.addEventListener('input', () => {
-    el.thresholdValue.textContent = el.colorThreshold.value;
+  el.colorParts.addEventListener('input', () => {
+    el.colorPartsValue.textContent = el.colorParts.value;
   });
   el.resegmentBtn.addEventListener('click', () => { runSegmentation(); });
   el.frameBtn.addEventListener('click', () => viewer.frameAll());
@@ -348,7 +348,46 @@
     actions.appendChild(downloadBtn);
 
     card.appendChild(actions);
+
+    const isMainPart = currentResult && currentResult.parts.length > 0 && currentResult.parts[0] === part;
+    if (currentResult && currentResult.parts.length > 1 && !isMainPart) {
+      const mergeRow = document.createElement('div');
+      mergeRow.className = 'part-actions';
+      mergeRow.style.marginTop = '8px';
+      const mergeBtn = document.createElement('button');
+      mergeBtn.textContent = '🔗 Unisci con la parte principale';
+      mergeBtn.addEventListener('click', () => mergePartIntoMain(part));
+      mergeRow.appendChild(mergeBtn);
+      card.appendChild(mergeRow);
+    }
+
     return card;
+  }
+
+  function mergePartIntoMain(part) {
+    if (!currentResult || currentResult.parts.length <= 1) return;
+    const parts = currentResult.parts;
+    const mainPart = parts[0];
+    if (mainPart === part) return;
+
+    const offset = mainPart.positions.length / 3;
+    const newPositions = new Float64Array(mainPart.positions.length + part.positions.length);
+    newPositions.set(mainPart.positions);
+    newPositions.set(part.positions, mainPart.positions.length);
+    const newIndices = new Uint32Array(mainPart.indices.length + part.indices.length);
+    newIndices.set(mainPart.indices);
+    for (let i = 0; i < part.indices.length; i++) {
+      newIndices[mainPart.indices.length + i] = part.indices[i] + offset;
+    }
+    mainPart.positions = newPositions;
+    mainPart.indices = newIndices;
+    mainPart.stats = MeshCore.computeStats(mainPart.positions, mainPart.indices);
+    mainPart.watertight = mainPart.watertight && part.watertight;
+    mainPart.log = mainPart.log.concat([`Unita la parte "${part.name}" (${part.indices.length / 3} triangoli)`]);
+
+    currentResult.parts = parts.filter((p) => p !== part);
+    currentResult.parts.sort((a, b) => b.stats.volume - a.stats.volume);
+    renderResult(currentResult);
   }
 
   function sanitizeFilename(name) {

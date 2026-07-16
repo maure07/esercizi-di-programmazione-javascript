@@ -20,41 +20,84 @@
     [0.65, 0.35, 0.85], [0.95, 0.55, 0.20], [0.25, 0.80, 0.75], [0.85, 0.35, 0.60],
   ];
 
-  function colorDistance(a, b) {
+  function colorDistance2(a, b) {
+    // distanza al quadrato (evita sqrt nel ciclo interno, non serve per i confronti)
     const dr = a[0] - b[0], dg = a[1] - b[1], db = a[2] - b[2];
-    return Math.sqrt(dr * dr + dg * dg + db * db);
+    return dr * dr + dg * dg + db * db;
   }
 
-  // Clustering "leader" online: assegna ogni colore al cluster piu' vicino
-  // entro soglia, altrimenti ne crea uno nuovo. Semplice, deterministico,
-  // non richiede di scegliere k a priori.
-  Segmentation.greedyColorClusters = function (rawColors, nTris, threshold) {
-    threshold = threshold === undefined ? 0.12 : threshold;
-    const clusters = []; // {color:[r,g,b], count}
-    const labelIds = new Int32Array(nTris);
-    for (let t = 0; t < nTris; t++) {
-      const c = [rawColors[t * 3], rawColors[t * 3 + 1], rawColors[t * 3 + 2]];
-      let best = -1, bestDist = Infinity;
-      for (let k = 0; k < clusters.length; k++) {
-        const d = colorDistance(c, clusters[k].color);
-        if (d < bestDist) { bestDist = d; best = k; }
+  // k-means su colori RGB (0..1): raggruppa i triangoli in ESATTAMENTE k
+  // colori dominanti. A differenza di un clustering a soglia, il numero di
+  // gruppi risultanti e' sempre limitato e prevedibile anche su texture
+  // fotografiche rumorose (sfumature, compressione, dettagli), dove un
+  // clustering "a soglia" genererebbe centinaia di micro-cluster spuri.
+  // Inizializzazione deterministica "farthest-point" (variante di k-means++
+  // senza casualita'): stessi colori in ingresso -> stesso risultato.
+  Segmentation.kMeansColorClusters = function (rawColors, nTris, k, options) {
+    options = options || {};
+    const maxIterations = options.maxIterations || 15;
+    k = Math.max(1, Math.min(k, nTris));
+
+    // --- inizializzazione: primo centroide fisso, poi scegli sempre il
+    // punto piu' lontano da tutti i centroidi gia' scelti ---
+    const centroids = [[rawColors[0], rawColors[1], rawColors[2]]];
+    const minDistToCentroid = new Float64Array(nTris).fill(Infinity);
+    for (let pick = 1; pick < k; pick++) {
+      const lastC = centroids[centroids.length - 1];
+      let farthestIdx = -1, farthestDist = -1;
+      for (let t = 0; t < nTris; t++) {
+        const c = [rawColors[t * 3], rawColors[t * 3 + 1], rawColors[t * 3 + 2]];
+        const d = colorDistance2(c, lastC);
+        if (d < minDistToCentroid[t]) minDistToCentroid[t] = d;
+        if (minDistToCentroid[t] > farthestDist) { farthestDist = minDistToCentroid[t]; farthestIdx = t; }
       }
-      if (best !== -1 && bestDist <= threshold) {
-        const cl = clusters[best];
-        const n = cl.count + 1;
-        cl.color = [
-          (cl.color[0] * cl.count + c[0]) / n,
-          (cl.color[1] * cl.count + c[1]) / n,
-          (cl.color[2] * cl.count + c[2]) / n,
-        ];
-        cl.count = n;
-        labelIds[t] = best;
-      } else {
-        clusters.push({ color: c, count: 1 });
-        labelIds[t] = clusters.length - 1;
-      }
+      if (farthestIdx === -1 || farthestDist <= 0) break; // meno colori distinti di k, ok cosi'
+      centroids.push([rawColors[farthestIdx * 3], rawColors[farthestIdx * 3 + 1], rawColors[farthestIdx * 3 + 2]]);
     }
-    return { labelIds, clusters };
+
+    const kActual = centroids.length;
+    const labelIds = new Int32Array(nTris);
+
+    for (let iter = 0; iter < maxIterations; iter++) {
+      let changed = false;
+      // assegnazione
+      for (let t = 0; t < nTris; t++) {
+        const c = [rawColors[t * 3], rawColors[t * 3 + 1], rawColors[t * 3 + 2]];
+        let best = 0, bestDist = Infinity;
+        for (let ci = 0; ci < kActual; ci++) {
+          const d = colorDistance2(c, centroids[ci]);
+          if (d < bestDist) { bestDist = d; best = ci; }
+        }
+        if (labelIds[t] !== best) { labelIds[t] = best; changed = true; }
+      }
+      // ricalcolo centroidi come media dei punti assegnati
+      const sums = Array.from({ length: kActual }, () => [0, 0, 0, 0]); // r,g,b,n
+      for (let t = 0; t < nTris; t++) {
+        const s = sums[labelIds[t]];
+        s[0] += rawColors[t * 3]; s[1] += rawColors[t * 3 + 1]; s[2] += rawColors[t * 3 + 2]; s[3]++;
+      }
+      for (let ci = 0; ci < kActual; ci++) {
+        const s = sums[ci];
+        if (s[3] > 0) centroids[ci] = [s[0] / s[3], s[1] / s[3], s[2] / s[3]];
+        // cluster vuoto: lascia il centroide invariato (potra' riprendere punti al giro dopo)
+      }
+      if (!changed) break;
+    }
+
+    // rinumera scartando eventuali cluster rimasti vuoti, cosi' l'elenco
+    // finale delle parti non contiene voci fantasma a 0 triangoli
+    const counts = new Array(kActual).fill(0);
+    for (let t = 0; t < nTris; t++) counts[labelIds[t]]++;
+    const remap = new Array(kActual).fill(-1);
+    const finalClusters = [];
+    for (let ci = 0; ci < kActual; ci++) {
+      if (counts[ci] === 0) continue;
+      remap[ci] = finalClusters.length;
+      finalClusters.push({ color: centroids[ci], count: counts[ci] });
+    }
+    for (let t = 0; t < nTris; t++) labelIds[t] = remap[labelIds[t]];
+
+    return { labelIds, clusters: finalClusters };
   };
 
   // ---------------------------------------------------------------------
@@ -82,8 +125,8 @@
     }
 
     if (parsed.hasColorInfo && parsed.rawColors) {
-      const threshold = options.colorThreshold === undefined ? 0.12 : options.colorThreshold;
-      const { labelIds, clusters } = Segmentation.greedyColorClusters(parsed.rawColors, nTris, threshold);
+      const colorParts = options.colorParts === undefined ? 8 : options.colorParts;
+      const { labelIds, clusters } = Segmentation.kMeansColorClusters(parsed.rawColors, nTris, colorParts);
       const labels = new Array(nTris);
       const labelColors = new Map();
       for (let t = 0; t < nTris; t++) labels[t] = 'colore_' + labelIds[t];
