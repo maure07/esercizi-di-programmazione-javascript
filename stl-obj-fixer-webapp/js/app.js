@@ -88,7 +88,12 @@
         setLoading(true, 'Lettura colori dalla texture…');
         await new Promise((r) => setTimeout(r, 30));
         try {
-          const imageData = await TextureSampler.decodeImageFile(imageFiles[0]);
+          const rawImageData = await TextureSampler.decodeImageFile(imageFiles[0]);
+          // sfoca leggermente la texture prima di campionare: attenua il
+          // rumore fotografico/di compressione che altrimenti produrrebbe
+          // triangoli isolati di colore sbagliato ai bordi tra due zone
+          const blurRadius = TextureSampler.suggestBlurRadius(rawImageData.width, rawImageData.height);
+          const imageData = TextureSampler.blurImageData(rawImageData, blurRadius);
           const nTris = parsed.rawPositions.length / 9;
           const sampled = TextureSampler.sampleTriangleColors(imageData, parsed.rawUV, nTris);
           parsed.rawColors = sampled;
