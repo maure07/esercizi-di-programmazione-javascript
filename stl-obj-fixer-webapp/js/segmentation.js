@@ -194,6 +194,95 @@
   }
 
   // ---------------------------------------------------------------------
+  // Nomi dei colori in italiano: servono a dire subito quale filamento
+  // caricare per ogni parte ("nero", "beige (pelle)", "verde militare"...).
+  // ---------------------------------------------------------------------
+  const COLOR_NAMES = [
+    ['nero', 0.05, 0.05, 0.05],
+    ['grigio scuro', 0.25, 0.25, 0.25],
+    ['grigio', 0.50, 0.50, 0.50],
+    ['grigio chiaro', 0.75, 0.75, 0.75],
+    ['bianco', 0.95, 0.95, 0.95],
+    ['rosso', 0.80, 0.10, 0.10],
+    ['arancione', 0.95, 0.55, 0.10],
+    ['giallo', 0.95, 0.85, 0.15],
+    ['verde', 0.20, 0.65, 0.25],
+    ['verde militare', 0.45, 0.50, 0.30],
+    ['azzurro', 0.40, 0.70, 0.95],
+    ['blu', 0.15, 0.25, 0.70],
+    ['viola', 0.50, 0.25, 0.70],
+    ['rosa', 0.95, 0.60, 0.70],
+    ['marrone', 0.45, 0.30, 0.15],
+    ['beige (pelle)', 0.85, 0.70, 0.55],
+  ];
+
+  Segmentation.colorNameForRGB = function (r, g, b) {
+    let best = COLOR_NAMES[0][0];
+    let bestDist = Infinity;
+    for (const [name, cr, cg, cb] of COLOR_NAMES) {
+      const d = (r - cr) ** 2 + (g - cg) ** 2 + (b - cb) ** 2;
+      if (d < bestDist) { bestDist = d; best = name; }
+    }
+    return best;
+  };
+
+  // ---------------------------------------------------------------------
+  // Riassorbe i GRUPPI di etichette interi troppo piccoli nel gruppo
+  // adiacente con cui condividono piu' spigoli (a differenza dello
+  // smoothing, che lavora sul singolo triangolo, qui si spostano gruppi
+  // interi: sfridi di intersezione o rumore residuo della texture).
+  // ---------------------------------------------------------------------
+  function absorbSmallLabelGroups(labels, indices, minSize) {
+    const nTris = indices.length / 3;
+    const edgeMap = MeshCore.buildEdgeMap(indices);
+    const facePairs = [];
+    edgeMap.forEach((occ) => {
+      if (occ.length < 2) return;
+      for (let i = 0; i < occ.length; i++) {
+        for (let j = i + 1; j < occ.length; j++) {
+          facePairs.push(occ[i].face, occ[j].face);
+        }
+      }
+    });
+
+    let current = labels.slice();
+    for (let pass = 0; pass < 4; pass++) {
+      const sizes = new Map();
+      for (let t = 0; t < nTris; t++) sizes.set(current[t], (sizes.get(current[t]) || 0) + 1);
+      const neighborCount = new Map(); // etichettaPiccola -> Map(etichettaVicina -> n)
+      for (let i = 0; i < facePairs.length; i += 2) {
+        const la = current[facePairs[i]], lb = current[facePairs[i + 1]];
+        if (la === lb) continue;
+        if (sizes.get(la) < minSize) {
+          let m = neighborCount.get(la);
+          if (!m) { m = new Map(); neighborCount.set(la, m); }
+          m.set(lb, (m.get(lb) || 0) + 1);
+        }
+        if (sizes.get(lb) < minSize) {
+          let m = neighborCount.get(lb);
+          if (!m) { m = new Map(); neighborCount.set(lb, m); }
+          m.set(la, (m.get(la) || 0) + 1);
+        }
+      }
+      if (neighborCount.size === 0) break;
+      const relabel = new Map();
+      neighborCount.forEach((m, small) => {
+        let best = null, bestN = -1;
+        m.forEach((n, other) => { if (n > bestN) { bestN = n; best = other; } });
+        if (best !== null) relabel.set(small, best);
+      });
+      if (relabel.size === 0) break;
+      for (let t = 0; t < nTris; t++) {
+        let l = current[t];
+        let guard = 0;
+        while (relabel.has(l) && guard++ < 10) l = relabel.get(l);
+        current[t] = l;
+      }
+    }
+    return current;
+  }
+
+  // ---------------------------------------------------------------------
   // Segmentazione geometrica ("per forma"): ignora colori e texture.
   // Fa crescere le regioni unendo i triangoli attraverso gli spigoli piatti
   // o convessi e si ferma alle pieghe CONCAVE marcate (angolo diedro sopra
@@ -457,12 +546,43 @@
       return finalizeParts(groups, 'geometry', warnings, positions, indices, options);
     }
 
-    let { labels, labelColors, mode } = Segmentation.buildTriangleLabels(parsed, options);
+    let labels = null;
+    let labelColors = null;
+    let mode = null;
+    if (segmentMode === 'combined' && parsed.hasColorInfo && parsed.rawColors) {
+      // Modalita' COMBINATA: la forma da' la struttura (cappello, testa,
+      // corpo — confini puliti lungo i solchi), il colore da' i dettagli
+      // dipinti (occhi, sopracciglia). Ogni triangolo riceve l'etichetta
+      // congiunta zona-geometrica + colore: stessa vernice su pezzi fisici
+      // diversi resta separata, e i dettagli dipinti su una zona liscia
+      // vengono comunque isolati.
+      const k = options.colorParts === undefined ? 8 : options.colorParts;
+      const geo = Segmentation.segmentByGeometry(positions, indices, k, options.geometryOptions);
+      const km = Segmentation.kMeansColorClusters(parsed.rawColors, nTris, k);
+      labels = new Array(nTris);
+      labelColors = new Map();
+      for (let t = 0; t < nTris; t++) {
+        const label = 'z' + geo.labelIds[t] + '|c' + km.labelIds[t];
+        labels[t] = label;
+        if (!labelColors.has(label)) labelColors.set(label, km.clusters[km.labelIds[t]].color);
+      }
+      mode = 'combined';
+    } else {
+      const res = Segmentation.buildTriangleLabels(parsed, options);
+      labels = res.labels; labelColors = res.labelColors; mode = res.mode;
+    }
 
     let groups; // Map name -> {triangles:[...], color:[r,g,b]}
     if (labels) {
       const smoothIterations = options.labelSmoothIterations === undefined ? 2 : options.labelSmoothIterations;
       if (smoothIterations > 0) labels = smoothLabelsMajority(labels, indices, smoothIterations);
+
+      // per le modalita' basate su cluster di colore, riassorbi anche i
+      // GRUPPI interi troppo piccoli (sfridi dell'intersezione forma+colore
+      // o del rumore texture) nel gruppo adiacente dominante
+      if (mode === 'color-cluster' || mode === 'combined') {
+        labels = absorbSmallLabelGroups(labels, indices, Math.max(3, Math.ceil(nTris * 0.002)));
+      }
 
       groups = new Map();
       const byLabel = groupByLabel(labels);
@@ -506,6 +626,21 @@
           groups.set(finalName, { triangles: subTriList, color });
         });
       });
+
+      // per le modalita' a colori, rinomina le parti con il NOME del colore
+      // (= quale filamento caricare), ordinate per dimensione decrescente
+      if (mode === 'color-cluster' || mode === 'combined') {
+        const entries = [...groups.values()].sort((a, b) => b.triangles.length - a.triangles.length);
+        const renamed = new Map();
+        const usedCounts = new Map();
+        entries.forEach((group) => {
+          const base = Segmentation.colorNameForRGB(group.color[0], group.color[1], group.color[2]);
+          const n = (usedCounts.get(base) || 0) + 1;
+          usedCounts.set(base, n);
+          renamed.set(n === 1 ? base : `${base} (${n})`, group);
+        });
+        groups = renamed;
+      }
     } else {
       const comp = MeshCore.connectedComponents(indices);
       groups = new Map();

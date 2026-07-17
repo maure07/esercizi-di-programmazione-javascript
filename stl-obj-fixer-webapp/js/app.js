@@ -116,8 +116,15 @@
 
       currentParsed = parsed;
       currentScaleFactor = 1; // nuovo file: riparti dalla scala nativa del file
-      // metodo predefinito: colore se il modello ha colori/texture, forma altrimenti
-      el.segMethod.value = parsed.hasColorInfo ? 'color' : 'geometry';
+      // metodo predefinito: materiali espliciti multipli -> per materiale;
+      // texture/colori -> combinata (forma + colore); nessun colore -> forma
+      if (parsed.hasMaterialInfo && parsed.materialCount > 1) {
+        el.segMethod.value = 'color';
+      } else if (parsed.hasColorInfo) {
+        el.segMethod.value = 'combined';
+      } else {
+        el.segMethod.value = 'geometry';
+      }
       const nTris = parsed.rawPositions.length / 9;
       if (nTris > 400000) {
         el.loadingText.textContent = `Modello grande (${nTris.toLocaleString('it-IT')} triangoli): potrebbe volerci un minuto…`;
@@ -140,7 +147,8 @@
     await new Promise((r) => setTimeout(r, 30));
 
     const colorParts = parseInt(el.colorParts.value, 10);
-    const segmentMode = el.segMethod.value === 'geometry' ? 'geometry' : 'auto';
+    const method = el.segMethod.value;
+    const segmentMode = method === 'geometry' ? 'geometry' : (method === 'combined' ? 'combined' : 'auto');
     let result;
     try {
       result = Segmentation.buildParts(currentParsed, { colorParts, segmentMode });
@@ -208,7 +216,7 @@
     el.viewerHint.style.display = '';
     el.frameBtn.style.display = '';
     el.methodRow.style.display = 'flex';
-    el.controlsRow.style.display = (result.mode === 'color-cluster' || result.mode === 'geometry') ? 'flex' : 'none';
+    el.controlsRow.style.display = (result.mode === 'color-cluster' || result.mode === 'geometry' || result.mode === 'combined') ? 'flex' : 'none';
     el.scaleRow.style.display = result.parts.length > 0 ? 'flex' : 'none';
     el.logTitle.style.display = '';
     el.partsTitle.style.display = '';
@@ -229,6 +237,7 @@
     const modeLabel = {
       material: 'Segmentazione automatica per materiale/colore (dati OBJ)',
       'color-cluster': 'Segmentazione automatica per colore rilevato sul modello',
+      combined: 'Segmentazione combinata: struttura dalla forma + dettagli dal colore. Il nome di ogni parte è il colore di filamento suggerito.',
       geometry: 'Segmentazione per forma: tagli lungo le pieghe della superficie (i dettagli solo dipinti, come gli occhi, non vengono separati)',
       none: 'Nessuna informazione di colore: separazione solo per parti geometricamente disgiunte',
     }[result.mode];
