@@ -210,9 +210,10 @@
     setLoading(true, 'Analisi del modello in corso…');
     await new Promise((r) => setTimeout(r, 30));
 
-    const { positions, indices } = MeshCore.weldVertices(currentParsed.rawPositions, 1e-4);
+    const tol = MeshCore.suggestTolerances(currentParsed.rawPositions);
+    const { positions, indices } = MeshCore.weldVertices(currentParsed.rawPositions, tol.weldEpsilon);
     const nTris = indices.length / 3;
-    const deg = MeshCore.removeDegenerateTriangles(positions, indices);
+    const deg = MeshCore.removeDegenerateTriangles(positions, indices, tol.areaEpsilon);
     const nDegenerate = nTris - deg.indices.length / 3;
     const edgeMap = MeshCore.buildEdgeMap(indices);
     let nonManifold = 0;
@@ -222,7 +223,7 @@
     const stats = MeshCore.computeStats(positions, indices);
     const size = [0, 1, 2].map((i) => stats.bboxMax[i] - stats.bboxMin[i]);
 
-    currentAnalysis = { positions, indices, nTris, nDegenerate, nonManifold, boundary, components: comp.componentCount, size };
+    currentAnalysis = { positions, indices, nTris, nDegenerate, nonManifold, boundary, components: comp.componentCount, size, tol };
 
     const issues = [];
     if (nDegenerate > 0) issues.push(`<div class="issue">⚠ ${fmt(nDegenerate, 0)} triangoli degeneri (senza area)</div>`);
@@ -254,7 +255,7 @@
     try {
       const positions = Float64Array.from(currentAnalysis.positions);
       const indices = Uint32Array.from(currentAnalysis.indices);
-      const repaired = MeshCore.repairMesh(positions, indices);
+      const repaired = MeshCore.repairMesh(positions, indices, { areaEpsilon: currentAnalysis.tol.areaEpsilon });
       currentRepaired = repaired;
       const size = [0, 1, 2].map((i) => repaired.stats.bboxMax[i] - repaired.stats.bboxMin[i]);
       el.repairReport.innerHTML = `

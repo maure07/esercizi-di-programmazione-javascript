@@ -70,6 +70,30 @@
   };
 
   // ---------------------------------------------------------------------
+  // Tolleranze RELATIVE alla dimensione del modello: con tolleranze assolute
+  // lo stesso modello si comporterebbe in modo diverso a seconda dell'unita'
+  // di misura del file (o dopo aver applicato una scala).
+  // ---------------------------------------------------------------------
+  MeshCore.suggestTolerances = function (positions) {
+    const min = [Infinity, Infinity, Infinity];
+    const max = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < positions.length; i += 3) {
+      for (let k = 0; k < 3; k++) {
+        const v = positions[i + k];
+        if (v < min[k]) min[k] = v;
+        if (v > max[k]) max[k] = v;
+      }
+    }
+    const dx = max[0] - min[0], dy = max[1] - min[1], dz = max[2] - min[2];
+    const diag = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+    return {
+      weldEpsilon: diag * 1e-5,
+      areaEpsilon: diag * diag * 3e-9,
+      diag,
+    };
+  };
+
+  // ---------------------------------------------------------------------
   // Rimozione triangoli DUPLICATI (stessa terna di vertici, in qualsiasi
   // ordine/orientamento): tipici della geometria doppia degli export IA e
   // causa principale degli edge non-manifold. Tiene la prima occorrenza.

@@ -491,8 +491,12 @@
         e.sumDot += dot; e.n++;
       }
       const pairs = [...pairAgg.values()];
-      // dot alto = piega debole (quasi piatta) -> fondere per prima
-      pairs.sort((a, b) => (b.sumDot / b.n) - (a.sumDot / a.n));
+      // forza del confine = profondita' media della piega x lunghezza del
+      // confine: un solco lungo e marcato (cappello-testa) sopravvive a un
+      // confine corto anche se localmente ripido (rumore). Si fonde prima
+      // il confine piu' DEBOLE.
+      const strength = (e) => (1 - e.sumDot / e.n) * Math.sqrt(e.n);
+      pairs.sort((a, b) => strength(a) - strength(b));
       let regionCount = computeSizes().size;
       for (const p of pairs) {
         if (regionCount <= targetParts) break;
@@ -520,7 +524,11 @@
   // ---------------------------------------------------------------------
   Segmentation.buildParts = function (parsed, options) {
     options = options || {};
-    const weldEpsilon = options.weldEpsilon === undefined ? 1e-4 : options.weldEpsilon;
+    // tolleranze relative alla dimensione del modello (stesso comportamento
+    // a qualsiasi scala/unita' di misura)
+    const tol = MeshCore.suggestTolerances(parsed.rawPositions);
+    const weldEpsilon = options.weldEpsilon === undefined ? tol.weldEpsilon : options.weldEpsilon;
+    if (!options.repairOptions) options.repairOptions = { areaEpsilon: tol.areaEpsilon };
     const warnings = [];
 
     const { positions, indices } = MeshCore.weldVertices(parsed.rawPositions, weldEpsilon);
