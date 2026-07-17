@@ -65,6 +65,14 @@
     background: var(--bg);
   }
   #viewer { width: 100%; height: 100%; display: block; touch-action: none; }
+  #lassoOverlay {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    touch-action: none;
+  }
   #viewerHint {
     position: absolute;
     top: 8px; left: 8px;
@@ -227,6 +235,7 @@
   .cut-actions button.active { border-color: var(--accent); color: var(--accent); font-weight: 600; }
   #cutUndoBtn { flex: 0 0 52px; }
   #cutUndoBtn:disabled { opacity: 0.4; }
+  #cutLassoCloseBtn { border-color: var(--accent2); color: var(--accent2); font-weight: 600; }
   .cut-actions { display: flex; gap: 8px; }
   .cut-actions button {
     flex: 1;
@@ -345,6 +354,7 @@
 
 <div id="viewerWrap">
   <canvas id="viewer"></canvas>
+  <canvas id="lassoOverlay"></canvas>
   <div id="viewerHint" style="display:none">un dito: ruota · due dita: zoom</div>
   <button id="frameBtn" style="display:none">Inquadra</button>
   <div id="emptyState">
@@ -389,6 +399,11 @@
       <label for="cutRadius">Raggio</label>
       <input type="range" id="cutRadius" min="1" max="40" value="8" />
       <span id="cutRadiusValue">8%</span>
+    </div>
+    <div class="cut-actions" style="margin-bottom:8px">
+      <button id="cutToolWandBtn" class="active">🖌 Pennello</button>
+      <button id="cutToolLassoBtn">⭕ Lazo</button>
+      <button id="cutLassoCloseBtn" style="display:none">Chiudi lazo</button>
     </div>
     <div class="cut-actions" style="margin-bottom:8px">
       <button id="cutModeAddBtn" class="active">➕ Aggiungi</button>

@@ -170,6 +170,21 @@
       return { partId: hits[0].object.userData.partId, faceIndex: hits[0].faceIndex };
     }
 
+    // --- proiezione 3D -> pixel schermo (per la selezione a lazo) ---
+    const projTemp = new THREE.Vector3();
+    function projectToScreen(x, y, z) {
+      projTemp.set(x, y, z).project(camera);
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: ((projTemp.x + 1) / 2) * rect.width,
+        y: ((1 - projTemp.y) / 2) * rect.height,
+        behind: projTemp.z > 1,
+      };
+    }
+    function getCameraPosition() {
+      return [camera.position.x, camera.position.y, camera.position.z];
+    }
+
     // --- evidenziazione della selezione manuale ---
     let highlightMesh = null;
     function setHighlight(positionsArray) {
@@ -216,7 +231,7 @@
       updateCamera();
     }
 
-    return { scene, camera, renderer, clearParts, addPart, setPartVisible, frameAll, resize, raycastAt, setHighlight };
+    return { scene, camera, renderer, clearParts, addPart, setPartVisible, frameAll, resize, raycastAt, setHighlight, projectToScreen, getCameraPosition };
   }
 
   root.createViewer = createViewer;

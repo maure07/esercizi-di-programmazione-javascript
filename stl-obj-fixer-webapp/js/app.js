@@ -28,6 +28,10 @@
     cutControls: document.getElementById('cutControls'),
     cutRadius: document.getElementById('cutRadius'),
     cutRadiusValue: document.getElementById('cutRadiusValue'),
+    lassoOverlay: document.getElementById('lassoOverlay'),
+    cutToolWandBtn: document.getElementById('cutToolWandBtn'),
+    cutToolLassoBtn: document.getElementById('cutToolLassoBtn'),
+    cutLassoCloseBtn: document.getElementById('cutLassoCloseBtn'),
     cutModeAddBtn: document.getElementById('cutModeAddBtn'),
     cutModeEraseBtn: document.getElementById('cutModeEraseBtn'),
     cutUndoBtn: document.getElementById('cutUndoBtn'),
@@ -492,6 +496,7 @@
     cutSelection = null;
     cutHistory = [];
     viewer.setHighlight(null);
+    clearLasso();
     el.cutUndoBtn.disabled = true;
     el.cutCreateBtn.disabled = true;
     el.cutCreateBtn.textContent = 'Crea parte (0 triangoli)';
@@ -521,11 +526,162 @@
     el.cutRadiusValue.textContent = label;
   }
 
+  // ------------------- strumento LAZO (stile Blender) -------------------
+  let cutTool = 'wand'; // 'wand' (pennello) | 'lasso'
+  let lassoPoints = []; // punti del perimetro in pixel CSS del canvas
+
+  function lassoCtx() { return el.lassoOverlay.getContext('2d'); }
+
+  function syncLassoOverlay() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = el.lassoOverlay.clientWidth, h = el.lassoOverlay.clientHeight;
+    if (el.lassoOverlay.width !== Math.round(w * dpr) || el.lassoOverlay.height !== Math.round(h * dpr)) {
+      el.lassoOverlay.width = Math.round(w * dpr);
+      el.lassoOverlay.height = Math.round(h * dpr);
+    }
+    const ctx = lassoCtx();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function drawLasso() {
+    syncLassoOverlay();
+    const ctx = lassoCtx();
+    ctx.clearRect(0, 0, el.lassoOverlay.clientWidth, el.lassoOverlay.clientHeight);
+    if (lassoPoints.length === 0) return;
+    ctx.strokeStyle = '#ffe14d';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.moveTo(lassoPoints[0].x, lassoPoints[0].y);
+    for (let i = 1; i < lassoPoints.length; i++) ctx.lineTo(lassoPoints[i].x, lassoPoints[i].y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    lassoPoints.forEach((p, i) => {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, i === 0 ? 10 : 5, 0, Math.PI * 2);
+      ctx.fillStyle = i === 0 ? 'rgba(255,225,77,0.25)' : '#ffe14d';
+      ctx.fill();
+      ctx.strokeStyle = '#ffe14d';
+      ctx.stroke();
+    });
+  }
+
+  function clearLasso() {
+    lassoPoints = [];
+    el.lassoOverlay.style.pointerEvents = 'none';
+    el.cutLassoCloseBtn.style.display = 'none';
+    el.cutUndoBtn.disabled = cutHistory.length === 0;
+    drawLasso();
+  }
+
+  function setCutTool(tool) {
+    cutTool = tool;
+    el.cutToolWandBtn.classList.toggle('active', tool === 'wand');
+    el.cutToolLassoBtn.classList.toggle('active', tool === 'lasso');
+    clearLasso();
+    document.getElementById('cutHint').textContent = tool === 'lasso'
+      ? 'Inquadra il pezzo, poi tocca per mettere i punti del perimetro (dal primo punto la rotazione si blocca). Chiudi toccando il primo punto o con "Chiudi lazo", poi "Crea parte".'
+      : 'Tocca il modello per selezionare (giallo). Raggio piccolo = tocchi precisi. ➖ Rimuovi cancella dove tocchi, ↩ annulla l\'ultimo tocco.';
+  }
+
+  function pointInPolygon(x, y, poly) {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const xi = poly[i].x, yi = poly[i].y, xj = poly[j].x, yj = poly[j].y;
+      if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  }
+
+  function lassoSelectFaces(polygon) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    polygon.forEach((p) => {
+      if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+    });
+    const camPos = viewer.getCameraPosition();
+    let bestPartId = null, bestFaces = null;
+    for (const part of currentResult.parts) {
+      if (part.visible === false) continue;
+      const topo = ensurePartTopology(part);
+      const n = part.indices.length / 3;
+      const faces = [];
+      for (let t = 0; t < n; t++) {
+        const cx = topo.centroids[t * 3], cy = topo.centroids[t * 3 + 1], cz = topo.centroids[t * 3 + 2];
+        // considera solo i triangoli rivolti verso la camera: quello che vedi
+        // e' quello che selezioni (non "buca" fino al lato opposto del pezzo)
+        const vx = cx - camPos[0], vy = cy - camPos[1], vz = cz - camPos[2];
+        if (topo.normals[t * 3] * vx + topo.normals[t * 3 + 1] * vy + topo.normals[t * 3 + 2] * vz >= 0) continue;
+        const s = viewer.projectToScreen(cx, cy, cz);
+        if (s.behind) continue;
+        if (s.x < minX || s.x > maxX || s.y < minY || s.y > maxY) continue;
+        if (pointInPolygon(s.x, s.y, polygon)) faces.push(t);
+      }
+      if (faces.length > 0 && (!bestFaces || faces.length > bestFaces.length)) {
+        bestFaces = faces;
+        bestPartId = part.id;
+      }
+    }
+    return bestPartId ? { partId: bestPartId, faces: new Set(bestFaces) } : null;
+  }
+
+  function closeLasso() {
+    if (lassoPoints.length < 3) { clearLasso(); return; }
+    const sel = lassoSelectFaces(lassoPoints.slice());
+    clearLasso();
+    if (!sel) return;
+    pushCutHistory();
+    if (cutErase) {
+      if (cutSelection && cutSelection.partId === sel.partId) {
+        sel.faces.forEach((f) => cutSelection.faces.delete(f));
+      }
+    } else if (cutSelection && cutSelection.partId === sel.partId) {
+      sel.faces.forEach((f) => cutSelection.faces.add(f));
+    } else {
+      cutSelection = sel;
+    }
+    refreshCutHighlight();
+  }
+
+  function addLassoPoint(x, y) {
+    if (lassoPoints.length >= 3) {
+      const dx = x - lassoPoints[0].x, dy = y - lassoPoints[0].y;
+      if (Math.sqrt(dx * dx + dy * dy) < 24) { closeLasso(); return; }
+    }
+    lassoPoints.push({ x, y });
+    // dal primo punto in poi l'overlay cattura i tocchi: la vista resta ferma
+    el.lassoOverlay.style.pointerEvents = 'auto';
+    el.cutLassoCloseBtn.style.display = lassoPoints.length >= 3 ? 'block' : 'none';
+    el.cutUndoBtn.disabled = false;
+    drawLasso();
+  }
+
+  el.lassoOverlay.addEventListener('pointerdown', (e) => {
+    if (!cutMode || cutTool !== 'lasso') return;
+    const rect = el.lassoOverlay.getBoundingClientRect();
+    addLassoPoint(e.clientX - rect.left, e.clientY - rect.top);
+  });
+
+  el.cutToolWandBtn.addEventListener('click', () => setCutTool('wand'));
+  el.cutToolLassoBtn.addEventListener('click', () => setCutTool('lasso'));
+  el.cutLassoCloseBtn.addEventListener('click', () => closeLasso());
+  window.addEventListener('resize', () => { if (lassoPoints.length > 0) drawLasso(); });
+
   el.cutToggleBtn.addEventListener('click', () => setCutMode(!cutMode));
   el.cutCancelBtn.addEventListener('click', () => resetCutSelection());
   el.cutModeAddBtn.addEventListener('click', () => setCutErase(false));
   el.cutModeEraseBtn.addEventListener('click', () => setCutErase(true));
   el.cutUndoBtn.addEventListener('click', () => {
+    // durante il disegno del lazo, "indietro" toglie l'ultimo punto
+    if (cutTool === 'lasso' && lassoPoints.length > 0) {
+      lassoPoints.pop();
+      if (lassoPoints.length === 0) clearLasso();
+      else {
+        el.cutLassoCloseBtn.style.display = lassoPoints.length >= 3 ? 'block' : 'none';
+        drawLasso();
+      }
+      return;
+    }
     if (cutHistory.length === 0) return;
     cutSelection = cutHistory.pop();
     el.cutUndoBtn.disabled = cutHistory.length === 0;
@@ -628,6 +784,13 @@
 
   function handleCutTap(clientX, clientY) {
     if (!currentResult) return;
+    if (cutTool === 'lasso') {
+      // il PRIMO punto del lazo arriva dal canvas del viewer (l'overlay si
+      // attiva solo dopo, bloccando la rotazione finche' non chiudi)
+      const rect = el.lassoOverlay.getBoundingClientRect();
+      addLassoPoint(clientX - rect.left, clientY - rect.top);
+      return;
+    }
     const hit = viewer.raycastAt(clientX, clientY);
     if (!hit) return;
     const part = currentResult.parts.find((p) => p.id === hit.partId);
