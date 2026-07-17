@@ -49,6 +49,7 @@
     // --- input pointer (mouse + touch unificati) ---
     const pointers = new Map();
     let lastPinchDist = null;
+    let lastPinchMid = null;
 
     function pointerDistance() {
       const pts = [...pointers.values()];
@@ -56,12 +57,31 @@
       const dx = pts[0].x - pts[1].x, dy = pts[0].y - pts[1].y;
       return Math.sqrt(dx * dx + dy * dy);
     }
+    function pointerMidpoint() {
+      const pts = [...pointers.values()];
+      if (pts.length < 2) return null;
+      return { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+    }
+
+    // sposta il target sul piano della camera (pan) di (dx,dy) pixel schermo
+    const panRight = new THREE.Vector3();
+    const panUp = new THREE.Vector3();
+    function panBy(dx, dy) {
+      const h = canvas.clientHeight || 1;
+      const scale = (radius * 1.2) / h;
+      panRight.setFromMatrixColumn(camera.matrix, 0);
+      panUp.setFromMatrixColumn(camera.matrix, 1);
+      target.addScaledVector(panRight, -dx * scale);
+      target.addScaledVector(panUp, dy * scale);
+      updateCamera();
+    }
 
     canvas.style.touchAction = 'none';
     canvas.addEventListener('pointerdown', (e) => {
       canvas.setPointerCapture(e.pointerId);
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       lastPinchDist = pointerDistance();
+      lastPinchMid = pointerMidpoint();
     });
     canvas.addEventListener('pointermove', (e) => {
       if (!pointers.has(e.pointerId)) return;
@@ -76,6 +96,7 @@
         phi = Math.max(0.05, Math.min(Math.PI - 0.05, phi));
         updateCamera();
       } else if (pointers.size === 2) {
+        // due dita: pizzica per lo zoom, trascina (punto medio) per spostarti
         const dist = pointerDistance();
         if (lastPinchDist && dist) {
           const scale = lastPinchDist / dist;
@@ -83,11 +104,17 @@
           updateCamera();
         }
         lastPinchDist = dist;
+        const mid = pointerMidpoint();
+        if (lastPinchMid && mid) {
+          panBy(mid.x - lastPinchMid.x, mid.y - lastPinchMid.y);
+        }
+        lastPinchMid = mid;
       }
     });
     function releasePointer(e) {
       pointers.delete(e.pointerId);
       lastPinchDist = pointerDistance();
+      lastPinchMid = pointerMidpoint();
     }
     canvas.addEventListener('pointerup', releasePointer);
     canvas.addEventListener('pointercancel', releasePointer);
@@ -167,7 +194,12 @@
       });
       const hits = raycaster.intersectObjects(list, false);
       if (hits.length === 0) return null;
-      return { partId: hits[0].object.userData.partId, faceIndex: hits[0].faceIndex };
+      const h = hits[0];
+      return {
+        partId: h.object.userData.partId,
+        faceIndex: h.faceIndex,
+        point: [h.point.x, h.point.y, h.point.z],
+      };
     }
 
     // --- proiezione 3D -> pixel schermo (per la selezione a lazo) ---

@@ -37,6 +37,21 @@
     cutUndoBtn: document.getElementById('cutUndoBtn'),
     cutCreateBtn: document.getElementById('cutCreateBtn'),
     cutCancelBtn: document.getElementById('cutCancelBtn'),
+    stepper: document.getElementById('stepper'),
+    stepChip1: document.getElementById('stepChip1'),
+    stepChip2: document.getElementById('stepChip2'),
+    stepChip3: document.getElementById('stepChip3'),
+    analysisPanel: document.getElementById('analysisPanel'),
+    analysisReport: document.getElementById('analysisReport'),
+    repairBtn: document.getElementById('repairBtn'),
+    toSegmentBtn: document.getElementById('toSegmentBtn'),
+    repairPanel: document.getElementById('repairPanel'),
+    repairReport: document.getElementById('repairReport'),
+    runRepairBtn: document.getElementById('runRepairBtn'),
+    downloadRepairedBtn: document.getElementById('downloadRepairedBtn'),
+    toSegmentBtn2: document.getElementById('toSegmentBtn2'),
+    segmentPanel: document.getElementById('segmentPanel'),
+    segmentBtn: document.getElementById('segmentBtn'),
     logTitle: document.getElementById('logTitle'),
     log: document.getElementById('log'),
     partsTitle: document.getElementById('partsTitle'),
@@ -50,6 +65,8 @@
   let currentParsed = null; // dati grezzi dell'ultimo modello caricato
   let currentResult = null; // { parts, mode, warnings }
   let currentScaleFactor = 1; // fattore di scala applicato (persiste tra un ricalcolo e l'altro)
+  let currentAnalysis = null; // { positions, indices, ...statistiche } del modello grezzo saldato
+  let currentRepaired = null; // { positions, indices, log, watertight, stats } riparazione intera
 
   function setLoading(visible, text) {
     el.loadingOverlay.classList.toggle('visible', visible);
@@ -130,6 +147,9 @@
 
       currentParsed = parsed;
       currentScaleFactor = 1; // nuovo file: riparti dalla scala nativa del file
+      currentAnalysis = null;
+      currentRepaired = null;
+      currentResult = null;
       setCutMode(false);
       // metodo predefinito: materiali espliciti multipli -> per materiale;
       // texture/colori -> combinata (forma + colore); nessun colore -> forma
@@ -140,13 +160,8 @@
       } else {
         el.segMethod.value = 'geometry';
       }
-      const nTris = parsed.rawPositions.length / 9;
-      if (nTris > 400000) {
-        el.loadingText.textContent = `Modello grande (${nTris.toLocaleString('it-IT')} triangoli): potrebbe volerci un minuto…`;
-        await new Promise((r) => setTimeout(r, 30));
-      }
-
-      await runSegmentation();
+      // STEP 1: solo analisi — nessuna modifica finche' non lo decidi tu
+      await runAnalysis();
     } catch (err) {
       console.error(err);
       alert('Errore durante la lettura del file: ' + err.message);
@@ -154,6 +169,121 @@
       setLoading(false);
     }
   }
+
+  // =====================================================================
+  // FLUSSO A STEP: 1 Analisi -> 2 Riparazione -> 3 Segmentazione
+  // =====================================================================
+  function goToStep(n) {
+    [el.stepChip1, el.stepChip2, el.stepChip3].forEach((chip, i) => {
+      chip.classList.toggle('active', i + 1 === n);
+    });
+    el.stepChip2.classList.toggle('done', !!currentRepaired);
+    el.stepChip3.classList.toggle('done', !!currentResult);
+    el.analysisPanel.style.display = n === 1 ? 'block' : 'none';
+    el.repairPanel.style.display = n === 2 ? 'block' : 'none';
+    el.segmentPanel.style.display = n === 3 ? 'block' : 'none';
+    if (n === 3) {
+      // metodo e numero parti visibili gia' prima di segmentare
+      el.methodRow.style.display = 'flex';
+      el.controlsRow.style.display = 'flex';
+    }
+    // il viewer mostra cio' che riguarda lo step corrente
+    if (n === 3 && currentResult) {
+      renderResult(currentResult);
+    } else if (n === 2 && currentRepaired) {
+      showSingleMesh(currentRepaired.positions, currentRepaired.indices, [0.45, 0.62, 0.85]);
+    } else if (currentAnalysis && (n === 1 || n === 2)) {
+      showSingleMesh(currentAnalysis.positions, currentAnalysis.indices, [0.72, 0.70, 0.66]);
+    }
+  }
+
+  function showSingleMesh(positions, indices, color) {
+    viewer.clearParts();
+    viewer.addPart({ id: 'single', color, positions, indices });
+    requestAnimationFrame(() => viewer.frameAll());
+  }
+
+  async function runAnalysis() {
+    if (!currentParsed) return;
+    setLoading(true, 'Analisi del modello in corso…');
+    await new Promise((r) => setTimeout(r, 30));
+
+    const { positions, indices } = MeshCore.weldVertices(currentParsed.rawPositions, 1e-4);
+    const nTris = indices.length / 3;
+    const deg = MeshCore.removeDegenerateTriangles(positions, indices);
+    const nDegenerate = nTris - deg.indices.length / 3;
+    const edgeMap = MeshCore.buildEdgeMap(indices);
+    let nonManifold = 0;
+    edgeMap.forEach((occ) => { if (occ.length > 2) nonManifold++; });
+    const boundary = MeshCore.traceBoundaryLoops(indices, edgeMap);
+    const comp = MeshCore.connectedComponents(indices, edgeMap);
+    const stats = MeshCore.computeStats(positions, indices);
+    const size = [0, 1, 2].map((i) => stats.bboxMax[i] - stats.bboxMin[i]);
+
+    currentAnalysis = { positions, indices, nTris, nDegenerate, nonManifold, boundary, components: comp.componentCount, size };
+
+    const issues = [];
+    if (nDegenerate > 0) issues.push(`<div class="issue">⚠ ${fmt(nDegenerate, 0)} triangoli degeneri (senza area)</div>`);
+    if (nonManifold > 0) issues.push(`<div class="issue">⚠ ${fmt(nonManifold, 0)} spigoli non-manifold (geometria doppia o difettosa)</div>`);
+    if (boundary.totalBoundaryEdges > 0) issues.push(`<div class="issue">⚠ ${fmt(boundary.loops.length, 0)} buchi (${fmt(boundary.totalBoundaryEdges, 0)} spigoli di bordo): la superficie è aperta, non stampabile così</div>`);
+    const issuesHtml = issues.length > 0
+      ? issues.join('') + '<div class="dim" style="margin-top:6px">Consiglio: passa da "Ripara e solidifica" prima di segmentare.</div>'
+      : '<div class="ok">✔ Nessun problema rilevato: la mesh è già chiusa e pulita.</div>';
+
+    el.analysisReport.innerHTML = `
+      <div><span class="dim">Triangoli:</span> ${fmt(nTris, 0)}</div>
+      <div><span class="dim">Dimensioni:</span> ${fmt(size[0], 1)}×${fmt(size[1], 1)}×${fmt(size[2], 1)} (unità del file)</div>
+      <div><span class="dim">Pezzi separati nel file:</span> ${fmt(comp.componentCount, 0)}</div>
+      <div style="margin-top:6px">${issuesHtml}</div>
+    `;
+
+    el.emptyState.style.display = 'none';
+    el.viewerHint.style.display = '';
+    el.frameBtn.style.display = '';
+    el.stepper.style.display = 'flex';
+    goToStep(1);
+    setLoading(false);
+  }
+
+  async function runWholeRepair() {
+    if (!currentAnalysis) return;
+    setLoading(true, 'Riparazione in corso…');
+    await new Promise((r) => setTimeout(r, 30));
+    try {
+      const positions = Float64Array.from(currentAnalysis.positions);
+      const indices = Uint32Array.from(currentAnalysis.indices);
+      const repaired = MeshCore.repairMesh(positions, indices);
+      currentRepaired = repaired;
+      const size = [0, 1, 2].map((i) => repaired.stats.bboxMax[i] - repaired.stats.bboxMin[i]);
+      el.repairReport.innerHTML = `
+        ${repaired.log.map((l) => `<div>${/Attenzione|ancora aperta/.test(l) ? '<span class="issue">⚠ ' + l + '</span>' : '· ' + l}</div>`).join('')}
+        <div style="margin-top:6px">${repaired.watertight ? '<span class="ok">✔ Modello chiuso e stampabile (watertight)</span>' : '<span class="issue">⚠ Restano bordi aperti: la stampa potrebbe comunque riuscire, lo slicer chiude i difetti piccoli</span>'}</div>
+        <div class="dim" style="margin-top:4px">${fmt(repaired.indices.length / 3, 0)} triangoli · ${fmt(size[0], 1)}×${fmt(size[1], 1)}×${fmt(size[2], 1)}</div>
+      `;
+      el.downloadRepairedBtn.style.display = 'block';
+      showSingleMesh(repaired.positions, repaired.indices, [0.45, 0.62, 0.85]);
+      goToStep(2);
+    } catch (err) {
+      console.error(err);
+      alert('Errore durante la riparazione: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  el.repairBtn.addEventListener('click', () => { goToStep(2); if (!currentRepaired) runWholeRepair(); });
+  el.runRepairBtn.addEventListener('click', () => { if (!currentRepaired) runWholeRepair(); });
+  el.toSegmentBtn.addEventListener('click', () => goToStep(3));
+  el.toSegmentBtn2.addEventListener('click', () => goToStep(3));
+  el.segmentBtn.addEventListener('click', () => runSegmentation());
+  el.stepChip1.addEventListener('click', () => goToStep(1));
+  el.stepChip2.addEventListener('click', () => goToStep(2));
+  el.stepChip3.addEventListener('click', () => goToStep(3));
+  el.downloadRepairedBtn.addEventListener('click', () => {
+    if (!currentRepaired) return;
+    const bytes = Exporter.buildBinarySTL(currentRepaired.positions, currentRepaired.indices, 'modello_riparato');
+    triggerDownload(new Blob([bytes], { type: 'application/sla' }), 'modello_riparato.stl');
+  });
 
   async function runSegmentation() {
     if (!currentParsed) return;
@@ -527,8 +657,11 @@
   }
 
   // ------------------- strumento LAZO (stile Blender) -------------------
+  // I punti del lazo sono ANCORATI alla superficie 3D del modello: puoi
+  // ruotare/zoomare/spostarti liberamente mentre disegni, i punti seguono
+  // il pezzo e vengono riproiettati a schermo a ogni frame.
   let cutTool = 'wand'; // 'wand' (pennello) | 'lasso'
-  let lassoPoints = []; // punti del perimetro in pixel CSS del canvas
+  let lassoPoints = []; // punti 3D [x,y,z] sulla superficie del modello
 
   function lassoCtx() { return el.lassoOverlay.getContext('2d'); }
 
@@ -543,20 +676,25 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
+  function projectedLassoPoints() {
+    return lassoPoints.map((p) => viewer.projectToScreen(p[0], p[1], p[2]));
+  }
+
   function drawLasso() {
     syncLassoOverlay();
     const ctx = lassoCtx();
     ctx.clearRect(0, 0, el.lassoOverlay.clientWidth, el.lassoOverlay.clientHeight);
     if (lassoPoints.length === 0) return;
+    const pts = projectedLassoPoints();
     ctx.strokeStyle = '#ffe14d';
     ctx.lineWidth = 2;
     ctx.setLineDash([6, 4]);
     ctx.beginPath();
-    ctx.moveTo(lassoPoints[0].x, lassoPoints[0].y);
-    for (let i = 1; i < lassoPoints.length; i++) ctx.lineTo(lassoPoints[i].x, lassoPoints[i].y);
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
     ctx.stroke();
     ctx.setLineDash([]);
-    lassoPoints.forEach((p, i) => {
+    pts.forEach((p, i) => {
       ctx.beginPath();
       ctx.arc(p.x, p.y, i === 0 ? 10 : 5, 0, Math.PI * 2);
       ctx.fillStyle = i === 0 ? 'rgba(255,225,77,0.25)' : '#ffe14d';
@@ -566,9 +704,14 @@
     });
   }
 
+  // ridisegna il lazo a ogni frame (i punti 3D seguono la camera)
+  (function lassoRedrawLoop() {
+    if (cutMode && cutTool === 'lasso' && lassoPoints.length > 0) drawLasso();
+    requestAnimationFrame(lassoRedrawLoop);
+  })();
+
   function clearLasso() {
     lassoPoints = [];
-    el.lassoOverlay.style.pointerEvents = 'none';
     el.cutLassoCloseBtn.style.display = 'none';
     el.cutUndoBtn.disabled = cutHistory.length === 0;
     drawLasso();
@@ -580,7 +723,7 @@
     el.cutToolLassoBtn.classList.toggle('active', tool === 'lasso');
     clearLasso();
     document.getElementById('cutHint').textContent = tool === 'lasso'
-      ? 'Inquadra il pezzo, poi tocca per mettere i punti del perimetro (dal primo punto la rotazione si blocca). Chiudi toccando il primo punto o con "Chiudi lazo", poi "Crea parte".'
+      ? 'Tocca il modello per mettere i punti del perimetro: restano attaccati al pezzo, puoi ruotare e spostarti mentre disegni. Chiudi toccando il primo punto o con "Chiudi lazo", poi "Crea parte".'
       : 'Tocca il modello per selezionare (giallo). Raggio piccolo = tocchi precisi. ➖ Rimuovi cancella dove tocchi, ↩ annulla l\'ultimo tocco.';
   }
 
@@ -627,7 +770,8 @@
 
   function closeLasso() {
     if (lassoPoints.length < 3) { clearLasso(); return; }
-    const sel = lassoSelectFaces(lassoPoints.slice());
+    // il poligono di selezione e' la proiezione ATTUALE dei punti 3D
+    const sel = lassoSelectFaces(projectedLassoPoints());
     clearLasso();
     if (!sel) return;
     pushCutHistory();
@@ -643,24 +787,23 @@
     refreshCutHighlight();
   }
 
-  function addLassoPoint(x, y) {
+  function addLassoPoint(clientX, clientY) {
+    const rect = el.lassoOverlay.getBoundingClientRect();
+    const sx = clientX - rect.left, sy = clientY - rect.top;
+    // chiusura: tocco vicino alla proiezione ATTUALE del primo punto
     if (lassoPoints.length >= 3) {
-      const dx = x - lassoPoints[0].x, dy = y - lassoPoints[0].y;
+      const first = viewer.projectToScreen(lassoPoints[0][0], lassoPoints[0][1], lassoPoints[0][2]);
+      const dx = sx - first.x, dy = sy - first.y;
       if (Math.sqrt(dx * dx + dy * dy) < 24) { closeLasso(); return; }
     }
-    lassoPoints.push({ x, y });
-    // dal primo punto in poi l'overlay cattura i tocchi: la vista resta ferma
-    el.lassoOverlay.style.pointerEvents = 'auto';
+    // il punto va ancorato alla superficie: serve colpire il modello
+    const hit = viewer.raycastAt(clientX, clientY);
+    if (!hit) return;
+    lassoPoints.push(hit.point);
     el.cutLassoCloseBtn.style.display = lassoPoints.length >= 3 ? 'block' : 'none';
     el.cutUndoBtn.disabled = false;
     drawLasso();
   }
-
-  el.lassoOverlay.addEventListener('pointerdown', (e) => {
-    if (!cutMode || cutTool !== 'lasso') return;
-    const rect = el.lassoOverlay.getBoundingClientRect();
-    addLassoPoint(e.clientX - rect.left, e.clientY - rect.top);
-  });
 
   el.cutToolWandBtn.addEventListener('click', () => setCutTool('wand'));
   el.cutToolLassoBtn.addEventListener('click', () => setCutTool('lasso'));
@@ -785,10 +928,9 @@
   function handleCutTap(clientX, clientY) {
     if (!currentResult) return;
     if (cutTool === 'lasso') {
-      // il PRIMO punto del lazo arriva dal canvas del viewer (l'overlay si
-      // attiva solo dopo, bloccando la rotazione finche' non chiudi)
-      const rect = el.lassoOverlay.getBoundingClientRect();
-      addLassoPoint(clientX - rect.left, clientY - rect.top);
+      // tutti i punti del lazo passano dal tocco sul viewer: il trascinamento
+      // continua a ruotare la vista anche durante il disegno
+      addLassoPoint(clientX, clientY);
       return;
     }
     const hit = viewer.raycastAt(clientX, clientY);
