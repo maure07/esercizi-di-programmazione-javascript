@@ -28,6 +28,9 @@
     cutControls: document.getElementById('cutControls'),
     cutRadius: document.getElementById('cutRadius'),
     cutRadiusValue: document.getElementById('cutRadiusValue'),
+    cutModeAddBtn: document.getElementById('cutModeAddBtn'),
+    cutModeEraseBtn: document.getElementById('cutModeEraseBtn'),
+    cutUndoBtn: document.getElementById('cutUndoBtn'),
     cutCreateBtn: document.getElementById('cutCreateBtn'),
     cutCancelBtn: document.getElementById('cutCancelBtn'),
     logTitle: document.getElementById('logTitle'),
@@ -228,6 +231,7 @@
     el.scaleRow.style.display = result.parts.length > 0 ? 'flex' : 'none';
     el.cutRow.style.display = result.parts.length > 0 ? 'block' : 'none';
     resetCutSelection();
+    updateCutRadiusLabel();
     el.logTitle.style.display = '';
     el.partsTitle.style.display = '';
     el.exportRow.style.display = 'flex';
@@ -474,11 +478,21 @@
   // "Crea parte" la scorpora in una parte nuova.
   // =====================================================================
   let cutMode = false;
+  let cutErase = false;
   let cutSelection = null; // { partId, faces: Set<number> }
+  let cutHistory = []; // stati precedenti della selezione, per "indietro"
+
+  function pushCutHistory() {
+    cutHistory.push(cutSelection ? { partId: cutSelection.partId, faces: new Set(cutSelection.faces) } : null);
+    if (cutHistory.length > 10) cutHistory.shift();
+    el.cutUndoBtn.disabled = false;
+  }
 
   function resetCutSelection() {
     cutSelection = null;
+    cutHistory = [];
     viewer.setHighlight(null);
+    el.cutUndoBtn.disabled = true;
     el.cutCreateBtn.disabled = true;
     el.cutCreateBtn.textContent = 'Crea parte (0 triangoli)';
   }
@@ -491,11 +505,33 @@
     if (!active) resetCutSelection();
   }
 
+  function setCutErase(erase) {
+    cutErase = erase;
+    el.cutModeAddBtn.classList.toggle('active', !erase);
+    el.cutModeEraseBtn.classList.toggle('active', erase);
+  }
+
+  function updateCutRadiusLabel() {
+    const pct = parseInt(el.cutRadius.value, 10);
+    let label = pct + '%';
+    if (currentResult && currentResult.parts.length > 0) {
+      const mm = computeOverallMaxDimension(currentResult.parts) * (pct / 100);
+      label += ' · ' + fmt(mm, 0) + ' mm';
+    }
+    el.cutRadiusValue.textContent = label;
+  }
+
   el.cutToggleBtn.addEventListener('click', () => setCutMode(!cutMode));
   el.cutCancelBtn.addEventListener('click', () => resetCutSelection());
-  el.cutRadius.addEventListener('input', () => {
-    el.cutRadiusValue.textContent = el.cutRadius.value + '%';
+  el.cutModeAddBtn.addEventListener('click', () => setCutErase(false));
+  el.cutModeEraseBtn.addEventListener('click', () => setCutErase(true));
+  el.cutUndoBtn.addEventListener('click', () => {
+    if (cutHistory.length === 0) return;
+    cutSelection = cutHistory.pop();
+    el.cutUndoBtn.disabled = cutHistory.length === 0;
+    refreshCutHighlight();
   });
+  el.cutRadius.addEventListener('input', updateCutRadiusLabel);
 
   // topologia per-parte (adiacenza + normali + centroidi), calcolata al primo
   // tocco e riusata; invalidata quando la geometria della parte cambia
@@ -567,7 +603,12 @@
   }
 
   function refreshCutHighlight() {
-    if (!cutSelection || cutSelection.faces.size === 0) { resetCutSelection(); return; }
+    if (!cutSelection || cutSelection.faces.size === 0) {
+      viewer.setHighlight(null);
+      el.cutCreateBtn.disabled = true;
+      el.cutCreateBtn.textContent = 'Crea parte (0 triangoli)';
+      return;
+    }
     const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
     if (!part) { resetCutSelection(); return; }
     const faces = [...cutSelection.faces];
@@ -594,11 +635,19 @@
     // il raggio e' una percentuale della dimensione massima del modello
     const maxDim = computeOverallMaxDimension(currentResult.parts);
     const maxRadius = maxDim * (parseInt(el.cutRadius.value, 10) / 100);
-    const newFaces = wandSelect(part, hit.faceIndex, maxRadius);
-    if (cutSelection && cutSelection.partId === hit.partId) {
-      newFaces.forEach((f) => cutSelection.faces.add(f));
+    const tappedFaces = wandSelect(part, hit.faceIndex, maxRadius);
+
+    if (cutErase) {
+      // gomma: rimuove dalla selezione dove tocchi
+      if (!cutSelection || cutSelection.partId !== hit.partId) return;
+      pushCutHistory();
+      tappedFaces.forEach((f) => cutSelection.faces.delete(f));
+    } else if (cutSelection && cutSelection.partId === hit.partId) {
+      pushCutHistory();
+      tappedFaces.forEach((f) => cutSelection.faces.add(f));
     } else {
-      cutSelection = { partId: hit.partId, faces: newFaces };
+      pushCutHistory();
+      cutSelection = { partId: hit.partId, faces: tappedFaces };
     }
     refreshCutHighlight();
   }

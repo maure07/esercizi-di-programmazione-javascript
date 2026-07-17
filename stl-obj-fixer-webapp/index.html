@@ -223,7 +223,10 @@
   .cut-slider-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
   .cut-slider-row label { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
   #cutRadius { flex: 1; }
-  #cutRadiusValue { font-size: 12px; width: 38px; text-align: right; color: var(--text-dim); }
+  #cutRadiusValue { font-size: 12px; min-width: 38px; text-align: right; color: var(--text-dim); white-space: nowrap; }
+  .cut-actions button.active { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  #cutUndoBtn { flex: 0 0 52px; }
+  #cutUndoBtn:disabled { opacity: 0.4; }
   .cut-actions { display: flex; gap: 8px; }
   .cut-actions button {
     flex: 1;
@@ -381,11 +384,16 @@
     <button id="cutToggleBtn">✂️ Ritaglio manuale</button>
   </div>
   <div id="cutControls" style="display:none">
-    <div id="cutHint">Tocca il modello per selezionare una zona (tocchi ripetuti aggiungono). La selezione si ferma ai solchi e al raggio impostato.</div>
+    <div id="cutHint">Tocca il modello per selezionare (giallo). Raggio piccolo = tocchi precisi. ➖ Rimuovi cancella dove tocchi, ↩ annulla l'ultimo tocco.</div>
     <div class="cut-slider-row">
       <label for="cutRadius">Raggio</label>
-      <input type="range" id="cutRadius" min="2" max="60" value="15" />
-      <span id="cutRadiusValue">15%</span>
+      <input type="range" id="cutRadius" min="1" max="40" value="8" />
+      <span id="cutRadiusValue">8%</span>
+    </div>
+    <div class="cut-actions" style="margin-bottom:8px">
+      <button id="cutModeAddBtn" class="active">➕ Aggiungi</button>
+      <button id="cutModeEraseBtn">➖ Rimuovi</button>
+      <button id="cutUndoBtn" disabled>↩</button>
     </div>
     <div class="cut-actions">
       <button id="cutCreateBtn" disabled>Crea parte (0 triangoli)</button>
