@@ -23,6 +23,13 @@
     scaleHeight: document.getElementById('scaleHeight'),
     scaleApplyBtn: document.getElementById('scaleApplyBtn'),
     scaleHint: document.getElementById('scaleHint'),
+    cutRow: document.getElementById('cutRow'),
+    cutToggleBtn: document.getElementById('cutToggleBtn'),
+    cutControls: document.getElementById('cutControls'),
+    cutRadius: document.getElementById('cutRadius'),
+    cutRadiusValue: document.getElementById('cutRadiusValue'),
+    cutCreateBtn: document.getElementById('cutCreateBtn'),
+    cutCancelBtn: document.getElementById('cutCancelBtn'),
     logTitle: document.getElementById('logTitle'),
     log: document.getElementById('log'),
     partsTitle: document.getElementById('partsTitle'),
@@ -116,6 +123,7 @@
 
       currentParsed = parsed;
       currentScaleFactor = 1; // nuovo file: riparti dalla scala nativa del file
+      setCutMode(false);
       // metodo predefinito: materiali espliciti multipli -> per materiale;
       // texture/colori -> combinata (forma + colore); nessun colore -> forma
       if (parsed.hasMaterialInfo && parsed.materialCount > 1) {
@@ -218,6 +226,8 @@
     el.methodRow.style.display = 'flex';
     el.controlsRow.style.display = (result.mode === 'color-cluster' || result.mode === 'geometry' || result.mode === 'combined') ? 'flex' : 'none';
     el.scaleRow.style.display = result.parts.length > 0 ? 'flex' : 'none';
+    el.cutRow.style.display = result.parts.length > 0 ? 'block' : 'none';
+    resetCutSelection();
     el.logTitle.style.display = '';
     el.partsTitle.style.display = '';
     el.exportRow.style.display = 'flex';
@@ -456,5 +466,214 @@
     const zipBytes = Exporter.buildZip(files);
     const blob = new Blob([zipBytes], { type: 'application/zip' });
     triggerDownload(blob, 'parti_stampabili.zip');
+  });
+
+  // =====================================================================
+  // RITAGLIO MANUALE: tocchi il modello, una "bacchetta" seleziona la zona
+  // attorno al punto (si ferma ai solchi concavi e al raggio massimo), e
+  // "Crea parte" la scorpora in una parte nuova.
+  // =====================================================================
+  let cutMode = false;
+  let cutSelection = null; // { partId, faces: Set<number> }
+
+  function resetCutSelection() {
+    cutSelection = null;
+    viewer.setHighlight(null);
+    el.cutCreateBtn.disabled = true;
+    el.cutCreateBtn.textContent = 'Crea parte (0 triangoli)';
+  }
+
+  function setCutMode(active) {
+    cutMode = active;
+    el.cutToggleBtn.classList.toggle('active', active);
+    el.cutToggleBtn.textContent = active ? '✂️ Ritaglio attivo — tocca il modello' : '✂️ Ritaglio manuale';
+    el.cutControls.style.display = active ? 'block' : 'none';
+    if (!active) resetCutSelection();
+  }
+
+  el.cutToggleBtn.addEventListener('click', () => setCutMode(!cutMode));
+  el.cutCancelBtn.addEventListener('click', () => resetCutSelection());
+  el.cutRadius.addEventListener('input', () => {
+    el.cutRadiusValue.textContent = el.cutRadius.value + '%';
+  });
+
+  // topologia per-parte (adiacenza + normali + centroidi), calcolata al primo
+  // tocco e riusata; invalidata quando la geometria della parte cambia
+  function ensurePartTopology(part) {
+    if (part._topo) return part._topo;
+    const nTris = part.indices.length / 3;
+    const normals = new Float32Array(nTris * 3);
+    const centroids = new Float32Array(nTris * 3);
+    for (let t = 0; t < nTris; t++) {
+      const a = part.indices[t * 3], b = part.indices[t * 3 + 1], c = part.indices[t * 3 + 2];
+      const ax = part.positions[a * 3], ay = part.positions[a * 3 + 1], az = part.positions[a * 3 + 2];
+      const bx = part.positions[b * 3], by = part.positions[b * 3 + 1], bz = part.positions[b * 3 + 2];
+      const cx = part.positions[c * 3], cy = part.positions[c * 3 + 1], cz = part.positions[c * 3 + 2];
+      let nx = (by - ay) * (cz - az) - (bz - az) * (cy - ay);
+      let ny = (bz - az) * (cx - ax) - (bx - ax) * (cz - az);
+      let nz = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+      const len = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+      normals[t * 3] = nx / len; normals[t * 3 + 1] = ny / len; normals[t * 3 + 2] = nz / len;
+      centroids[t * 3] = (ax + bx + cx) / 3;
+      centroids[t * 3 + 1] = (ay + by + cy) / 3;
+      centroids[t * 3 + 2] = (az + bz + cz) / 3;
+    }
+    const edgeMap = MeshCore.buildEdgeMap(part.indices);
+    const adjacency = Array.from({ length: nTris }, () => []);
+    edgeMap.forEach((occ) => {
+      if (occ.length < 2) return;
+      for (let i = 0; i < occ.length; i++) {
+        for (let j = i + 1; j < occ.length; j++) {
+          adjacency[occ[i].face].push(occ[j].face);
+          adjacency[occ[j].face].push(occ[i].face);
+        }
+      }
+    });
+    part._topo = { adjacency, normals, centroids };
+    return part._topo;
+  }
+
+  const CUT_CREASE_DEG = 18; // la bacchetta si ferma alle pieghe concave oltre questo angolo
+
+  function wandSelect(part, seedFace, maxRadius) {
+    const { adjacency, normals, centroids } = ensurePartTopology(part);
+    const stopCos = Math.cos((CUT_CREASE_DEG * Math.PI) / 180);
+    const selected = new Set([seedFace]);
+    const dist = new Map([[seedFace, 0]]);
+    const queue = [seedFace];
+    while (queue.length) {
+      const f = queue.shift();
+      const df = dist.get(f);
+      for (const nb of adjacency[f]) {
+        if (selected.has(nb)) continue;
+        // fermati alle pieghe concave marcate
+        const dot = normals[f * 3] * normals[nb * 3]
+          + normals[f * 3 + 1] * normals[nb * 3 + 1]
+          + normals[f * 3 + 2] * normals[nb * 3 + 2];
+        const sx = centroids[nb * 3] - centroids[f * 3];
+        const sy = centroids[nb * 3 + 1] - centroids[f * 3 + 1];
+        const sz = centroids[nb * 3 + 2] - centroids[f * 3 + 2];
+        const side = normals[f * 3] * sx + normals[f * 3 + 1] * sy + normals[f * 3 + 2] * sz;
+        if (side > 1e-12 && dot < stopCos) continue;
+        const step = Math.sqrt(sx * sx + sy * sy + sz * sz);
+        const dNew = df + step;
+        if (dNew > maxRadius) continue;
+        selected.add(nb);
+        dist.set(nb, dNew);
+        queue.push(nb);
+      }
+    }
+    return selected;
+  }
+
+  function refreshCutHighlight() {
+    if (!cutSelection || cutSelection.faces.size === 0) { resetCutSelection(); return; }
+    const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
+    if (!part) { resetCutSelection(); return; }
+    const faces = [...cutSelection.faces];
+    const positions = new Float32Array(faces.length * 9);
+    faces.forEach((t, i) => {
+      for (let k = 0; k < 3; k++) {
+        const vi = part.indices[t * 3 + k];
+        positions[i * 9 + k * 3] = part.positions[vi * 3];
+        positions[i * 9 + k * 3 + 1] = part.positions[vi * 3 + 1];
+        positions[i * 9 + k * 3 + 2] = part.positions[vi * 3 + 2];
+      }
+    });
+    viewer.setHighlight(positions);
+    el.cutCreateBtn.disabled = false;
+    el.cutCreateBtn.textContent = `Crea parte (${faces.length.toLocaleString('it-IT')} triangoli)`;
+  }
+
+  function handleCutTap(clientX, clientY) {
+    if (!currentResult) return;
+    const hit = viewer.raycastAt(clientX, clientY);
+    if (!hit) return;
+    const part = currentResult.parts.find((p) => p.id === hit.partId);
+    if (!part) return;
+    // il raggio e' una percentuale della dimensione massima del modello
+    const maxDim = computeOverallMaxDimension(currentResult.parts);
+    const maxRadius = maxDim * (parseInt(el.cutRadius.value, 10) / 100);
+    const newFaces = wandSelect(part, hit.faceIndex, maxRadius);
+    if (cutSelection && cutSelection.partId === hit.partId) {
+      newFaces.forEach((f) => cutSelection.faces.add(f));
+    } else {
+      cutSelection = { partId: hit.partId, faces: newFaces };
+    }
+    refreshCutHighlight();
+  }
+
+  el.cutCreateBtn.addEventListener('click', () => {
+    if (!cutSelection || cutSelection.faces.size === 0 || !currentResult) return;
+    const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
+    if (!part) return;
+    const nTris = part.indices.length / 3;
+    const selectedFaces = [...cutSelection.faces];
+    if (selectedFaces.length >= nTris) {
+      alert('La selezione copre tutta la parte: non c\'è nulla da scorporare.');
+      return;
+    }
+    setLoading(true, 'Ritaglio e riparazione in corso…');
+    setTimeout(() => {
+      try {
+        const selectedSet = cutSelection.faces;
+        const restFaces = [];
+        for (let t = 0; t < nTris; t++) if (!selectedSet.has(t)) restFaces.push(t);
+
+        const subSel = MeshCore.extractSubMesh(part.positions, part.indices, selectedFaces);
+        const repairedSel = MeshCore.repairMesh(subSel.positions, subSel.indices);
+        const subRest = MeshCore.extractSubMesh(part.positions, part.indices, restFaces);
+        const repairedRest = MeshCore.repairMesh(subRest.positions, subRest.indices);
+
+        // aggiorna la parte originale con il "resto"
+        part.positions = repairedRest.positions;
+        part.indices = repairedRest.indices;
+        part.log = part.log.concat([`Scorporati ${selectedFaces.length} triangoli con il ritaglio manuale`]);
+        part.watertight = repairedRest.watertight;
+        part.stats = repairedRest.stats;
+        delete part._topo;
+
+        // nuova parte dal ritaglio
+        const existing = currentResult.parts.filter((p) => /^ritaglio/.test(p.name)).length;
+        currentResult.parts.push({
+          id: 'part_cut_' + Date.now(),
+          name: existing === 0 ? 'ritaglio' : `ritaglio (${existing + 1})`,
+          color: part.color.map((c) => Math.min(1, c * 0.6 + 0.35)),
+          sourceTriangleCount: selectedFaces.length,
+          positions: repairedSel.positions,
+          indices: repairedSel.indices,
+          log: repairedSel.log,
+          watertight: repairedSel.watertight,
+          stats: repairedSel.stats,
+          included: true,
+        });
+        currentResult.parts.sort((a, b) => b.stats.volume - a.stats.volume);
+        resetCutSelection();
+        renderResult(currentResult);
+        setCutMode(true); // resta in modalita' ritaglio per ritagli successivi
+      } catch (err) {
+        console.error(err);
+        alert('Errore durante il ritaglio: ' + err.message);
+      } finally {
+        setLoading(false);
+      }
+    }, 30);
+  });
+
+  // tap sul canvas (distinto dal trascinamento per ruotare)
+  let tapStart = null;
+  el.viewer.addEventListener('pointerdown', (e) => {
+    tapStart = { x: e.clientX, y: e.clientY, time: Date.now() };
+  });
+  el.viewer.addEventListener('pointerup', (e) => {
+    if (!cutMode || !tapStart) { tapStart = null; return; }
+    const dx = e.clientX - tapStart.x;
+    const dy = e.clientY - tapStart.y;
+    const moved = Math.sqrt(dx * dx + dy * dy);
+    const elapsed = Date.now() - tapStart.time;
+    tapStart = null;
+    if (moved < 10 && elapsed < 600) {
+      handleCutTap(e.clientX, e.clientY);
+    }
   });
 })();

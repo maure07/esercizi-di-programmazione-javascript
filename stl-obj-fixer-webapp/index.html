@@ -200,6 +200,43 @@
     margin-top: 6px;
   }
 
+  #cutRow { margin-top: 10px; }
+  #cutToggleBtn {
+    width: 100%;
+    background: var(--panel2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  #cutToggleBtn.active { border-color: var(--warn); color: var(--warn); }
+  #cutControls {
+    margin-top: 8px;
+    background: var(--panel2);
+    border: 1px solid var(--warn);
+    border-radius: 10px;
+    padding: 10px;
+  }
+  #cutHint { font-size: 12px; color: var(--text-dim); line-height: 1.45; margin-bottom: 8px; }
+  .cut-slider-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .cut-slider-row label { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
+  #cutRadius { flex: 1; }
+  #cutRadiusValue { font-size: 12px; width: 38px; text-align: right; color: var(--text-dim); }
+  .cut-actions { display: flex; gap: 8px; }
+  .cut-actions button {
+    flex: 1;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 9px 8px;
+    font-size: 12.5px;
+  }
+  #cutCreateBtn:not(:disabled) { border-color: var(--accent2); color: var(--accent2); font-weight: 600; }
+  #cutCreateBtn:disabled { opacity: 0.45; }
+
   #partsList { display: flex; flex-direction: column; gap: 8px; }
   .part-card {
     background: var(--panel2);
@@ -339,6 +376,22 @@
     <button id="scaleApplyBtn">Applica scala</button>
   </div>
   <div id="scaleHint" style="display:none"></div>
+
+  <div id="cutRow" style="display:none">
+    <button id="cutToggleBtn">✂️ Ritaglio manuale</button>
+  </div>
+  <div id="cutControls" style="display:none">
+    <div id="cutHint">Tocca il modello per selezionare una zona (tocchi ripetuti aggiungono). La selezione si ferma ai solchi e al raggio impostato.</div>
+    <div class="cut-slider-row">
+      <label for="cutRadius">Raggio</label>
+      <input type="range" id="cutRadius" min="2" max="60" value="15" />
+      <span id="cutRadiusValue">15%</span>
+    </div>
+    <div class="cut-actions">
+      <button id="cutCreateBtn" disabled>Crea parte (0 triangoli)</button>
+      <button id="cutCancelBtn">Annulla</button>
+    </div>
+  </div>
 
   <div class="section-title" id="logTitle" style="display:none">Registro riparazione</div>
   <div id="log"></div>

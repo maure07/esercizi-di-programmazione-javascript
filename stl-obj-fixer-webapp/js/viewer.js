@@ -121,6 +121,7 @@
     function clearParts() {
       meshes.forEach((m) => { scene.remove(m); m.geometry.dispose(); m.material.dispose(); });
       meshes.clear();
+      setHighlight(null);
     }
 
     function colorToHex(c) {
@@ -149,6 +150,53 @@
       if (m) m.visible = visible;
     }
 
+    // --- raycast: da coordinate schermo a (parte, triangolo) ---
+    const raycaster = new THREE.Raycaster();
+    function raycastAt(clientX, clientY) {
+      const rect = canvas.getBoundingClientRect();
+      const ndc = new THREE.Vector2(
+        ((clientX - rect.left) / rect.width) * 2 - 1,
+        -((clientY - rect.top) / rect.height) * 2 + 1
+      );
+      raycaster.setFromCamera(ndc, camera);
+      const list = [];
+      meshes.forEach((m, id) => {
+        if (!m.visible) return;
+        m.userData.partId = id;
+        list.push(m);
+      });
+      const hits = raycaster.intersectObjects(list, false);
+      if (hits.length === 0) return null;
+      return { partId: hits[0].object.userData.partId, faceIndex: hits[0].faceIndex };
+    }
+
+    // --- evidenziazione della selezione manuale ---
+    let highlightMesh = null;
+    function setHighlight(positionsArray) {
+      if (highlightMesh) {
+        scene.remove(highlightMesh);
+        highlightMesh.geometry.dispose();
+        highlightMesh.material.dispose();
+        highlightMesh = null;
+      }
+      if (!positionsArray || positionsArray.length === 0) return;
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positionsArray, 3));
+      geometry.computeVertexNormals();
+      const material = new THREE.MeshBasicMaterial({
+        color: 0xffe14d,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.85,
+        depthTest: true,
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -2,
+      });
+      highlightMesh = new THREE.Mesh(geometry, material);
+      scene.add(highlightMesh);
+    }
+
     function frameAll() {
       const box = new THREE.Box3();
       let has = false;
@@ -168,7 +216,7 @@
       updateCamera();
     }
 
-    return { scene, camera, renderer, clearParts, addPart, setPartVisible, frameAll, resize };
+    return { scene, camera, renderer, clearParts, addPart, setPartVisible, frameAll, resize, raycastAt, setHighlight };
   }
 
   root.createViewer = createViewer;
