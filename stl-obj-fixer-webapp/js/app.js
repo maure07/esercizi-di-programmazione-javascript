@@ -43,6 +43,8 @@
     stepChip3: document.getElementById('stepChip3'),
     analysisPanel: document.getElementById('analysisPanel'),
     analysisReport: document.getElementById('analysisReport'),
+    modelHeight: document.getElementById('modelHeight'),
+    applyModelScaleBtn: document.getElementById('applyModelScaleBtn'),
     repairBtn: document.getElementById('repairBtn'),
     toSegmentBtn: document.getElementById('toSegmentBtn'),
     repairPanel: document.getElementById('repairPanel'),
@@ -232,7 +234,7 @@
 
     el.analysisReport.innerHTML = `
       <div><span class="dim">Triangoli:</span> ${fmt(nTris, 0)}</div>
-      <div><span class="dim">Dimensioni:</span> ${fmt(size[0], 1)}×${fmt(size[1], 1)}×${fmt(size[2], 1)} (unità del file)</div>
+      <div><span class="dim">Dimensioni:</span> ${fmt(size[0], 1)}×${fmt(size[1], 1)}×${fmt(size[2], 1)} mm <span class="dim">(se non corrisponde, imposta l'altezza qui sotto)</span></div>
       <div><span class="dim">Pezzi separati nel file:</span> ${fmt(comp.componentCount, 0)}</div>
       <div style="margin-top:6px">${issuesHtml}</div>
     `;
@@ -270,6 +272,28 @@
       setLoading(false);
     }
   }
+
+  el.applyModelScaleBtn.addEventListener('click', async () => {
+    if (!currentParsed || !currentAnalysis) return;
+    const targetCm = parseFloat(el.modelHeight.value);
+    if (!targetCm || targetCm <= 0) {
+      alert('Inserisci un\'altezza valida in centimetri (es. 15).');
+      return;
+    }
+    const maxDim = Math.max(...currentAnalysis.size);
+    if (!(maxDim > 0)) return;
+    const factor = (targetCm * 10) / maxDim;
+    // scala i dati grezzi UNA volta: tutto il resto (riparazione,
+    // segmentazione, export) lavorera' gia' in millimetri reali
+    for (let i = 0; i < currentParsed.rawPositions.length; i++) {
+      currentParsed.rawPositions[i] *= factor;
+    }
+    currentRepaired = null;
+    currentResult = null;
+    el.downloadRepairedBtn.style.display = 'none';
+    el.repairReport.textContent = 'Premi "Ripara adesso" per correggere gli errori trovati e chiudere i buchi.';
+    await runAnalysis();
+  });
 
   el.repairBtn.addEventListener('click', () => { goToStep(2); if (!currentRepaired) runWholeRepair(); });
   el.runRepairBtn.addEventListener('click', () => { if (!currentRepaired) runWholeRepair(); });

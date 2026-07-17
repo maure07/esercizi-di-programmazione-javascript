@@ -70,6 +70,28 @@
   };
 
   // ---------------------------------------------------------------------
+  // Rimozione triangoli DUPLICATI (stessa terna di vertici, in qualsiasi
+  // ordine/orientamento): tipici della geometria doppia degli export IA e
+  // causa principale degli edge non-manifold. Tiene la prima occorrenza.
+  // ---------------------------------------------------------------------
+  MeshCore.removeDuplicateFaces = function (indices) {
+    const nTris = indices.length / 3;
+    const seen = new Set();
+    const kept = [];
+    for (let t = 0; t < nTris; t++) {
+      const a = indices[t * 3], b = indices[t * 3 + 1], c = indices[t * 3 + 2];
+      const lo = Math.min(a, b, c);
+      const hi = Math.max(a, b, c);
+      const mid = a + b + c - lo - hi;
+      const key = lo + '_' + mid + '_' + hi;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      kept.push(a, b, c);
+    }
+    return { indices: Uint32Array.from(kept), removed: nTris - kept.length / 3 };
+  };
+
+  // ---------------------------------------------------------------------
   // Mappa degli edge: per ogni edge non orientato, elenco delle occorrenze
   // {face, a, b} con (a,b) nell'ordine con cui compaiono nel winding del triangolo.
   // ---------------------------------------------------------------------
@@ -468,48 +490,68 @@
     options = options || {};
     const log = [];
 
-    let deg = MeshCore.removeDegenerateTriangles(positions, indices, options.areaEpsilon);
-    let idx = deg.indices;
-    if (indices.length !== idx.length) {
-      log.push(`Rimossi ${(indices.length - idx.length) / 3} triangoli degeneri`);
+    // 1) rimuovi i triangoli duplicati (causa principale degli edge non-manifold)
+    const dedup = MeshCore.removeDuplicateFaces(indices);
+    let idx = dedup.indices;
+    if (dedup.removed > 0) log.push(`Rimossi ${dedup.removed} triangoli duplicati`);
+
+    // 2) rimuovi i triangoli degeneri
+    const nBeforeDeg = idx.length;
+    const deg = MeshCore.removeDegenerateTriangles(positions, idx, options.areaEpsilon);
+    idx = deg.indices;
+    if (nBeforeDeg !== idx.length) {
+      log.push(`Rimossi ${(nBeforeDeg - idx.length) / 3} triangoli degeneri`);
     }
 
-    let edgeMap = MeshCore.buildEdgeMap(idx);
-    const winding = MeshCore.fixWindingConsistency(idx, edgeMap);
-    if (winding.flippedCount > 0) log.push(`Corretto orientamento di ${winding.flippedCount} triangoli`);
+    // 3) chiusura dei buchi in PIU' passate: le toppe aggiunte in una passata
+    //    creano nuovi spigoli che possono permettere di chiudere altri loop
+    //    alla passata successiva (tipico delle mesh con giunzioni difettose).
+    let totalFlipped = 0;
+    let totalHolesClosed = 0;
+    let nonManifoldLogged = false;
+    let edgeMap = null;
+    const maxPasses = options.maxClosePasses === undefined ? 3 : options.maxClosePasses;
+    for (let pass = 0; pass < maxPasses; pass++) {
+      edgeMap = MeshCore.buildEdgeMap(idx);
+      const winding = MeshCore.fixWindingConsistency(idx, edgeMap);
+      totalFlipped += winding.flippedCount;
+      // fixWindingConsistency modifica idx in place: le direzioni degli edge
+      // registrate sopra sono obsolete, vanno ricalcolate prima dei loop
+      edgeMap = MeshCore.buildEdgeMap(idx);
 
-    // Ricostruisci la mappa degli edge: fixWindingConsistency ha modificato idx
-    // in place, quindi le direzioni degli edge di bordo registrate sopra sono
-    // ormai obsolete e vanno ricalcolate prima di tracciare i loop di bordo.
-    edgeMap = MeshCore.buildEdgeMap(idx);
-
-    let nonManifold = 0;
-    edgeMap.forEach((occ) => { if (occ.length > 2) nonManifold++; });
-    if (nonManifold > 0) log.push(`Attenzione: ${nonManifold} edge non-manifold rilevati (geometria complessa)`);
-
-    const boundary = MeshCore.traceBoundaryLoops(idx, edgeMap);
-    let newTriangles = [];
-    let holesClosed = 0;
-    for (const loop of boundary.loops) {
-      const capIndices = MeshCore.triangulateLoop(positions, loop);
-      if (capIndices.length > 0) {
-        newTriangles = newTriangles.concat(capIndices);
-        holesClosed++;
+      if (!nonManifoldLogged) {
+        let nonManifold = 0;
+        edgeMap.forEach((occ) => { if (occ.length > 2) nonManifold++; });
+        if (nonManifold > 0) log.push(`Attenzione: ${nonManifold} edge non-manifold rilevati (geometria complessa)`);
+        nonManifoldLogged = true;
       }
-    }
-    if (holesClosed > 0) log.push(`Chiusi ${holesClosed} buchi (${boundary.loops.reduce((s, l) => s + l.length, 0)} vertici di bordo)`);
-    if (boundary.openEdgesLeft > 0) log.push(`Attenzione: ${boundary.openEdgesLeft} edge di bordo non richiudibili automaticamente`);
 
-    let finalIndices = idx;
-    if (newTriangles.length > 0) {
-      finalIndices = new Uint32Array(idx.length + newTriangles.length);
-      finalIndices.set(idx);
-      finalIndices.set(newTriangles, idx.length);
-    }
+      const boundary = MeshCore.traceBoundaryLoops(idx, edgeMap);
+      if (boundary.totalBoundaryEdges === 0) break;
 
-    // Riorienta tutto verso l'esterno usando le componenti connesse finali
+      let newTriangles = [];
+      let holesClosed = 0;
+      for (const loop of boundary.loops) {
+        const capIndices = MeshCore.triangulateLoop(positions, loop);
+        if (capIndices.length > 0) {
+          newTriangles = newTriangles.concat(capIndices);
+          holesClosed++;
+        }
+      }
+      if (holesClosed === 0) break; // nessun progresso possibile
+      totalHolesClosed += holesClosed;
+      const merged = new Uint32Array(idx.length + newTriangles.length);
+      merged.set(idx);
+      merged.set(newTriangles, idx.length);
+      idx = merged;
+    }
+    if (totalFlipped > 0) log.push(`Corretto orientamento di ${totalFlipped} triangoli`);
+    if (totalHolesClosed > 0) log.push(`Chiusi ${totalHolesClosed} buchi`);
+
+    // 4) orienta tutto verso l'esterno usando le componenti connesse finali
+    const finalIndices = idx;
     edgeMap = MeshCore.buildEdgeMap(finalIndices);
-    const winding2 = MeshCore.fixWindingConsistency(finalIndices, edgeMap);
+    MeshCore.fixWindingConsistency(finalIndices, edgeMap);
     const comp = MeshCore.connectedComponents(finalIndices, edgeMap);
     MeshCore.orientOutward(positions, finalIndices, comp.faceComponentId, comp.componentCount);
 
