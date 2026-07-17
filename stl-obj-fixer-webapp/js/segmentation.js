@@ -365,16 +365,22 @@
     // riassorbito dalle fusioni successive.
     let creaseDotThreshold = creaseCos;
     {
+      // percentile piu' basso = ricerca piu' fine: piu' tagli candidati.
+      // L'eccesso viene riassorbito/fuso a valle, quindi conviene abbondare:
+      // e' la fusione fino al numero massimo di parti a scegliere quali
+      // confini sopravvivono (i piu' marcati).
+      const percentile = options.creasePercentile === undefined ? 0.55 : options.creasePercentile;
+      const minAngleDeg = options.minCreaseAngleDeg === undefined ? 4 : options.minCreaseAngleDeg;
       const concaveAngles = [];
       for (let i = 0; i < eDot.length; i++) {
         if (eConcave[i]) concaveAngles.push(Math.acos(eDot[i]));
       }
       if (concaveAngles.length > 0) {
         concaveAngles.sort((a, b) => a - b);
-        const p75 = concaveAngles[Math.min(concaveAngles.length - 1, Math.floor(concaveAngles.length * 0.75))];
-        const minAngle = (5 * Math.PI) / 180;
+        const p = concaveAngles[Math.min(concaveAngles.length - 1, Math.floor(concaveAngles.length * percentile))];
+        const minAngle = (minAngleDeg * Math.PI) / 180;
         const maxAngle = (creaseAngleDeg * Math.PI) / 180;
-        const adaptive = Math.min(maxAngle, Math.max(minAngle, p75 * 0.9));
+        const adaptive = Math.min(maxAngle, Math.max(minAngle, p * 0.9));
         creaseDotThreshold = Math.cos(adaptive);
       }
     }
@@ -543,6 +549,10 @@
 
     if (segmentMode === 'geometry') {
       const groups = buildGeometryGroups();
+      const target = options.colorParts === undefined ? 8 : options.colorParts;
+      if (groups.size < target) {
+        warnings.push(`Trovate ${groups.size} zone delimitate da pieghe abbastanza nette (massimo richiesto: ${target}): le altre giunzioni sono troppo morbide per un taglio automatico affidabile.`);
+      }
       return finalizeParts(groups, 'geometry', warnings, positions, indices, options);
     }
 
