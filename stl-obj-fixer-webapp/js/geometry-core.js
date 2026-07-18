@@ -352,7 +352,10 @@
     return !(hasNeg && hasPos);
   }
 
-  MeshCore.earClipPolygon2D = function (ptsIn) {
+  // Variante che segnala anche se la triangolazione e' andata a buon fine
+  // (tutte "orecchie" valide) oppure ha dovuto ripiegare su un ventaglio
+  // perche' il poligono non era semplice/convesso a sufficienza.
+  MeshCore.earClipPolygon2DEx = function (ptsIn) {
     let pts = ptsIn.slice();
     let order = pts.map((_, i) => i);
     const area = polygonSignedArea(pts);
@@ -363,6 +366,7 @@
     let ring = order.slice();
     let guard = 0;
     const maxGuard = ring.length * ring.length + 16;
+    let complete = true;
 
     while (ring.length > 3 && guard++ < maxGuard) {
       let earFound = false;
@@ -384,7 +388,7 @@
         earFound = true;
         break;
       }
-      if (!earFound) break; // poligono non semplice: interrompi, fallback sotto
+      if (!earFound) { complete = false; break; } // poligono non semplice
     }
 
     if (ring.length >= 3) {
@@ -399,7 +403,11 @@
         const tmp = tri[1]; tri[1] = tri[2]; tri[2] = tmp;
       }
     }
-    return triangles;
+    return { triangles, complete };
+  };
+
+  MeshCore.earClipPolygon2D = function (ptsIn) {
+    return MeshCore.earClipPolygon2DEx(ptsIn).triangles;
   };
 
   // ---------------------------------------------------------------------
@@ -408,9 +416,13 @@
   // loopVertexIndices: indici globali nel buffer positions.
   // Restituisce array piatto di nuovi indici di triangoli (globali).
   // ---------------------------------------------------------------------
-  MeshCore.triangulateLoop = function (positions, loopVertexIndices) {
+  // options.newVertexIndex: se il buco viene chiuso con un ventaglio dal
+  // baricentro, l'indice che avra' il nuovo vertice nel buffer positions.
+  // Restituisce { indices, newVertex } dove newVertex e' [x,y,z] o null.
+  MeshCore.triangulateLoop = function (positions, loopVertexIndices, options) {
+    options = options || {};
     const n = loopVertexIndices.length;
-    if (n < 3) return [];
+    if (n < 3) return { indices: [], newVertex: null };
     const pts3 = loopVertexIndices.map((vi) => [
       positions[vi * 3], positions[vi * 3 + 1], positions[vi * 3 + 2],
     ]);
@@ -425,13 +437,30 @@
       nz += (x1 - x2) * (y1 + y2);
     }
     let len = Math.sqrt(nx * nx + ny * ny + nz * nz);
-    if (len < 1e-12) return []; // loop degenere
+    if (len < 1e-12) return { indices: [], newVertex: null }; // loop degenere
     nx /= len; ny /= len; nz /= len;
+
+    // baricentro e planarita' del loop: scarto massimo dal piano medio
+    // rapportato al perimetro. Un buco quasi piatto si triangola bene con
+    // le "orecchie"; un buco molto curvo (tipico degli scafi aperti generati
+    // dall'IA) va chiuso a cupola con un ventaglio dal baricentro, altrimenti
+    // le orecchie proiettate si sovrappongono e la toppa esce storta.
+    let cx = 0, cy = 0, cz = 0;
+    for (let i = 0; i < n; i++) { cx += pts3[i][0]; cy += pts3[i][1]; cz += pts3[i][2]; }
+    cx /= n; cy /= n; cz /= n;
+    let maxDev = 0, perim = 0;
+    for (let i = 0; i < n; i++) {
+      const p = pts3[i];
+      const dev = Math.abs((p[0] - cx) * nx + (p[1] - cy) * ny + (p[2] - cz) * nz);
+      if (dev > maxDev) maxDev = dev;
+      const q = pts3[(i + 1) % n];
+      perim += Math.sqrt((p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 + (p[2] - q[2]) ** 2);
+    }
+    const planarityRatio = perim > 0 ? maxDev / perim : 0;
 
     // base locale (u,v) ortogonale alla normale
     let ux, uy, uz;
     if (Math.abs(nx) < 0.9) { ux = 1; uy = 0; uz = 0; } else { ux = 0; uy = 1; uz = 0; }
-    // u = normalize(up - (up.n)n)
     const d = ux * nx + uy * ny + uz * nz;
     ux -= d * nx; uy -= d * ny; uz -= d * nz;
     len = Math.sqrt(ux * ux + uy * uy + uz * uz);
@@ -440,14 +469,91 @@
     const vy = nz * ux - nx * uz;
     const vz = nx * uy - ny * ux;
 
-    const pts2 = pts3.map(([x, y, z]) => ({ x: x * ux + y * uy + z * uz, y: x * vx + y * vy + z * vz }));
-
-    const localTris = MeshCore.earClipPolygon2D(pts2);
-    const outIndices = [];
-    for (const [i0, i1, i2] of localTris) {
-      outIndices.push(loopVertexIndices[i0], loopVertexIndices[i1], loopVertexIndices[i2]);
+    // prova prima le orecchie (toppa piu' pulita se il buco e' semplice/piatto)
+    const allowCentroid = options.allowCentroid !== false && options.newVertexIndex !== undefined;
+    if (!allowCentroid || (n <= 5 && planarityRatio < 0.08)) {
+      const pts2 = pts3.map(([x, y, z]) => ({ x: x * ux + y * uy + z * uz, y: x * vx + y * vy + z * vz }));
+      const localTris = MeshCore.earClipPolygon2D(pts2);
+      const outIndices = [];
+      for (const [i0, i1, i2] of localTris) {
+        outIndices.push(loopVertexIndices[i0], loopVertexIndices[i1], loopVertexIndices[i2]);
+      }
+      return { indices: outIndices, newVertex: null };
     }
-    return outIndices;
+
+    const pts2 = pts3.map(([x, y, z]) => ({ x: x * ux + y * uy + z * uz, y: x * vx + y * vy + z * vz }));
+    const ear = MeshCore.earClipPolygon2DEx(pts2);
+    if (ear.complete && planarityRatio < 0.08) {
+      const outIndices = [];
+      for (const [i0, i1, i2] of ear.triangles) {
+        outIndices.push(loopVertexIndices[i0], loopVertexIndices[i1], loopVertexIndices[i2]);
+      }
+      return { indices: outIndices, newVertex: null };
+    }
+
+    // ventaglio dal baricentro: chiusura garantita e senza sovrapposizioni
+    // anche su fori molto curvi o non convessi. Il winding viene poi
+    // uniformato/orientato verso l'esterno da repairMesh.
+    const cIdx = options.newVertexIndex;
+    const outIndices = [];
+    for (let i = 0; i < n; i++) {
+      outIndices.push(loopVertexIndices[i], loopVertexIndices[(i + 1) % n], cIdx);
+    }
+    return { indices: outIndices, newVertex: [cx, cy, cz] };
+  };
+
+  // ---------------------------------------------------------------------
+  // "Zippering" dei bordi: salda tra loro i vertici DI BORDO che distano
+  // meno di epsilon. Serve a chiudere le cuciture/crepe (loop di bordo quasi
+  // coincidenti ma con vertici non saldati) tipiche dei modelli esportati a
+  // pezzi: non tocca i vertici interni, quindi non deforma la superficie.
+  // Restituisce { positions, indices, merged }.
+  // ---------------------------------------------------------------------
+  MeshCore.weldBoundaryVertices = function (positions, indices, epsilon) {
+    if (!(epsilon > 0)) return { positions, indices, merged: 0 };
+    const edgeMap = MeshCore.buildEdgeMap(indices);
+    const isBoundary = new Set();
+    edgeMap.forEach((occ) => {
+      if (occ.length === 1) { isBoundary.add(occ[0].a); isBoundary.add(occ[0].b); }
+    });
+    if (isBoundary.size === 0) return { positions, indices, merged: 0 };
+
+    // griglia spaziale sui soli vertici di bordo; ogni vertice cerca un
+    // rappresentante gia' visto entro epsilon nelle celle 3x3x3 vicine.
+    const inv = 1 / epsilon;
+    const grid = new Map();
+    const remap = new Int32Array(positions.length / 3);
+    for (let i = 0; i < remap.length; i++) remap[i] = i;
+    let merged = 0;
+    const boundaryList = [...isBoundary];
+    for (const vi of boundaryList) {
+      const x = positions[vi * 3], y = positions[vi * 3 + 1], z = positions[vi * 3 + 2];
+      const gx = Math.floor(x * inv), gy = Math.floor(y * inv), gz = Math.floor(z * inv);
+      let rep = -1;
+      for (let dx = -1; dx <= 1 && rep < 0; dx++) {
+        for (let dy = -1; dy <= 1 && rep < 0; dy++) {
+          for (let dz = -1; dz <= 1 && rep < 0; dz++) {
+            const cell = grid.get((gx + dx) + '_' + (gy + dy) + '_' + (gz + dz));
+            if (!cell) continue;
+            for (const cvi of cell) {
+              const dxx = positions[cvi * 3] - x, dyy = positions[cvi * 3 + 1] - y, dzz = positions[cvi * 3 + 2] - z;
+              if (dxx * dxx + dyy * dyy + dzz * dzz <= epsilon * epsilon) { rep = cvi; break; }
+            }
+          }
+        }
+      }
+      if (rep >= 0) { remap[vi] = rep; merged++; }
+      else {
+        const key = gx + '_' + gy + '_' + gz;
+        let cell = grid.get(key);
+        if (!cell) { cell = []; grid.set(key, cell); }
+        cell.push(vi);
+      }
+    }
+    if (merged === 0) return { positions, indices, merged: 0 };
+    const newIdx = new Uint32Array(indices.length);
+    for (let i = 0; i < indices.length; i++) newIdx[i] = remap[indices[i]];
+    return { positions, indices: newIdx, merged };
   };
 
   // ---------------------------------------------------------------------
@@ -585,6 +691,13 @@
   MeshCore.repairMesh = function (positions, indices, options) {
     options = options || {};
     const log = [];
+    // tolleranze relative alla dimensione del modello: il repair resta uguale
+    // a qualsiasi scala/unita' di misura
+    const tol = MeshCore.suggestTolerances(positions);
+    const areaEpsilon = options.areaEpsilon === undefined ? tol.areaEpsilon : options.areaEpsilon;
+    // epsilon per lo "zippering" dei bordi: un filo piu' largo del welding, cosi'
+    // da cucire le crepe (cuciture non saldate) senza toccare i vertici interni
+    const zipEpsilon = options.zipEpsilon === undefined ? tol.diag * 3e-5 : options.zipEpsilon;
 
     // 1) rimuovi i triangoli duplicati (causa principale degli edge non-manifold)
     const dedup = MeshCore.removeDuplicateFaces(indices);
@@ -593,21 +706,31 @@
 
     // 2) rimuovi i triangoli degeneri
     const nBeforeDeg = idx.length;
-    const deg = MeshCore.removeDegenerateTriangles(positions, idx, options.areaEpsilon);
+    const deg = MeshCore.removeDegenerateTriangles(positions, idx, areaEpsilon);
     idx = deg.indices;
     if (nBeforeDeg !== idx.length) {
       log.push(`Rimossi ${(nBeforeDeg - idx.length) / 3} triangoli degeneri`);
     }
 
-    // 3) chiusura dei buchi in PIU' passate: le toppe aggiunte in una passata
-    //    creano nuovi spigoli che possono permettere di chiudere altri loop
-    //    alla passata successiva (tipico delle mesh con giunzioni difettose).
+    // 3) chiusura dei buchi in PIU' passate. Prima di ogni tentativo di
+    //    triangolazione si "cuciono" i bordi vicini (zippering) e si tolgono
+    //    gli eventuali triangoli diventati degeneri: cosi' le crepe sottili si
+    //    saldano da sole e restano solo i buchi veri da tappare.
     let totalFlipped = 0;
     let totalHolesClosed = 0;
+    let totalZipped = 0;
     let nonManifoldLogged = false;
     let edgeMap = null;
-    const maxPasses = options.maxClosePasses === undefined ? 3 : options.maxClosePasses;
+    const maxPasses = options.maxClosePasses === undefined ? 4 : options.maxClosePasses;
     for (let pass = 0; pass < maxPasses; pass++) {
+      // zippering dei bordi quasi coincidenti
+      const zip = MeshCore.weldBoundaryVertices(positions, idx, zipEpsilon);
+      if (zip.merged > 0) {
+        totalZipped += zip.merged;
+        idx = MeshCore.removeDegenerateTriangles(positions, zip.indices, areaEpsilon).indices;
+        idx = MeshCore.removeDuplicateFaces(idx).indices;
+      }
+
       edgeMap = MeshCore.buildEdgeMap(idx);
       const winding = MeshCore.fixWindingConsistency(idx, edgeMap);
       totalFlipped += winding.flippedCount;
@@ -626,21 +749,35 @@
       if (boundary.totalBoundaryEdges === 0) break;
 
       let newTriangles = [];
+      let newVerts = [];
+      let nextVertIndex = positions.length / 3;
       let holesClosed = 0;
       for (const loop of boundary.loops) {
-        const capIndices = MeshCore.triangulateLoop(positions, loop);
-        if (capIndices.length > 0) {
-          newTriangles = newTriangles.concat(capIndices);
+        const cap = MeshCore.triangulateLoop(positions, loop, { newVertexIndex: nextVertIndex });
+        if (cap.indices.length > 0) {
+          if (cap.newVertex) {
+            newVerts.push(cap.newVertex[0], cap.newVertex[1], cap.newVertex[2]);
+            nextVertIndex++;
+          }
+          newTriangles = newTriangles.concat(cap.indices);
           holesClosed++;
         }
       }
       if (holesClosed === 0) break; // nessun progresso possibile
       totalHolesClosed += holesClosed;
+      // fai crescere il buffer positions con gli eventuali baricentri aggiunti
+      if (newVerts.length > 0) {
+        const grown = new Float64Array(positions.length + newVerts.length);
+        grown.set(positions);
+        grown.set(newVerts, positions.length);
+        positions = grown;
+      }
       const merged = new Uint32Array(idx.length + newTriangles.length);
       merged.set(idx);
       merged.set(newTriangles, idx.length);
       idx = merged;
     }
+    if (totalZipped > 0) log.push(`Cuciti ${totalZipped} vertici di bordo (crepe/cuciture)`);
     if (totalFlipped > 0) log.push(`Corretto orientamento di ${totalFlipped} triangoli`);
     if (totalHolesClosed > 0) log.push(`Chiusi ${totalHolesClosed} buchi`);
 

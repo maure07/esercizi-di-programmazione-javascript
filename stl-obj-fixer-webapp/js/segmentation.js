@@ -310,6 +310,8 @@
 
     const normals = new Float64Array(nTris * 3);
     const centroids = new Float64Array(nTris * 3);
+    const areas = new Float64Array(nTris);
+    let totalArea = 0;
     for (let t = 0; t < nTris; t++) {
       const a = idx[t * 3], b = idx[t * 3 + 1], c = idx[t * 3 + 2];
       const ax = positions[a * 3], ay = positions[a * 3 + 1], az = positions[a * 3 + 2];
@@ -318,11 +320,14 @@
       let nx = (by - ay) * (cz - az) - (bz - az) * (cy - ay);
       let ny = (bz - az) * (cx - ax) - (bx - ax) * (cz - az);
       let nz = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
-      const len = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+      const rawLen = Math.sqrt(nx * nx + ny * ny + nz * nz);
+      const len = rawLen || 1;
       normals[t * 3] = nx / len; normals[t * 3 + 1] = ny / len; normals[t * 3 + 2] = nz / len;
       centroids[t * 3] = (ax + bx + cx) / 3;
       centroids[t * 3 + 1] = (ay + by + cy) / 3;
       centroids[t * 3 + 2] = (az + bz + cz) / 3;
+      areas[t] = rawLen * 0.5; // area del triangolo
+      totalArea += areas[t];
     }
 
     const parent = new Int32Array(nTris);
@@ -337,8 +342,11 @@
       return a;
     }
 
-    // Raccogli tutti gli spigoli manifold con angolo diedro e concavita'.
-    const eF1 = [], eF2 = [], eDot = [], eConcave = [];
+    // Raccogli tutti gli spigoli manifold con angolo diedro, concavita' e
+    // LUNGHEZZA dello spigolo condiviso (serve a pesare i confini per
+    // estensione fisica, non per numero di triangoli: piu' preciso su mesh
+    // a tassellazione irregolare).
+    const eF1 = [], eF2 = [], eDot = [], eConcave = [], eLen = [];
     edgeMap.forEach((occ) => {
       if (occ.length !== 2) return;
       const f1 = occ[0].face, f2 = occ[1].face;
@@ -351,8 +359,12 @@
       const sy = centroids[f2 * 3 + 1] - centroids[f1 * 3 + 1];
       const sz = centroids[f2 * 3 + 2] - centroids[f1 * 3 + 2];
       const side = normals[f1 * 3] * sx + normals[f1 * 3 + 1] * sy + normals[f1 * 3 + 2] * sz;
+      const va = occ[0].a, vb = occ[0].b;
+      const el = Math.sqrt((positions[va * 3] - positions[vb * 3]) ** 2
+        + (positions[va * 3 + 1] - positions[vb * 3 + 1]) ** 2
+        + (positions[va * 3 + 2] - positions[vb * 3 + 2]) ** 2);
       eF1.push(f1); eF2.push(f2); eDot.push(dot);
-      eConcave.push(side > 1e-12 ? 1 : 0);
+      eConcave.push(side > 1e-12 ? 1 : 0); eLen.push(el);
     });
 
     // Soglia ADATTIVA: su una mesh densa e levigata (tipica dei generatori
@@ -387,10 +399,10 @@
 
     // Classifica: le pieghe concave sopra soglia diventano confini; tutto il
     // resto (piatto o convesso) unisce le regioni.
-    const creaseEdges = []; // [f1, f2, dotNormali]
+    const creaseEdges = []; // [f1, f2, dotNormali, lunghezzaSpigolo]
     for (let i = 0; i < eF1.length; i++) {
       if (eConcave[i] && eDot[i] < creaseDotThreshold) {
-        creaseEdges.push([eF1[i], eF2[i], eDot[i]]);
+        creaseEdges.push([eF1[i], eF2[i], eDot[i], eLen[i]]);
       } else {
         union(eF1[i], eF2[i]);
       }
@@ -405,27 +417,39 @@
       return sizes;
     }
 
-    const minSize = Math.max(3, Math.ceil(nTris * 0.002));
+    // dimensione di una regione = AREA fisica (non numero di triangoli): una
+    // parte piccola ma finemente tassellata non viene scambiata per rumore, e
+    // una parte grande fatta di pochi triangoloni non viene trattata da isola.
+    function computeAreas() {
+      const m = new Map();
+      for (let t = 0; t < nTris; t++) {
+        const r = find(t);
+        m.set(r, (m.get(r) || 0) + areas[t]);
+      }
+      return m;
+    }
+
+    const minArea = totalArea * (options.minRegionAreaFrac === undefined ? 0.002 : options.minRegionAreaFrac);
 
     // Assorbi i frammenti piccoli nel vicino (via pieghe) con cui condividono
     // piu' spigoli: sono rumore di tassellazione, non parti stampabili.
     // Con la soglia adattiva bassa le regioni iniziali possono essere molte:
     // servono piu' passate perche' le catene di fusioni convergano.
     for (let pass = 0; pass < 8; pass++) {
-      const sizes = computeSizes();
-      const neighborCount = new Map(); // rootPiccolo -> Map(rootVicino -> nSpigoli)
-      for (const [f1, f2] of creaseEdges) {
+      const sizes = computeAreas();
+      const neighborCount = new Map(); // rootPiccolo -> Map(rootVicino -> lunghezzaConfine)
+      for (const [f1, f2, , elen] of creaseEdges) {
         const r1 = find(f1), r2 = find(f2);
         if (r1 === r2) continue;
-        if (sizes.get(r1) < minSize) {
+        if (sizes.get(r1) < minArea) {
           let m = neighborCount.get(r1);
           if (!m) { m = new Map(); neighborCount.set(r1, m); }
-          m.set(r2, (m.get(r2) || 0) + 1);
+          m.set(r2, (m.get(r2) || 0) + elen);
         }
-        if (sizes.get(r2) < minSize) {
+        if (sizes.get(r2) < minArea) {
           let m = neighborCount.get(r2);
           if (!m) { m = new Map(); neighborCount.set(r2, m); }
-          m.set(r1, (m.get(r1) || 0) + 1);
+          m.set(r1, (m.get(r1) || 0) + elen);
         }
       }
       let changed = false;
@@ -443,9 +467,9 @@
     // Frammenti piccoli SENZA vicini via pieghe (isole sconnesse, geometria
     // duplicata): assegnali alla regione grande piu' vicina nello spazio.
     {
-      const sizes = computeSizes();
+      const sizes = computeAreas();
       const bigRoots = [];
-      sizes.forEach((size, root) => { if (size >= minSize) bigRoots.push(root); });
+      sizes.forEach((size, root) => { if (size >= minArea) bigRoots.push(root); });
       if (bigRoots.length === 0) {
         let largest = -1, largestSize = -1;
         sizes.forEach((size, root) => { if (size > largestSize) { largestSize = size; largest = root; } });
@@ -463,7 +487,7 @@
         return [s[0] / s[3], s[1] / s[3], s[2] / s[3], r];
       });
       sizes.forEach((size, root) => {
-        if (size >= minSize || find(root) !== root) return;
+        if (size >= minArea || find(root) !== root) return;
         if (bigRoots.length === 1 && bigRoots[0] === root) return;
         const s = centroidSum.get(root);
         const cx = s[0] / s[3], cy = s[1] / s[3], cz = s[2] / s[3];
@@ -481,21 +505,22 @@
     // le regioni non scendono al numero massimo richiesto: restano cosi' solo
     // i confini piu' marcati (es. il solco cappello-testa).
     {
-      const pairAgg = new Map(); // "rMin_rMax" -> {r1, r2, sumDot, n}
-      for (const [f1, f2, dot] of creaseEdges) {
+      const pairAgg = new Map(); // "rMin_rMax" -> {r1, r2, sumDot, sumLen, n}
+      for (const [f1, f2, dot, elen] of creaseEdges) {
         const r1 = find(f1), r2 = find(f2);
         if (r1 === r2) continue;
         const key = r1 < r2 ? r1 + '_' + r2 : r2 + '_' + r1;
         let e = pairAgg.get(key);
-        if (!e) { e = { r1, r2, sumDot: 0, n: 0 }; pairAgg.set(key, e); }
-        e.sumDot += dot; e.n++;
+        if (!e) { e = { r1, r2, sumDot: 0, sumLen: 0, n: 0 }; pairAgg.set(key, e); }
+        e.sumDot += dot; e.sumLen += elen; e.n++;
       }
       const pairs = [...pairAgg.values()];
-      // forza del confine = profondita' media della piega x lunghezza del
-      // confine: un solco lungo e marcato (cappello-testa) sopravvive a un
-      // confine corto anche se localmente ripido (rumore). Si fonde prima
-      // il confine piu' DEBOLE.
-      const strength = (e) => (1 - e.sumDot / e.n) * Math.sqrt(e.n);
+      // forza del confine = profondita' media della piega x LUNGHEZZA fisica
+      // del confine: un solco lungo e marcato (cappello-testa) sopravvive a un
+      // confine corto anche se localmente ripido (rumore). Pesare per lunghezza
+      // reale invece che per numero di spigoli e' piu' stabile su mesh a
+      // tassellazione irregolare. Si fonde prima il confine piu' DEBOLE.
+      const strength = (e) => (1 - e.sumDot / e.n) * Math.sqrt(e.sumLen);
       pairs.sort((a, b) => strength(a) - strength(b));
       let regionCount = computeSizes().size;
       for (const p of pairs) {
