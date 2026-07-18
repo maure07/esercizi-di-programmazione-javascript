@@ -397,12 +397,32 @@
       }
     }
 
-    // Classifica: le pieghe concave sopra soglia diventano confini; tutto il
-    // resto (piatto o convesso) unisce le regioni.
-    const creaseEdges = []; // [f1, f2, dotNormali, lunghezzaSpigolo]
+    // Classifica gli spigoli come CONFINE o come CUCITURA (unisce le regioni).
+    // Un confine nasce quando c'e' una piega concava marcata (forma) OPPURE,
+    // se sono disponibili i colori per faccia, un salto di colore netto: cosi'
+    // un dettaglio dipinto senza rilievo (occhi, sopracciglia) viene separato
+    // dal colore, mentre un rilievo dello stesso colore (tesa del cappello)
+    // viene separato dalla forma. Ogni confine porta una "forza" bs che pesa
+    // sia la profondita' della piega sia il contrasto di colore.
+    const faceColors = options.faceColors || null;
+    const colorThr = options.colorBoundaryThreshold === undefined ? 0.22 : options.colorBoundaryThreshold;
+    const creaseEdges = []; // [f1, f2, forzaConfine, lunghezzaSpigolo]
     for (let i = 0; i < eF1.length; i++) {
-      if (eConcave[i] && eDot[i] < creaseDotThreshold) {
-        creaseEdges.push([eF1[i], eF2[i], eDot[i], eLen[i]]);
+      const isCrease = eConcave[i] && eDot[i] < creaseDotThreshold;
+      let colorPart = 0;
+      if (faceColors) {
+        const f1 = eF1[i], f2 = eF2[i];
+        const dr = faceColors[f1 * 3] - faceColors[f2 * 3];
+        const dg = faceColors[f1 * 3 + 1] - faceColors[f2 * 3 + 1];
+        const db = faceColors[f1 * 3 + 2] - faceColors[f2 * 3 + 2];
+        const cd = Math.sqrt(dr * dr + dg * dg + db * db);
+        if (cd > colorThr) colorPart = Math.min(cd, 1);
+      }
+      if (isCrease || colorPart > 0) {
+        // profondita' piega (0..2) e contrasto colore (0..1) su scala confrontabile
+        const creasePart = isCrease ? (1 - eDot[i]) : 0;
+        const bs = Math.max(creasePart, colorPart);
+        creaseEdges.push([eF1[i], eF2[i], bs, eLen[i]]);
       } else {
         union(eF1[i], eF2[i]);
       }
@@ -505,22 +525,23 @@
     // le regioni non scendono al numero massimo richiesto: restano cosi' solo
     // i confini piu' marcati (es. il solco cappello-testa).
     {
-      const pairAgg = new Map(); // "rMin_rMax" -> {r1, r2, sumDot, sumLen, n}
-      for (const [f1, f2, dot, elen] of creaseEdges) {
+      const pairAgg = new Map(); // "rMin_rMax" -> {r1, r2, sumBS, sumLen, n}
+      for (const [f1, f2, bs, elen] of creaseEdges) {
         const r1 = find(f1), r2 = find(f2);
         if (r1 === r2) continue;
         const key = r1 < r2 ? r1 + '_' + r2 : r2 + '_' + r1;
         let e = pairAgg.get(key);
-        if (!e) { e = { r1, r2, sumDot: 0, sumLen: 0, n: 0 }; pairAgg.set(key, e); }
-        e.sumDot += dot; e.sumLen += elen; e.n++;
+        if (!e) { e = { r1, r2, sumBS: 0, sumLen: 0, n: 0 }; pairAgg.set(key, e); }
+        e.sumBS += bs; e.sumLen += elen; e.n++;
       }
       const pairs = [...pairAgg.values()];
-      // forza del confine = profondita' media della piega x LUNGHEZZA fisica
-      // del confine: un solco lungo e marcato (cappello-testa) sopravvive a un
-      // confine corto anche se localmente ripido (rumore). Pesare per lunghezza
-      // reale invece che per numero di spigoli e' piu' stabile su mesh a
-      // tassellazione irregolare. Si fonde prima il confine piu' DEBOLE.
-      const strength = (e) => (1 - e.sumDot / e.n) * Math.sqrt(e.sumLen);
+      // forza del confine = confidenza media (piega e/o contrasto colore) x
+      // LUNGHEZZA fisica del confine: un confine lungo e marcato (solco
+      // cappello-testa, bordo netto degli occhi) sopravvive a un confine corto
+      // anche se localmente forte (rumore). Pesare per lunghezza reale invece
+      // che per numero di spigoli e' piu' stabile su mesh a tassellazione
+      // irregolare. Si fonde prima il confine piu' DEBOLE.
+      const strength = (e) => (e.sumBS / e.n) * Math.sqrt(e.sumLen);
       pairs.sort((a, b) => strength(a) - strength(b));
       let regionCount = computeSizes().size;
       for (const p of pairs) {
@@ -593,23 +614,45 @@
     let labelColors = null;
     let mode = null;
     if (segmentMode === 'combined' && parsed.hasColorInfo && parsed.rawColors) {
-      // Modalita' COMBINATA: la forma da' la struttura (cappello, testa,
-      // corpo — confini puliti lungo i solchi), il colore da' i dettagli
-      // dipinti (occhi, sopracciglia). Ogni triangolo riceve l'etichetta
-      // congiunta zona-geometrica + colore: stessa vernice su pezzi fisici
-      // diversi resta separata, e i dettagli dipinti su una zona liscia
-      // vengono comunque isolati.
+      // Modalita' COMBINATA (crescita di regioni unica): la forma da' la
+      // struttura (cappello, testa, corpo — confini lungo i solchi), il colore
+      // da' i dettagli dipinti (occhi, sopracciglia). Un solo passaggio taglia
+      // sia sulle pieghe sia sui bordi di colore, poi consolida per area: molto
+      // meno frammentato del semplice prodotto forma x colore.
       const k = options.colorParts === undefined ? 8 : options.colorParts;
-      const geo = Segmentation.segmentByGeometry(positions, indices, k, options.geometryOptions);
-      const km = Segmentation.kMeansColorClusters(parsed.rawColors, nTris, k);
-      labels = new Array(nTris);
-      labelColors = new Map();
+      const geo = Segmentation.segmentByGeometry(positions, indices, k, Object.assign({}, options.geometryOptions, {
+        faceColors: parsed.rawColors,
+        colorBoundaryThreshold: options.colorBoundaryThreshold,
+      }));
+      // gruppi per regione, con il colore MEDIO REALE della regione (= quale
+      // filamento caricare); nome dato dal colore piu' vicino in italiano
+      const byRegion = new Map();
       for (let t = 0; t < nTris; t++) {
-        const label = 'z' + geo.labelIds[t] + '|c' + km.labelIds[t];
-        labels[t] = label;
-        if (!labelColors.has(label)) labelColors.set(label, km.clusters[km.labelIds[t]].color);
+        const id = geo.labelIds[t];
+        let l = byRegion.get(id);
+        if (!l) { l = []; byRegion.set(id, l); }
+        l.push(t);
       }
-      mode = 'combined';
+      const regionGroups = [];
+      byRegion.forEach((triList) => {
+        let r = 0, g = 0, b = 0;
+        for (const t of triList) { r += parsed.rawColors[t * 3]; g += parsed.rawColors[t * 3 + 1]; b += parsed.rawColors[t * 3 + 2]; }
+        const n = triList.length;
+        regionGroups.push({ triangles: triList, color: [r / n, g / n, b / n] });
+      });
+      regionGroups.sort((a, b) => b.triangles.length - a.triangles.length);
+      const groups = new Map();
+      const used = new Map();
+      regionGroups.forEach((grp) => {
+        const base = Segmentation.colorNameForRGB(grp.color[0], grp.color[1], grp.color[2]);
+        const nn = (used.get(base) || 0) + 1;
+        used.set(base, nn);
+        groups.set(nn === 1 ? base : `${base} (${nn})`, grp);
+      });
+      if (groups.size < k) {
+        warnings.push(`Trovate ${groups.size} parti unendo forma e colore (massimo richiesto: ${k}): le altre zone sono troppo simili (stesso colore e nessuna piega netta) per separarle in automatico.`);
+      }
+      return finalizeParts(groups, 'combined', warnings, positions, indices, options);
     } else {
       const res = Segmentation.buildTriangleLabels(parsed, options);
       labels = res.labels; labelColors = res.labelColors; mode = res.mode;
