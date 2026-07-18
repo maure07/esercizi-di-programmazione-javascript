@@ -505,6 +505,78 @@
   };
 
   // ---------------------------------------------------------------------
+  // Appoggio sul piano di stampa: trova la superficie PIANA dominante della
+  // parte (tipicamente la faccia di taglio), ruota la parte in modo che
+  // quella faccia guardi in basso (-Z, la verticale degli slicer) e la
+  // appoggia a Z=0. Restituisce una COPIA delle posizioni trasformate.
+  // ---------------------------------------------------------------------
+  MeshCore.layFlat = function (positions, indices) {
+    const nTris = indices.length / 3;
+    if (nTris === 0) return { positions: Float64Array.from(positions) };
+
+    // area e normale per faccia, aggregate per normale quantizzata (~3 gradi)
+    const buckets = new Map(); // chiave -> [sommaArea, nx, ny, nz] (pesati per area)
+    for (let t = 0; t < nTris; t++) {
+      const a = indices[t * 3], b = indices[t * 3 + 1], c = indices[t * 3 + 2];
+      const ax = positions[a * 3], ay = positions[a * 3 + 1], az = positions[a * 3 + 2];
+      const bx = positions[b * 3], by = positions[b * 3 + 1], bz = positions[b * 3 + 2];
+      const cx = positions[c * 3], cy = positions[c * 3 + 1], cz = positions[c * 3 + 2];
+      let nx = (by - ay) * (cz - az) - (bz - az) * (cy - ay);
+      let ny = (bz - az) * (cx - ax) - (bx - ax) * (cz - az);
+      let nz = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+      const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+      if (len < 1e-30) continue;
+      const area = len / 2;
+      nx /= len; ny /= len; nz /= len;
+      const key = Math.round(nx * 20) + '_' + Math.round(ny * 20) + '_' + Math.round(nz * 20);
+      let bkt = buckets.get(key);
+      if (!bkt) { bkt = [0, 0, 0, 0]; buckets.set(key, bkt); }
+      bkt[0] += area;
+      bkt[1] += nx * area; bkt[2] += ny * area; bkt[3] += nz * area;
+    }
+    let best = null;
+    buckets.forEach((bkt) => { if (!best || bkt[0] > best[0]) best = bkt; });
+    if (!best) return { positions: Float64Array.from(positions) };
+    let nx = best[1], ny = best[2], nz = best[3];
+    let len = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+    nx /= len; ny /= len; nz /= len;
+
+    // rotazione (Rodrigues) che porta la normale dominante su (0,0,-1)
+    const tx = 0, ty = 0, tz = -1;
+    const axx = ny * tz - nz * ty;
+    const axy = nz * tx - nx * tz;
+    const axz = nx * ty - ny * tx;
+    const s = Math.sqrt(axx * axx + axy * axy + axz * axz);
+    const cth = nx * tx + ny * ty + nz * tz;
+    let R;
+    if (s < 1e-9) {
+      R = cth > 0
+        ? [1, 0, 0, 0, 1, 0, 0, 0, 1]
+        : [1, 0, 0, 0, -1, 0, 0, 0, -1]; // 180 gradi attorno a X
+    } else {
+      const ux = axx / s, uy = axy / s, uz = axz / s;
+      const c1 = 1 - cth;
+      R = [
+        cth + ux * ux * c1, ux * uy * c1 - uz * s, ux * uz * c1 + uy * s,
+        uy * ux * c1 + uz * s, cth + uy * uy * c1, uy * uz * c1 - ux * s,
+        uz * ux * c1 - uy * s, uz * uy * c1 + ux * s, cth + uz * uz * c1,
+      ];
+    }
+
+    const out = new Float64Array(positions.length);
+    let minZ = Infinity;
+    for (let i = 0; i < positions.length; i += 3) {
+      const x = positions[i], y = positions[i + 1], z = positions[i + 2];
+      out[i] = R[0] * x + R[1] * y + R[2] * z;
+      out[i + 1] = R[3] * x + R[4] * y + R[5] * z;
+      out[i + 2] = R[6] * x + R[7] * y + R[8] * z;
+      if (out[i + 2] < minZ) minZ = out[i + 2];
+    }
+    for (let i = 2; i < out.length; i += 3) out[i] -= minZ;
+    return { positions: out };
+  };
+
+  // ---------------------------------------------------------------------
   // Pipeline completa di riparazione di UNA sotto-mesh (gia' estratta):
   // saldatura locale (opzionale, i vertici sono gia' condivisi se provengono
   // da extractSubMesh), rimozione degeneri, orientamento coerente,

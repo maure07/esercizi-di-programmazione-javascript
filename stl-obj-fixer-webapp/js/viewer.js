@@ -177,6 +177,11 @@
       if (m) m.visible = visible;
     }
 
+    function setPartOffset(id, x, y, z) {
+      const m = meshes.get(id);
+      if (m) m.position.set(x, y, z);
+    }
+
     // --- raycast: da coordinate schermo a (parte, triangolo) ---
     const raycaster = new THREE.Raycaster();
     function raycastAt(clientX, clientY) {
@@ -263,7 +268,7 @@
       updateCamera();
     }
 
-    return { scene, camera, renderer, clearParts, addPart, setPartVisible, frameAll, resize, raycastAt, setHighlight, projectToScreen, getCameraPosition };
+    return { scene, camera, renderer, clearParts, addPart, setPartVisible, setPartOffset, frameAll, resize, raycastAt, setHighlight, projectToScreen, getCameraPosition };
   }
 
   root.createViewer = createViewer;

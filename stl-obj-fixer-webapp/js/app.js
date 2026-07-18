@@ -41,6 +41,14 @@
     stepChip1: document.getElementById('stepChip1'),
     stepChip2: document.getElementById('stepChip2'),
     stepChip3: document.getElementById('stepChip3'),
+    stepChip4: document.getElementById('stepChip4'),
+    printPanel: document.getElementById('printPanel'),
+    filamentSummary: document.getElementById('filamentSummary'),
+    explodeBtn: document.getElementById('explodeBtn'),
+    saveProjectBtn: document.getElementById('saveProjectBtn'),
+    layFlatChk: document.getElementById('layFlatChk'),
+    toPrintBtn: document.getElementById('toPrintBtn'),
+    lassoThroughChk: document.getElementById('lassoThroughChk'),
     analysisPanel: document.getElementById('analysisPanel'),
     analysisReport: document.getElementById('analysisReport'),
     modelHeight: document.getElementById('modelHeight'),
@@ -93,6 +101,11 @@
   async function handleFiles(files) {
     setLoading(true, 'Lettura del file…');
     try {
+      const projectFile = files.find((f) => ext(f.name) === 'json');
+      if (projectFile) {
+        await loadProject(projectFile);
+        return;
+      }
       const stlFile = files.find((f) => ext(f.name) === 'stl');
       const objFile = files.find((f) => ext(f.name) === 'obj');
       const mtlFile = files.find((f) => ext(f.name) === 'mtl');
@@ -176,7 +189,7 @@
   // FLUSSO A STEP: 1 Analisi -> 2 Riparazione -> 3 Segmentazione
   // =====================================================================
   function goToStep(n) {
-    [el.stepChip1, el.stepChip2, el.stepChip3].forEach((chip, i) => {
+    [el.stepChip1, el.stepChip2, el.stepChip3, el.stepChip4].forEach((chip, i) => {
       chip.classList.toggle('active', i + 1 === n);
     });
     el.stepChip2.classList.toggle('done', !!currentRepaired);
@@ -184,11 +197,18 @@
     el.analysisPanel.style.display = n === 1 ? 'block' : 'none';
     el.repairPanel.style.display = n === 2 ? 'block' : 'none';
     el.segmentPanel.style.display = n === 3 ? 'block' : 'none';
+    el.printPanel.style.display = n === 4 ? 'block' : 'none';
     if (n === 3) {
       // metodo e numero parti visibili gia' prima di segmentare
       el.methodRow.style.display = 'flex';
       el.controlsRow.style.display = 'flex';
     }
+    if (n === 4) {
+      buildFilamentSummary();
+      el.exportRow.style.display = currentResult && currentResult.parts.length > 0 ? 'flex' : 'none';
+      updateExportButtonState();
+    }
+    if (explodedOn && n !== 4) setExploded(false);
     // il viewer mostra cio' che riguarda lo step corrente
     if (n === 3 && currentResult) {
       renderResult(currentResult);
@@ -196,6 +216,153 @@
       showSingleMesh(currentRepaired.positions, currentRepaired.indices, [0.45, 0.62, 0.85]);
     } else if (currentAnalysis && (n === 1 || n === 2)) {
       showSingleMesh(currentAnalysis.positions, currentAnalysis.indices, [0.72, 0.70, 0.66]);
+    }
+  }
+
+  // ------------------- menu STAMPA (step 4) -------------------
+  let explodedOn = false;
+
+  function buildFilamentSummary() {
+    if (!currentResult || currentResult.parts.length === 0) {
+      el.filamentSummary.innerHTML = '<span class="dim">Nessuna parte: torna allo step 3 e segmenta il modello.</span>';
+      return;
+    }
+    const groups = new Map(); // nomeColore -> { grams, parts: [nomi], color }
+    currentResult.parts.filter((p) => p.included).forEach((p) => {
+      const cname = Segmentation.colorNameForRGB(p.color[0], p.color[1], p.color[2]);
+      let g = groups.get(cname);
+      if (!g) { g = { grams: 0, parts: [], color: p.color }; groups.set(cname, g); }
+      g.grams += weightGrams(p);
+      g.parts.push(p.name);
+    });
+    const rows = [...groups.entries()].sort((a, b) => b[1].grams - a[1].grams);
+    let totalG = 0;
+    const html = rows.map(([cname, g], i) => {
+      totalG += g.grams;
+      const sw = `rgb(${Math.round(g.color[0] * 255)},${Math.round(g.color[1] * 255)},${Math.round(g.color[2] * 255)})`;
+      return `<div style="display:flex;align-items:center;gap:8px;margin:3px 0">
+        <span class="dim">${i + 1}.</span>
+        <span style="width:14px;height:14px;border-radius:4px;background:${sw};border:1px solid rgba(255,255,255,0.2);flex-shrink:0"></span>
+        <b>${cname}</b>
+        <span class="dim">· ${g.parts.length} ${g.parts.length === 1 ? 'pezzo' : 'pezzi'} · ~${fmt(g.grams, 1)} g</span>
+      </div>`;
+    }).join('');
+    el.filamentSummary.innerHTML = `
+      <div class="dim" style="margin-bottom:6px">Bobine da caricare (ordine consigliato: una alla volta, tutti i pezzi di quel colore):</div>
+      ${html}
+      <div style="margin-top:6px"><span class="dim">Totale:</span> ~${fmt(totalG, 1)} g PLA · ${currentResult.parts.filter((p) => p.included).length} pezzi</div>
+    `;
+  }
+
+  function setExploded(on) {
+    explodedOn = on;
+    el.explodeBtn.classList.toggle('active', on);
+    el.explodeBtn.textContent = on ? '💥 Vista esplosa attiva' : '💥 Vista esplosa';
+    if (!currentResult) return;
+    const parts = currentResult.parts;
+    if (parts.length === 0) return;
+    // centro complessivo
+    const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+    parts.forEach((p) => {
+      for (let k = 0; k < 3; k++) {
+        if (p.stats.bboxMin[k] < min[k]) min[k] = p.stats.bboxMin[k];
+        if (p.stats.bboxMax[k] > max[k]) max[k] = p.stats.bboxMax[k];
+      }
+    });
+    const center = [0, 1, 2].map((k) => (min[k] + max[k]) / 2);
+    const maxDim = Math.max(max[0] - min[0], max[1] - min[1], max[2] - min[2]);
+    parts.forEach((p) => {
+      if (!on) { viewer.setPartOffset(p.id, 0, 0, 0); return; }
+      const pc = [0, 1, 2].map((k) => (p.stats.bboxMin[k] + p.stats.bboxMax[k]) / 2);
+      let dx = pc[0] - center[0], dy = pc[1] - center[1], dz = pc[2] - center[2];
+      const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+      const f = (maxDim * 0.35) / len;
+      viewer.setPartOffset(p.id, dx * f, dy * f, dz * f);
+    });
+  }
+
+  el.explodeBtn.addEventListener('click', () => setExploded(!explodedOn));
+  el.toPrintBtn.addEventListener('click', () => goToStep(4));
+  el.stepChip4.addEventListener('click', () => goToStep(4));
+
+  // ------------------- salva / apri progetto -------------------
+  function bytesToB64(u8) {
+    let s = '';
+    const CH = 0x8000;
+    for (let i = 0; i < u8.length; i += CH) {
+      s += String.fromCharCode.apply(null, u8.subarray(i, Math.min(i + CH, u8.length)));
+    }
+    return btoa(s);
+  }
+  function b64ToBytes(b64) {
+    const s = atob(b64);
+    const u8 = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i++) u8[i] = s.charCodeAt(i);
+    return u8;
+  }
+
+  el.saveProjectBtn.addEventListener('click', () => {
+    if (!currentResult || currentResult.parts.length === 0) {
+      alert('Non ci sono parti da salvare: segmenta prima il modello.');
+      return;
+    }
+    const project = {
+      app: 'correggi-segmenta-stl',
+      version: 1,
+      salvato: new Date().toISOString(),
+      parts: currentResult.parts.map((p) => ({
+        name: p.name,
+        color: p.color,
+        included: p.included,
+        watertight: p.watertight,
+        positions: bytesToB64(new Uint8Array(Float32Array.from(p.positions).buffer)),
+        indices: bytesToB64(new Uint8Array(Uint32Array.from(p.indices).buffer)),
+      })),
+    };
+    const blob = new Blob([JSON.stringify(project)], { type: 'application/json' });
+    triggerDownload(blob, 'progetto_parti.json');
+  });
+
+  async function loadProject(file) {
+    setLoading(true, 'Apertura del progetto…');
+    await new Promise((r) => setTimeout(r, 30));
+    try {
+      const project = JSON.parse(await file.text());
+      if (project.app !== 'correggi-segmenta-stl' || !Array.isArray(project.parts)) {
+        throw new Error('non è un file di progetto di questa app');
+      }
+      const parts = project.parts.map((p, i) => {
+        const positions = Float64Array.from(new Float32Array(b64ToBytes(p.positions).buffer));
+        const indices = new Uint32Array(b64ToBytes(p.indices).buffer);
+        return {
+          id: 'part_loaded_' + i,
+          name: p.name || 'Parte ' + (i + 1),
+          color: p.color || [0.8, 0.8, 0.8],
+          included: p.included !== false,
+          watertight: !!p.watertight,
+          positions,
+          indices,
+          log: ['Caricata dal progetto salvato'],
+          stats: MeshCore.computeStats(positions, indices),
+          sourceTriangleCount: indices.length / 3,
+        };
+      });
+      currentParsed = null;
+      currentAnalysis = null;
+      currentRepaired = null;
+      currentScaleFactor = 1;
+      currentResult = { parts, mode: 'progetto', warnings: [] };
+      el.emptyState.style.display = 'none';
+      el.viewerHint.style.display = '';
+      el.frameBtn.style.display = '';
+      el.stepper.style.display = 'flex';
+      renderResult(currentResult);
+      goToStep(3);
+    } catch (err) {
+      console.error(err);
+      alert('Errore nell\'apertura del progetto: ' + err.message);
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -311,7 +478,12 @@
   });
 
   async function runSegmentation() {
-    if (!currentParsed) return;
+    if (!currentParsed) {
+      if (currentResult && currentResult.mode === 'progetto') {
+        alert('Questo è un progetto già segmentato: per rifare la segmentazione carica il file 3D originale (.stl/.obj).');
+      }
+      return;
+    }
     setLoading(true, 'Riparazione e segmentazione in corso…');
     // lascia respirare la UI prima del lavoro pesante e sincrono
     await new Promise((r) => setTimeout(r, 30));
@@ -413,6 +585,7 @@
       combined: 'Segmentazione combinata: struttura dalla forma + dettagli dal colore. Il nome di ogni parte è il colore di filamento suggerito.',
       geometry: 'Segmentazione per forma: tagli lungo le pieghe della superficie (i dettagli solo dipinti, come gli occhi, non vengono separati)',
       none: 'Nessuna informazione di colore: separazione solo per parti geometricamente disgiunte',
+      progetto: 'Progetto caricato: parti pronte per la modifica manuale e la stampa.',
     }[result.mode];
 
     const infoWarn = document.createElement('div');
@@ -591,8 +764,17 @@
     return (name || 'parte').trim().replace(/[^a-z0-9_\-àèéìòù ]/gi, '').replace(/\s+/g, '_') || 'parte';
   }
 
+  // se richiesto, ruota la parte con la faccia di taglio verso il basso e
+  // la appoggia a Z=0, cosi' arriva allo slicer gia' orientata
+  function exportPositions(part) {
+    if (el.layFlatChk.checked) {
+      return MeshCore.layFlat(part.positions, part.indices).positions;
+    }
+    return part.positions;
+  }
+
   function downloadPart(part) {
-    const bytes = Exporter.buildBinarySTL(part.positions, part.indices, part.name);
+    const bytes = Exporter.buildBinarySTL(exportPositions(part), part.indices, part.name);
     const blob = new Blob([bytes], { type: 'application/sla' });
     triggerDownload(blob, sanitizeFilename(part.name) + '.stl');
   }
@@ -624,7 +806,7 @@
       let i = 2;
       while (usedNames.has(name)) { name = `${base}_${i++}.stl`; }
       usedNames.add(name);
-      return { name, data: Exporter.buildBinarySTL(part.positions, part.indices, part.name) };
+      return { name, data: Exporter.buildBinarySTL(exportPositions(part), part.indices, part.name) };
     });
     const zipBytes = Exporter.buildZip(files);
     const blob = new Blob([zipBytes], { type: 'application/zip' });
@@ -774,12 +956,13 @@
       const topo = ensurePartTopology(part);
       const n = part.indices.length / 3;
       const faces = [];
+      const through = el.lassoThroughChk.checked; // lazo passante: prendi anche il retro
       for (let t = 0; t < n; t++) {
         const cx = topo.centroids[t * 3], cy = topo.centroids[t * 3 + 1], cz = topo.centroids[t * 3 + 2];
-        // considera solo i triangoli rivolti verso la camera: quello che vedi
+        // di default solo i triangoli rivolti verso la camera: quello che vedi
         // e' quello che selezioni (non "buca" fino al lato opposto del pezzo)
         const vx = cx - camPos[0], vy = cy - camPos[1], vz = cz - camPos[2];
-        if (topo.normals[t * 3] * vx + topo.normals[t * 3 + 1] * vy + topo.normals[t * 3 + 2] * vz >= 0) continue;
+        if (!through && topo.normals[t * 3] * vx + topo.normals[t * 3 + 1] * vy + topo.normals[t * 3 + 2] * vz >= 0) continue;
         const s = viewer.projectToScreen(cx, cy, cz);
         if (s.behind) continue;
         if (s.x < minX || s.x > maxX || s.y < minY || s.y > maxY) continue;
