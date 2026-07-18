@@ -330,6 +330,44 @@
       totalArea += areas[t];
     }
 
+    // adiacenza tra facce via spigoli manifold (serve al denoising e alla
+    // chiusura dei solchi)
+    const faceAdj = Array.from({ length: nTris }, () => []);
+    edgeMap.forEach((occ) => {
+      if (occ.length !== 2) return;
+      const f1 = occ[0].face, f2 = occ[1].face;
+      if (f1 === f2) return;
+      faceAdj[f1].push(f2); faceAdj[f2].push(f1);
+    });
+
+    // DENOISING delle normali che PRESERVA gli spigoli (bilaterale): su mesh
+    // dense generate dall'IA le normali hanno rumore di tassellazione che
+    // spezza i solchi e crea pieghe fantasma. Media ogni normale con quelle dei
+    // vicini SOLO se abbastanza allineate (dot > soglia): il rumore si leviga,
+    // ma gli spigoli veri (dove i vicini sono molto diversi) restano netti.
+    {
+      const smoothIter = options.normalSmoothIterations === undefined ? 3 : options.normalSmoothIterations;
+      const keepCos = Math.cos((options.normalSmoothKeepDeg === undefined ? 40 : options.normalSmoothKeepDeg) * Math.PI / 180);
+      for (let iter = 0; iter < smoothIter; iter++) {
+        const out = new Float64Array(nTris * 3);
+        for (let f = 0; f < nTris; f++) {
+          let ax = normals[f * 3] * areas[f];
+          let ay = normals[f * 3 + 1] * areas[f];
+          let az = normals[f * 3 + 2] * areas[f];
+          for (const nb of faceAdj[f]) {
+            const w = normals[f * 3] * normals[nb * 3] + normals[f * 3 + 1] * normals[nb * 3 + 1] + normals[f * 3 + 2] * normals[nb * 3 + 2];
+            if (w <= keepCos) continue; // vicino oltre lo spigolo: non mediare
+            ax += normals[nb * 3] * areas[nb] * w;
+            ay += normals[nb * 3 + 1] * areas[nb] * w;
+            az += normals[nb * 3 + 2] * areas[nb] * w;
+          }
+          const l = Math.sqrt(ax * ax + ay * ay + az * az) || 1;
+          out[f * 3] = ax / l; out[f * 3 + 1] = ay / l; out[f * 3 + 2] = az / l;
+        }
+        normals.set(out);
+      }
+    }
+
     const parent = new Int32Array(nTris);
     for (let i = 0; i < nTris; i++) parent[i] = i;
     function find(x) {
@@ -346,7 +384,15 @@
     // LUNGHEZZA dello spigolo condiviso (serve a pesare i confini per
     // estensione fisica, non per numero di triangoli: piu' preciso su mesh
     // a tassellazione irregolare).
-    const eF1 = [], eF2 = [], eDot = [], eConcave = [], eLen = [];
+    // vertice "apice" di una faccia rispetto a uno spigolo (il vertice del
+    // triangolo che NON sta sullo spigolo): serve al test di concavita' preciso
+    function apexVertex(face, va, vb) {
+      const i0 = idx[face * 3], i1 = idx[face * 3 + 1], i2 = idx[face * 3 + 2];
+      if (i0 !== va && i0 !== vb) return i0;
+      if (i1 !== va && i1 !== vb) return i1;
+      return i2;
+    }
+    const eF1 = [], eF2 = [], eDot = [], eConcave = [], eLen = [], eVA = [], eVB = [];
     edgeMap.forEach((occ) => {
       if (occ.length !== 2) return;
       const f1 = occ[0].face, f2 = occ[1].face;
@@ -355,16 +401,24 @@
         + normals[f1 * 3 + 1] * normals[f2 * 3 + 1]
         + normals[f1 * 3 + 2] * normals[f2 * 3 + 2];
       if (dot > 1) dot = 1; else if (dot < -1) dot = -1;
-      const sx = centroids[f2 * 3] - centroids[f1 * 3];
-      const sy = centroids[f2 * 3 + 1] - centroids[f1 * 3 + 1];
-      const sz = centroids[f2 * 3 + 2] - centroids[f1 * 3 + 2];
-      const side = normals[f1 * 3] * sx + normals[f1 * 3 + 1] * sy + normals[f1 * 3 + 2] * sz;
       const va = occ[0].a, vb = occ[0].b;
+      // concavita' ROBUSTA basata sui vertici opposti: se l'apice del vicino sta
+      // "sotto" il piano di f1 (lato opposto alla normale esterna) il diedro e'
+      // una valle (concavo). Piu' stabile del test sui baricentri e indipendente
+      // dal rumore/lisciatura delle normali.
+      const c2 = apexVertex(f2, va, vb);
+      const c1 = apexVertex(f1, va, vb);
+      const dxx = positions[c2 * 3] - positions[c1 * 3];
+      const dyy = positions[c2 * 3 + 1] - positions[c1 * 3 + 1];
+      const dzz = positions[c2 * 3 + 2] - positions[c1 * 3 + 2];
+      const side = normals[f1 * 3] * dxx + normals[f1 * 3 + 1] * dyy + normals[f1 * 3 + 2] * dzz;
       const el = Math.sqrt((positions[va * 3] - positions[vb * 3]) ** 2
         + (positions[va * 3 + 1] - positions[vb * 3 + 1]) ** 2
         + (positions[va * 3 + 2] - positions[vb * 3 + 2]) ** 2);
       eF1.push(f1); eF2.push(f2); eDot.push(dot);
+      // concavo (valle) se l'apice del vicino sta sul lato della normale esterna
       eConcave.push(side > 1e-12 ? 1 : 0); eLen.push(el);
+      eVA.push(va); eVB.push(vb);
     });
 
     // Soglia ADATTIVA: su una mesh densa e levigata (tipica dei generatori
@@ -406,9 +460,22 @@
     // sia la profondita' della piega sia il contrasto di colore.
     const faceColors = options.faceColors || null;
     const colorThr = options.colorBoundaryThreshold === undefined ? 0.22 : options.colorBoundaryThreshold;
-    const creaseEdges = []; // [f1, f2, forzaConfine, lunghezzaSpigolo]
+
+    // ISTERESI (come nel rilevamento dei bordi di Canny): due soglie di piega.
+    // "forte" = valle decisa, avvia il solco; "debole" = valle appena
+    // accennata, conta come solco SOLO se collegata a una parte gia' forte.
+    // Cosi' i solchi interrotti (una piega che per pochi triangoli scende sotto
+    // soglia) vengono COMPLETATI e i due pezzi non "colano" piu' l'uno
+    // nell'altro, mentre il rumore debole isolato resta ignorato.
+    const strongAngle = Math.acos(Math.max(-1, Math.min(1, creaseDotThreshold)));
+    const weakAngle = strongAngle * (options.weakCreaseFactor === undefined ? 0.5 : options.weakCreaseFactor);
+    const weakDotThreshold = Math.cos(weakAngle); // >= creaseDotThreshold
+
+    // classe di ogni spigolo: 0 = cucitura (unisce), 1 = confine, 2 = debole
+    const edgeClass = new Uint8Array(eF1.length);
+    const colorPartArr = new Float64Array(eF1.length);
     for (let i = 0; i < eF1.length; i++) {
-      const isCrease = eConcave[i] && eDot[i] < creaseDotThreshold;
+      const strong = eConcave[i] === 1 && eDot[i] < creaseDotThreshold;
       let colorPart = 0;
       if (faceColors) {
         const f1 = eF1[i], f2 = eF2[i];
@@ -418,13 +485,40 @@
         const cd = Math.sqrt(dr * dr + dg * dg + db * db);
         if (cd > colorThr) colorPart = Math.min(cd, 1);
       }
-      if (isCrease || colorPart > 0) {
-        // profondita' piega (0..2) e contrasto colore (0..1) su scala confrontabile
-        const creasePart = isCrease ? (1 - eDot[i]) : 0;
-        const bs = Math.max(creasePart, colorPart);
+      colorPartArr[i] = colorPart;
+      if (strong || colorPart > 0) edgeClass[i] = 1;
+      else if (eConcave[i] === 1 && eDot[i] < weakDotThreshold) edgeClass[i] = 2;
+      else edgeClass[i] = 0;
+    }
+
+    // chiusura dei solchi: un vertice e' "di confine" se tocca un confine forte;
+    // uno spigolo debole i cui DUE estremi sono di confine viene promosso a
+    // confine (chiude il buco), propagando finche' il solco non e' completo.
+    const creaseVerts = new Set();
+    for (let i = 0; i < eF1.length; i++) {
+      if (edgeClass[i] === 1) { creaseVerts.add(eVA[i]); creaseVerts.add(eVB[i]); }
+    }
+    let changed = true, guard = 0;
+    while (changed && guard++ < 8) {
+      changed = false;
+      for (let i = 0; i < eF1.length; i++) {
+        if (edgeClass[i] !== 2) continue;
+        if (creaseVerts.has(eVA[i]) && creaseVerts.has(eVB[i])) {
+          edgeClass[i] = 1;
+          creaseVerts.add(eVA[i]); creaseVerts.add(eVB[i]);
+          changed = true;
+        }
+      }
+    }
+
+    const creaseEdges = []; // [f1, f2, forzaConfine, lunghezzaSpigolo]
+    for (let i = 0; i < eF1.length; i++) {
+      if (edgeClass[i] === 1) {
+        const creasePart = (eConcave[i] === 1 && eDot[i] < weakDotThreshold) ? (1 - eDot[i]) : 0;
+        const bs = Math.max(creasePart, colorPartArr[i]);
         creaseEdges.push([eF1[i], eF2[i], bs, eLen[i]]);
       } else {
-        union(eF1[i], eF2[i]);
+        union(eF1[i], eF2[i]); // cucitura o debole non collegata: unisce
       }
     }
 
