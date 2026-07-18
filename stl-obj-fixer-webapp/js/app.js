@@ -1225,7 +1225,10 @@
   // tap sul canvas (distinto dal trascinamento per ruotare)
   let tapStart = null;
   el.viewer.addEventListener('pointerdown', (e) => {
-    tapStart = { x: e.clientX, y: e.clientY, time: Date.now() };
+    // col mouse solo il tasto sinistro seleziona/mette punti: destro e centrale
+    // servono per spostarsi (pan) senza sporcare la selezione
+    const isPan = e.button === 1 || e.button === 2 || e.shiftKey || e.ctrlKey || e.metaKey;
+    tapStart = isPan ? null : { x: e.clientX, y: e.clientY, time: Date.now() };
   });
   el.viewer.addEventListener('pointerup', (e) => {
     if (!cutMode || !tapStart) { tapStart = null; return; }
@@ -1238,4 +1241,8 @@
       handleCutTap(e.clientX, e.clientY);
     }
   });
+
+  // accessi di sola lettura usati dai test automatici (nessun effetto sull'app)
+  window.__viewerCam = () => viewer.getCameraPosition();
+  window.__lassoCount = () => lassoPoints.length;
 })();
