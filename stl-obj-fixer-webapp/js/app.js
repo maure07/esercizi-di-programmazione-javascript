@@ -26,6 +26,19 @@
     solidRow: document.getElementById('solidRow'),
     solidQuality: document.getElementById('solidQuality'),
     solidifyAllBtn: document.getElementById('solidifyAllBtn'),
+    connectorRow: document.getElementById('connectorRow'),
+    connectorToggleBtn: document.getElementById('connectorToggleBtn'),
+    connectorControls: document.getElementById('connectorControls'),
+    connectorHint: document.getElementById('connectorHint'),
+    connTypePegBtn: document.getElementById('connTypePegBtn'),
+    connTypePinBtn: document.getElementById('connTypePinBtn'),
+    connDiam: document.getElementById('connDiam'),
+    connDiamValue: document.getElementById('connDiamValue'),
+    connDepth: document.getElementById('connDepth'),
+    connDepthValue: document.getElementById('connDepthValue'),
+    connQuality: document.getElementById('connQuality'),
+    connUndoBtn: document.getElementById('connUndoBtn'),
+    connDoneBtn: document.getElementById('connDoneBtn'),
     scaleRow: document.getElementById('scaleRow'),
     scaleHeight: document.getElementById('scaleHeight'),
     scaleApplyBtn: document.getElementById('scaleApplyBtn'),
@@ -570,6 +583,136 @@
   }
   el.solidifyAllBtn.addEventListener('click', () => { solidifyAllParts(); });
 
+  // ------------------- CONNETTORI (perno+foro / fori per spillo) -------------------
+  // Posizionamento a tocco. La booleana e' fatta sulla griglia a voxel, quindi
+  // e' sempre pulita e chiusa. Ogni connettore unisce il pezzo toccato al
+  // pezzo incluso piu' vicino.
+  let connectorMode = false;
+  let connType = 'peg'; // 'peg' = perno+foro | 'pin' = fori per spillo
+  const connHistory = []; // per l'annulla: snapshot dei due pezzi modificati
+
+  function partCenter(p) {
+    return [
+      (p.stats.bboxMin[0] + p.stats.bboxMax[0]) / 2,
+      (p.stats.bboxMin[1] + p.stats.bboxMax[1]) / 2,
+      (p.stats.bboxMin[2] + p.stats.bboxMax[2]) / 2,
+    ];
+  }
+  function nearestVertDist2(part, P) {
+    const pos = part.positions;
+    const step = Math.max(3, Math.floor((pos.length / 3) / 4000)) * 3;
+    let best = Infinity;
+    for (let i = 0; i < pos.length; i += step) {
+      const d = (pos[i] - P[0]) ** 2 + (pos[i + 1] - P[1]) ** 2 + (pos[i + 2] - P[2]) ** 2;
+      if (d < best) best = d;
+    }
+    return best;
+  }
+  function normalize3(v) {
+    const l = Math.sqrt(v[0] ** 2 + v[1] ** 2 + v[2] ** 2) || 1;
+    return [v[0] / l, v[1] / l, v[2] / l];
+  }
+
+  function setConnectorMode(on) {
+    connectorMode = on;
+    if (on && cutMode) setCutMode(false);
+    el.connectorToggleBtn.classList.toggle('active', on);
+    el.connectorControls.style.display = on ? 'block' : 'none';
+    el.viewerHint.textContent = on
+      ? 'Connettori: tocca dove due pezzi si uniscono. (Trascina per ruotare)'
+      : 'Touch: 1 dito ruota · 2 dita zoom/sposta   ·   Mouse: trascina ruota · rotellina zoom · tasto destro (o Shift) sposta';
+  }
+  function setConnType(t) {
+    connType = t;
+    el.connTypePegBtn.classList.toggle('active', t === 'peg');
+    el.connTypePinBtn.classList.toggle('active', t === 'pin');
+  }
+
+  async function applyConnectorAt(hitPartId, P) {
+    if (typeof Voxel === 'undefined') { alert('Modulo connettori non disponibile.'); return; }
+    const parts = currentResult.parts.filter((p) => p.included);
+    const A = parts.find((p) => p.id === hitPartId);
+    if (!A) return;
+    let B = null, best = Infinity;
+    for (const p of parts) {
+      if (p === A) continue;
+      const d = nearestVertDist2(p, P);
+      if (d < best) { best = d; B = p; }
+    }
+    if (!B) { alert('Serve almeno un secondo pezzo per creare un connettore.'); return; }
+
+    const r = parseFloat(el.connDiam.value) / 2;
+    const depth = parseFloat(el.connDepth.value);
+    const resolution = parseInt(el.connQuality.value, 10) || 130;
+    const clr = 0.4; // gioco tra perno e foro (mm)
+
+    // snapshot per l'annulla
+    const snap = (p) => ({ part: p, positions: p.positions, indices: p.indices, stats: p.stats, watertight: p.watertight, solidified: p.solidified });
+    connHistory.push([snap(A), snap(B)]);
+    if (connHistory.length > 12) connHistory.shift();
+    el.connUndoBtn.disabled = false;
+
+    setLoading(true, connType === 'peg' ? 'Creo perno e foro…' : 'Creo i fori per lo spillo…');
+    await new Promise((res) => setTimeout(res, 20));
+    try {
+      if (connType === 'pin') {
+        // fori allineati passanti su entrambi i pezzi
+        const a = normalize3([partCenter(A)[0] - partCenter(B)[0], partCenter(A)[1] - partCenter(B)[1], partCenter(A)[2] - partCenter(B)[2]]);
+        const p0 = [P[0] - a[0] * depth, P[1] - a[1] * depth, P[2] - a[2] * depth];
+        const p1 = [P[0] + a[0] * depth, P[1] + a[1] * depth, P[2] + a[2] * depth];
+        const edit = { p0, p1, radius: r, mode: 'sub' };
+        applySolidEdit(A, [edit], resolution);
+        applySolidEdit(B, [edit], resolution);
+      } else {
+        // perno sul pezzo piu' grande, foro nel piu' piccolo
+        const big = A.stats.volume >= B.stats.volume ? A : B;
+        const small = big === A ? B : A;
+        const cb = partCenter(big), cs = partCenter(small);
+        const d = normalize3([cs[0] - cb[0], cs[1] - cb[1], cs[2] - cb[2]]);
+        const peg = { p0: [P[0] - d[0] * r, P[1] - d[1] * r, P[2] - d[2] * r], p1: [P[0] + d[0] * depth, P[1] + d[1] * depth, P[2] + d[2] * depth], radius: r, mode: 'add' };
+        const socket = { p0: [P[0] - d[0] * 0.5, P[1] - d[1] * 0.5, P[2] - d[2] * 0.5], p1: [P[0] + d[0] * (depth + clr), P[1] + d[1] * (depth + clr), P[2] + d[2] * (depth + clr)], radius: r + clr, mode: 'sub' };
+        applySolidEdit(big, [peg], resolution);
+        applySolidEdit(small, [socket], resolution);
+      }
+    } catch (err) {
+      console.error('connector', err);
+      alert('Errore nel creare il connettore: ' + err.message);
+    }
+    setLoading(false);
+    renderResult(currentResult);
+    setConnectorMode(true); // renderResult resetta i pannelli: riattiva la modalita'
+  }
+
+  function applySolidEdit(part, edits, resolution) {
+    const res = Voxel.applyEdits(part.positions, part.indices, edits, { resolution, smoothIterations: 2 });
+    if (res.indices.length > 0) {
+      part.positions = res.positions;
+      part.indices = res.indices;
+      part.stats = res.stats;
+      part.watertight = res.watertight;
+      part.solidified = true;
+      part._topo = null;
+    }
+  }
+
+  el.connectorToggleBtn.addEventListener('click', () => setConnectorMode(!connectorMode));
+  el.connTypePegBtn.addEventListener('click', () => setConnType('peg'));
+  el.connTypePinBtn.addEventListener('click', () => setConnType('pin'));
+  el.connDiam.addEventListener('input', () => { el.connDiamValue.textContent = el.connDiam.value + ' mm'; });
+  el.connDepth.addEventListener('input', () => { el.connDepthValue.textContent = el.connDepth.value + ' mm'; });
+  el.connDoneBtn.addEventListener('click', () => setConnectorMode(false));
+  el.connUndoBtn.addEventListener('click', () => {
+    const last = connHistory.pop();
+    if (!last) return;
+    last.forEach((s) => {
+      s.part.positions = s.positions; s.part.indices = s.indices;
+      s.part.stats = s.stats; s.part.watertight = s.watertight; s.part.solidified = s.solidified; s.part._topo = null;
+    });
+    el.connUndoBtn.disabled = connHistory.length === 0;
+    renderResult(currentResult);
+    setConnectorMode(true);
+  });
+
   el.colorParts.addEventListener('input', () => {
     el.colorPartsValue.textContent = el.colorParts.value;
   });
@@ -615,6 +758,7 @@
     el.controlsRow.style.display = (result.mode === 'color-cluster' || result.mode === 'geometry' || result.mode === 'combined') ? 'flex' : 'none';
     updateSegmentControls();
     el.solidRow.style.display = result.parts.length > 0 ? 'block' : 'none';
+    el.connectorRow.style.display = result.parts.length > 1 ? 'block' : 'none';
     el.scaleRow.style.display = result.parts.length > 0 ? 'flex' : 'none';
     el.cutRow.style.display = result.parts.length > 0 ? 'block' : 'none';
     resetCutSelection();
@@ -1287,18 +1431,24 @@
     tapStart = isPan ? null : { x: e.clientX, y: e.clientY, time: Date.now() };
   });
   el.viewer.addEventListener('pointerup', (e) => {
-    if (!cutMode || !tapStart) { tapStart = null; return; }
+    if ((!cutMode && !connectorMode) || !tapStart) { tapStart = null; return; }
     const dx = e.clientX - tapStart.x;
     const dy = e.clientY - tapStart.y;
     const moved = Math.sqrt(dx * dx + dy * dy);
     const elapsed = Date.now() - tapStart.time;
     tapStart = null;
     if (moved < 10 && elapsed < 600) {
-      handleCutTap(e.clientX, e.clientY);
+      if (connectorMode) {
+        const hit = viewer.raycastAt(e.clientX, e.clientY);
+        if (hit) applyConnectorAt(hit.partId, hit.point);
+      } else {
+        handleCutTap(e.clientX, e.clientY);
+      }
     }
   });
 
   // accessi di sola lettura usati dai test automatici (nessun effetto sull'app)
   window.__viewerCam = () => viewer.getCameraPosition();
   window.__lassoCount = () => lassoPoints.length;
+  window.__partsInfo = () => currentResult ? currentResult.parts.map((p) => ({ name: p.name, tris: p.indices.length / 3, wt: !!p.watertight })) : null;
 })();

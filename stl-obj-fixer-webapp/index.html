@@ -297,6 +297,18 @@
     padding: 10px;
   }
   #cutHint { font-size: 12px; color: var(--text-dim); line-height: 1.45; margin-bottom: 8px; }
+  #connectorRow { margin-top: 10px; }
+  #connectorToggleBtn {
+    width: 100%; background: var(--panel2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 10px; padding: 10px;
+    font-size: 13px; font-weight: 600;
+  }
+  #connectorToggleBtn.active { border-color: var(--accent2); color: var(--accent2); }
+  #connectorControls {
+    margin-top: 8px; background: var(--panel2);
+    border: 1px solid var(--accent2); border-radius: 10px; padding: 10px;
+  }
+  #connectorHint { font-size: 12px; color: var(--text-dim); line-height: 1.45; margin-bottom: 8px; }
   .cut-slider-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
   .cut-slider-row label { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
   #cutRadius { flex: 1; }
@@ -530,6 +542,39 @@
     <div class="cut-actions">
       <button id="cutCreateBtn" disabled>Crea parte (0 triangoli)</button>
       <button id="cutCancelBtn">Annulla</button>
+    </div>
+  </div>
+
+  <div id="connectorRow" style="display:none">
+    <button id="connectorToggleBtn">🔩 Connettori (perni / fori)</button>
+  </div>
+  <div id="connectorControls" style="display:none">
+    <div id="connectorHint">Tocca il punto dove due pezzi si uniscono: creo il connettore tra quel pezzo e il più vicino. La booleana è perfetta (voxel). Conviene prima impostare la scala reale (mm).</div>
+    <div class="cut-actions" style="margin:8px 0">
+      <button id="connTypePegBtn" class="active">🔩 Perno + foro</button>
+      <button id="connTypePinBtn">📍 Fori per spillo</button>
+    </div>
+    <div class="cut-slider-row">
+      <label for="connDiam">Diametro</label>
+      <input type="range" id="connDiam" min="1" max="8" step="0.5" value="3" />
+      <span id="connDiamValue">3 mm</span>
+    </div>
+    <div class="cut-slider-row">
+      <label for="connDepth">Profondità</label>
+      <input type="range" id="connDepth" min="2" max="20" step="1" value="6" />
+      <span id="connDepthValue">6 mm</span>
+    </div>
+    <div class="cut-slider-row">
+      <label for="connQuality">Qualità</label>
+      <select id="connQuality" style="flex:1;background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 8px;font-size:13px">
+        <option value="90">Bassa (veloce)</option>
+        <option value="130" selected>Media</option>
+        <option value="180">Alta (lenta)</option>
+      </select>
+    </div>
+    <div class="cut-actions">
+      <button id="connUndoBtn" disabled>↩ Annulla ultimo</button>
+      <button id="connDoneBtn">Fine</button>
     </div>
   </div>
 

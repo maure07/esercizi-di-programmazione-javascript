@@ -122,6 +122,12 @@
       if (y < miny) miny = y; if (y > maxy) maxy = y;
       if (z < minz) minz = z; if (z > maxz) maxz = z;
     }
+    // estende il volume per contenere eventuali aggiunte (perni) che sporgono
+    // oltre la mesh: senza questo la parte aggiunta finirebbe fuori griglia
+    if (options.includeMin && options.includeMax) {
+      minx = Math.min(minx, options.includeMin[0]); miny = Math.min(miny, options.includeMin[1]); minz = Math.min(minz, options.includeMin[2]);
+      maxx = Math.max(maxx, options.includeMax[0]); maxy = Math.max(maxy, options.includeMax[1]); maxz = Math.max(maxz, options.includeMax[2]);
+    }
     const sx = maxx - minx, sy = maxy - miny, sz = maxz - minz;
     const maxDim = Math.max(sx, sy, sz) || 1;
     const targetN = options.resolution || 110;
@@ -227,10 +233,9 @@
     return pos;
   };
 
-  // Solidifica una mesh: campo -> Surface Nets -> mesh chiusa in coord. mondo.
-  Voxel.remesh = function (positions, indices, options) {
-    options = options || {};
-    const field = Voxel.buildSolidField(positions, indices, options);
+  // Estrae la mesh dal campo (Surface Nets -> coord mondo -> smoothing ->
+  // orientamento -> statistiche). Condiviso da remesh e applyEdits.
+  function finishField(field, options) {
     const sn = Voxel.surfaceNets(field.data, field.dims);
     const nV = sn.vertices.length;
     const outPos = new Float64Array(nV * 3);
@@ -243,11 +248,8 @@
     for (const q of sn.faces) idxArr.push(q[0], q[1], q[2], q[0], q[2], q[3]);
     let P = outPos;
     let I = Uint32Array.from(idxArr);
-
     const smooth = options.smoothIterations === undefined ? 2 : options.smoothIterations;
     if (smooth > 0) P = Voxel.laplacianSmooth(P, I, smooth);
-
-    // orienta verso l'esterno e verifica la chiusura
     let watertight = true;
     if (I.length > 0) {
       let edgeMap = MeshCore.buildEdgeMap(I);
@@ -260,6 +262,73 @@
     }
     const stats = MeshCore.computeStats(P, I);
     return { positions: P, indices: I, watertight, stats, voxel: field.voxel };
+  }
+
+  // Solidifica una mesh: campo -> Surface Nets -> mesh chiusa in coord. mondo.
+  Voxel.remesh = function (positions, indices, options) {
+    options = options || {};
+    const field = Voxel.buildSolidField(positions, indices, options);
+    return finishField(field, options);
+  };
+
+  // "Timbra" un cilindro nel campo: mode 'add' (perno: mette solido) o 'sub'
+  // (foro: toglie solido). p0,p1 = estremi dell'asse in coordinate mondo.
+  // La booleana e' esatta perche' avviene sulla griglia discreta.
+  Voxel.stampCylinder = function (field, p0, p1, radius, mode) {
+    const { data, dims, origin, voxel } = field;
+    const nx = dims[0], ny = dims[1], nz = dims[2];
+    const inv = 1 / voxel;
+    const val = mode === 'sub' ? 1 : -1;
+    const ax = p1[0] - p0[0], ay = p1[1] - p0[1], az = p1[2] - p0[2];
+    const len2 = ax * ax + ay * ay + az * az || 1e-12;
+    // AABB del cilindro in coordinate di griglia
+    const minx = Math.min(p0[0], p1[0]) - radius, maxx = Math.max(p0[0], p1[0]) + radius;
+    const miny = Math.min(p0[1], p1[1]) - radius, maxy = Math.max(p0[1], p1[1]) + radius;
+    const minz = Math.min(p0[2], p1[2]) - radius, maxz = Math.max(p0[2], p1[2]) + radius;
+    const gx0 = Math.max(0, Math.floor((minx - origin[0]) * inv));
+    const gx1 = Math.min(nx - 1, Math.ceil((maxx - origin[0]) * inv));
+    const gy0 = Math.max(0, Math.floor((miny - origin[1]) * inv));
+    const gy1 = Math.min(ny - 1, Math.ceil((maxy - origin[1]) * inv));
+    const gz0 = Math.max(0, Math.floor((minz - origin[2]) * inv));
+    const gz1 = Math.min(nz - 1, Math.ceil((maxz - origin[2]) * inv));
+    const r2 = radius * radius;
+    const nxy = nx * ny;
+    for (let gz = gz0; gz <= gz1; gz++) {
+      const wz = origin[2] + gz * voxel;
+      for (let gy = gy0; gy <= gy1; gy++) {
+        const wy = origin[1] + gy * voxel;
+        for (let gx = gx0; gx <= gx1; gx++) {
+          const wx = origin[0] + gx * voxel;
+          // proiezione del punto sull'asse del cilindro
+          const t = ((wx - p0[0]) * ax + (wy - p0[1]) * ay + (wz - p0[2]) * az) / len2;
+          if (t < 0 || t > 1) continue;
+          const cx = p0[0] + ax * t, cy = p0[1] + ay * t, cz = p0[2] + az * t;
+          const d2 = (wx - cx) ** 2 + (wy - cy) ** 2 + (wz - cz) ** 2;
+          if (d2 <= r2) data[gx + gy * nx + gz * nxy] = val;
+        }
+      }
+    }
+  };
+
+  // Solidifica una mesh e applica una lista di modifiche booleane (cilindri),
+  // poi ri-estrae la superficie: usato per i connettori (perno/foro).
+  // edits: [{ p0, p1, radius, mode:'add'|'sub' }]
+  Voxel.applyEdits = function (positions, indices, edits, options) {
+    options = options || {};
+    // la griglia deve contenere anche i perni (add) che sporgono oltre la mesh
+    let mn = null, mx = null;
+    for (const e of edits) {
+      if (e.mode !== 'add') continue;
+      const lo = [Math.min(e.p0[0], e.p1[0]) - e.radius, Math.min(e.p0[1], e.p1[1]) - e.radius, Math.min(e.p0[2], e.p1[2]) - e.radius];
+      const hi = [Math.max(e.p0[0], e.p1[0]) + e.radius, Math.max(e.p0[1], e.p1[1]) + e.radius, Math.max(e.p0[2], e.p1[2]) + e.radius];
+      if (!mn) { mn = lo.slice(); mx = hi.slice(); }
+      else { for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], lo[k]); mx[k] = Math.max(mx[k], hi[k]); } }
+    }
+    const opt = Object.assign({}, options);
+    if (mn) { opt.includeMin = mn; opt.includeMax = mx; }
+    const field = Voxel.buildSolidField(positions, indices, opt);
+    for (const e of edits) Voxel.stampCylinder(field, e.p0, e.p1, e.radius, e.mode);
+    return finishField(field, opt);
   };
 
   return Voxel;
