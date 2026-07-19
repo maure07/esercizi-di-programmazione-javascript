@@ -145,32 +145,44 @@
     const ox = minx - pad * voxel, oy = miny - pad * voxel, oz = minz - pad * voxel;
     const N = nx * ny * nz;
     const inv = 1 / voxel;
-    const surf = new Uint8Array(N);
+    const nxy = nx * ny;
+    const surf = new Uint8Array(N);       // occupanza per il flood (muro sottile)
+    const dist = new Float32Array(N);     // distanza NON segnata alla superficie
+    const FAR = 1e30;
+    dist.fill(FAR);
+    const band = options.band === undefined ? 2 : options.band;   // voxel attorno alla superficie
+    const wall = 0.5 * voxel;             // spessore muro per il flood (no perdite su 6-vicini)
 
-    function mark(px, py, pz) {
-      const ix = Math.round((px - ox) * inv);
-      const iy = Math.round((py - oy) * inv);
-      const iz = Math.round((pz - oz) * inv);
-      if (ix < 0 || iy < 0 || iz < 0 || ix >= nx || iy >= ny || iz >= nz) return;
-      surf[ix + iy * nx + iz * nx * ny] = 1;
-    }
-
+    // Campo di distanza a banda stretta: per ogni triangolo aggiorna la distanza
+    // ESATTA dei punti di griglia vicini. Serve a far cadere la superficie
+    // ricostruita nel punto giusto DENTRO la cella (Surface Nets interpola),
+    // invece che al centro della cella (aspetto a blocchi).
     const nTris = indices.length / 3;
     for (let t = 0; t < nTris; t++) {
       const a = indices[t * 3], b = indices[t * 3 + 1], c = indices[t * 3 + 2];
       const ax = positions[a * 3], ay = positions[a * 3 + 1], az = positions[a * 3 + 2];
       const bx = positions[b * 3], by = positions[b * 3 + 1], bz = positions[b * 3 + 2];
       const cx = positions[c * 3], cy = positions[c * 3 + 1], cz = positions[c * 3 + 2];
-      const lAB = Math.sqrt((bx - ax) ** 2 + (by - ay) ** 2 + (bz - az) ** 2);
-      const lAC = Math.sqrt((cx - ax) ** 2 + (cy - ay) ** 2 + (cz - az) ** 2);
-      const steps = Math.max(1, Math.ceil(Math.max(lAB, lAC) * inv * 2));
-      for (let i = 0; i <= steps; i++) {
-        const u = i / steps;
-        for (let j = 0; j <= steps - i; j++) {
-          const w = j / steps;
-          mark(ax + (bx - ax) * u + (cx - ax) * w,
-            ay + (by - ay) * u + (cy - ay) * w,
-            az + (bz - az) * u + (cz - az) * w);
+      let tminx = Math.min(ax, bx, cx), tmaxx = Math.max(ax, bx, cx);
+      let tminy = Math.min(ay, by, cy), tmaxy = Math.max(ay, by, cy);
+      let tminz = Math.min(az, bz, cz), tmaxz = Math.max(az, bz, cz);
+      const gx0 = Math.max(0, Math.floor((tminx - ox) * inv) - band);
+      const gx1 = Math.min(nx - 1, Math.ceil((tmaxx - ox) * inv) + band);
+      const gy0 = Math.max(0, Math.floor((tminy - oy) * inv) - band);
+      const gy1 = Math.min(ny - 1, Math.ceil((tmaxy - oy) * inv) + band);
+      const gz0 = Math.max(0, Math.floor((tminz - oz) * inv) - band);
+      const gz1 = Math.min(nz - 1, Math.ceil((tmaxz - oz) * inv) + band);
+      for (let gz = gz0; gz <= gz1; gz++) {
+        const wz = oz + gz * voxel;
+        for (let gy = gy0; gy <= gy1; gy++) {
+          const wy = oy + gy * voxel;
+          let base = gx0 + gy * nx + gz * nxy;
+          for (let gx = gx0; gx <= gx1; gx++, base++) {
+            const wx = ox + gx * voxel;
+            const d = Math.sqrt(pointTriDist2(wx, wy, wz, ax, ay, az, bx, by, bz, cx, cy, cz));
+            if (d < dist[base]) dist[base] = d;
+            if (d <= wall) surf[base] = 1;
+          }
         }
       }
     }
@@ -180,7 +192,6 @@
     const stack = new Int32Array(N);
     let sp = 0;
     stack[sp++] = 0; ext[0] = 1;
-    const nxy = nx * ny;
     while (sp > 0) {
       const p = stack[--sp];
       const z = (p / nxy) | 0;
@@ -195,11 +206,59 @@
       if (z < nz - 1) { const q = p + nxy; if (!surf[q] && !ext[q]) { ext[q] = 1; stack[sp++] = q; } }
     }
 
+    // campo con SEGNO: negativo dentro, positivo fuori; magnitudine = distanza
+    // reale (nella banda) o un valore grande e uniforme lontano dalla superficie
     const data = new Float32Array(N);
-    for (let i = 0; i < N; i++) data[i] = (surf[i] || !ext[i]) ? -1 : 1;
+    const farMag = (band + 1) * voxel;
+    for (let i = 0; i < N; i++) {
+      let d = dist[i];
+      if (d > farMag) d = farMag;
+      data[i] = ext[i] ? d : -d; // fuori (raggiunto dal flood) positivo, dentro negativo
+    }
 
     return { data, dims: [nx, ny, nz], origin: [ox, oy, oz], voxel };
   };
+
+  // Distanza al quadrato punto-triangolo (Ericson, Real-Time Collision Detection)
+  function pointTriDist2(px, py, pz, ax, ay, az, bx, by, bz, cx, cy, cz) {
+    const abx = bx - ax, aby = by - ay, abz = bz - az;
+    const acx = cx - ax, acy = cy - ay, acz = cz - az;
+    const apx = px - ax, apy = py - ay, apz = pz - az;
+    const d1 = abx * apx + aby * apy + abz * apz;
+    const d2 = acx * apx + acy * apy + acz * apz;
+    if (d1 <= 0 && d2 <= 0) return apx * apx + apy * apy + apz * apz;
+    const bpx = px - bx, bpy = py - by, bpz = pz - bz;
+    const d3 = abx * bpx + aby * bpy + abz * bpz;
+    const d4 = acx * bpx + acy * bpy + acz * bpz;
+    if (d3 >= 0 && d4 <= d3) return bpx * bpx + bpy * bpy + bpz * bpz;
+    const vc = d1 * d4 - d3 * d2;
+    if (vc <= 0 && d1 >= 0 && d3 <= 0) {
+      const v = d1 / (d1 - d3);
+      const ex = apx - v * abx, ey = apy - v * aby, ez = apz - v * abz;
+      return ex * ex + ey * ey + ez * ez;
+    }
+    const cpx = px - cx, cpy = py - cy, cpz = pz - cz;
+    const d5 = abx * cpx + aby * cpy + abz * cpz;
+    const d6 = acx * cpx + acy * cpy + acz * cpz;
+    if (d6 >= 0 && d5 <= d6) return cpx * cpx + cpy * cpy + cpz * cpz;
+    const vb = d5 * d2 - d1 * d6;
+    if (vb <= 0 && d2 >= 0 && d6 <= 0) {
+      const w = d2 / (d2 - d6);
+      const ex = apx - w * acx, ey = apy - w * acy, ez = apz - w * acz;
+      return ex * ex + ey * ey + ez * ez;
+    }
+    const va = d3 * d6 - d5 * d4;
+    if (va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0) {
+      const w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+      const ex = bpx - w * (cx - bx), ey = bpy - w * (cy - by), ez = bpz - w * (cz - bz);
+      return ex * ex + ey * ey + ez * ez;
+    }
+    const denom = 1 / (va + vb + vc);
+    const v = vb * denom, w = vc * denom;
+    const clx = ax + abx * v + acx * w, cly = ay + aby * v + acy * w, clz = az + abz * v + acz * w;
+    const dx = px - clx, dy = py - cly, dz = pz - clz;
+    return dx * dx + dy * dy + dz * dz;
+  }
 
   // Smoothing laplaciano: sposta ogni vertice verso la media dei vicini per
   // ammorbidire la "scalinatura" del voxel, mantenendo la mesh chiusa.
