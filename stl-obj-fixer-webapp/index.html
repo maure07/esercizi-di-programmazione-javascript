@@ -235,6 +235,21 @@
     margin-top: 6px;
   }
 
+  #sensitivityRow {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--panel2); border-radius: 10px; padding: 8px 10px; margin-top: 10px;
+  }
+  #sensitivityRow label { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
+  #colorSensitivity { flex: 1; }
+  #colorSensitivityValue { font-size: 12px; width: 20px; text-align: right; color: var(--text-dim); }
+  #sensitivityHint, #solidHint {
+    font-size: 11.5px; color: var(--text-dim); margin-top: 6px; line-height: 1.4;
+  }
+  #solidRow {
+    background: var(--panel2); border-radius: 10px; padding: 10px; margin-top: 12px;
+  }
+  #solidifyAllBtn { flex: 1; }
+
   #stepper { display: flex; gap: 6px; margin-bottom: 12px; }
   .step-chip {
     flex: 1;
@@ -474,6 +489,13 @@
     <button id="resegmentBtn">Ricalcola</button>
   </div>
 
+  <div id="sensitivityRow" style="display:none">
+    <label for="colorSensitivity">Sensibilità colore</label>
+    <input type="range" id="colorSensitivity" min="1" max="10" value="5" />
+    <span id="colorSensitivityValue">5</span>
+  </div>
+  <div id="sensitivityHint" style="display:none">Più alta = separa anche i dettagli dipinti sottili (sopracciglia, bocca) su superficie liscia. Se compaiono troppe parti, abbassala.</div>
+
   <div id="scaleRow" style="display:none">
     <label for="scaleHeight">Altezza reale (cm)</label>
     <input type="number" id="scaleHeight" inputmode="decimal" min="0" step="0.1" placeholder="es. 15" />
@@ -511,6 +533,21 @@
     </div>
   </div>
 
+  <div id="solidRow" style="display:none">
+    <div id="solidHint">Se un pezzo risulta «non completamente chiuso», rendilo un <b>solido pieno</b>: ricostruito a voxel diventa chiuso e stampabile al 100%. Serve anche per aggiungere i connettori.</div>
+    <div class="cut-slider-row" style="margin-top:8px">
+      <label for="solidQuality">Qualità</label>
+      <select id="solidQuality" style="flex:1;background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 8px;font-size:13px">
+        <option value="80">Bassa (veloce)</option>
+        <option value="120" selected>Media</option>
+        <option value="170">Alta (lenta)</option>
+      </select>
+    </div>
+    <div class="cut-actions" style="margin-top:8px">
+      <button id="solidifyAllBtn">🧊 Rendi solidi tutti i pezzi</button>
+    </div>
+  </div>
+
   <div class="section-title" id="logTitle" style="display:none">Registro riparazione</div>
   <div id="log"></div>
 
@@ -541,6 +578,7 @@
 
 <script src="vendor/three.min.js"></script>
 <script src="js/geometry-core.js"></script>
+<script src="js/voxel.js"></script>
 <script src="js/parsers.js"></script>
 <script src="js/segmentation.js"></script>
 <script src="js/export.js"></script>

@@ -19,6 +19,13 @@
     colorParts: document.getElementById('colorParts'),
     colorPartsValue: document.getElementById('colorPartsValue'),
     resegmentBtn: document.getElementById('resegmentBtn'),
+    sensitivityRow: document.getElementById('sensitivityRow'),
+    colorSensitivity: document.getElementById('colorSensitivity'),
+    colorSensitivityValue: document.getElementById('colorSensitivityValue'),
+    sensitivityHint: document.getElementById('sensitivityHint'),
+    solidRow: document.getElementById('solidRow'),
+    solidQuality: document.getElementById('solidQuality'),
+    solidifyAllBtn: document.getElementById('solidifyAllBtn'),
     scaleRow: document.getElementById('scaleRow'),
     scaleHeight: document.getElementById('scaleHeight'),
     scaleApplyBtn: document.getElementById('scaleApplyBtn'),
@@ -491,9 +498,13 @@
     const colorParts = parseInt(el.colorParts.value, 10);
     const method = el.segMethod.value;
     const segmentMode = method === 'geometry' ? 'geometry' : (method === 'combined' ? 'combined' : 'auto');
+    // sensibilità colore 1..10 -> soglia di contrasto (alta sensibilità = soglia
+    // bassa = separa anche i dettagli dipinti sottili come le sopracciglia)
+    const sens = parseInt(el.colorSensitivity.value, 10);
+    const colorBoundaryThreshold = Math.max(0.08, Math.min(0.34, 0.36 - 0.028 * sens));
     let result;
     try {
-      result = Segmentation.buildParts(currentParsed, { colorParts, segmentMode });
+      result = Segmentation.buildParts(currentParsed, { colorParts, segmentMode, colorBoundaryThreshold });
     } catch (err) {
       console.error(err);
       alert('Errore durante la riparazione/segmentazione: ' + err.message);
@@ -527,11 +538,54 @@
     });
   }
 
+  // Solidificazione a voxel: ogni pezzo incluso viene ricostruito come solido
+  // chiuso e stampabile. Lavora un pezzo alla volta lasciando respirare la UI
+  // (niente Web Worker: cediamo il controllo tra un pezzo e l'altro).
+  async function solidifyAllParts() {
+    if (!currentResult || currentResult.parts.length === 0) return;
+    if (typeof Voxel === 'undefined') { alert('Modulo di solidificazione non disponibile.'); return; }
+    const resolution = parseInt(el.solidQuality.value, 10) || 120;
+    const parts = currentResult.parts.filter((p) => p.included);
+    let done = 0;
+    for (const part of parts) {
+      done++;
+      setLoading(true, `Rendo solido il pezzo ${done}/${parts.length} (${part.name})…`);
+      await new Promise((r) => setTimeout(r, 20)); // fa disegnare l'overlay
+      try {
+        const solid = Voxel.remesh(part.positions, part.indices, { resolution, smoothIterations: 2 });
+        if (solid.indices.length > 0) {
+          part.positions = solid.positions;
+          part.indices = solid.indices;
+          part.stats = solid.stats;
+          part.watertight = solid.watertight;
+          part.solidified = true;
+          part._topo = null; // invalida la topologia usata dal ritaglio
+        }
+      } catch (err) {
+        console.error('solidify', part.name, err);
+      }
+    }
+    setLoading(false);
+    renderResult(currentResult);
+  }
+  el.solidifyAllBtn.addEventListener('click', () => { solidifyAllParts(); });
+
   el.colorParts.addEventListener('input', () => {
     el.colorPartsValue.textContent = el.colorParts.value;
   });
-  el.segMethod.addEventListener('change', () => { runSegmentation(); });
+  el.colorSensitivity.addEventListener('input', () => {
+    el.colorSensitivityValue.textContent = el.colorSensitivity.value;
+  });
+  el.segMethod.addEventListener('change', () => { updateSegmentControls(); runSegmentation(); });
   el.resegmentBtn.addEventListener('click', () => { runSegmentation(); });
+
+  // mostra la sensibilità colore solo quando il colore conta (combinata/colore)
+  function updateSegmentControls() {
+    const m = el.segMethod.value;
+    const colorMatters = m === 'combined' || m === 'color';
+    el.sensitivityRow.style.display = colorMatters ? 'flex' : 'none';
+    el.sensitivityHint.style.display = colorMatters ? 'block' : 'none';
+  }
   el.frameBtn.addEventListener('click', () => viewer.frameAll());
 
   el.scaleApplyBtn.addEventListener('click', () => {
@@ -559,6 +613,8 @@
     el.frameBtn.style.display = '';
     el.methodRow.style.display = 'flex';
     el.controlsRow.style.display = (result.mode === 'color-cluster' || result.mode === 'geometry' || result.mode === 'combined') ? 'flex' : 'none';
+    updateSegmentControls();
+    el.solidRow.style.display = result.parts.length > 0 ? 'block' : 'none';
     el.scaleRow.style.display = result.parts.length > 0 ? 'flex' : 'none';
     el.cutRow.style.display = result.parts.length > 0 ? 'block' : 'none';
     resetCutSelection();
