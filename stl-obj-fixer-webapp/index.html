@@ -579,18 +579,23 @@
   </div>
 
   <div id="solidRow" style="display:none">
-    <div id="solidHint">Se un pezzo risulta «non completamente chiuso», rendilo un <b>solido pieno</b>: ricostruito a voxel diventa chiuso e stampabile al 100%. Serve anche per aggiungere i connettori.</div>
-    <div class="cut-slider-row" style="margin-top:8px">
-      <label for="solidQuality">Qualità</label>
+    <div id="solidHint">Se un pezzo è «non completamente chiuso», hai due modi per renderlo stampabile:</div>
+    <div class="cut-actions" style="margin-top:8px">
+      <button id="closeLightBtn">🩹 Chiudi mantenendo i dettagli</button>
+    </div>
+    <div id="solidHint2" style="font-size:11.5px;color:var(--text-dim);margin-top:6px;line-height:1.4">Consigliato: tiene <b>tutti i dettagli originali</b> e tappa solo i buchi. Prova sempre prima questo.</div>
+    <div class="cut-slider-row" style="margin-top:12px">
+      <label for="solidQuality">Qualità voxel</label>
       <select id="solidQuality" style="flex:1;background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 8px;font-size:13px">
-        <option value="80">Bassa (veloce)</option>
-        <option value="120" selected>Media</option>
-        <option value="170">Alta (lenta)</option>
+        <option value="90">Bassa (veloce)</option>
+        <option value="140" selected>Media</option>
+        <option value="200">Alta (lenta)</option>
       </select>
     </div>
     <div class="cut-actions" style="margin-top:8px">
-      <button id="solidifyAllBtn">🧊 Rendi solidi tutti i pezzi</button>
+      <button id="solidifyAllBtn">🧊 Ricostruisci solido (voxel)</button>
     </div>
+    <div id="solidHint3" style="font-size:11.5px;color:var(--text-dim);margin-top:6px;line-height:1.4">Forza bruta per i casi disperati (gusci molto rotti/compenetrati): chiude <b>sempre</b>, ma ricostruisce la superficie e perde un po' di dettaglio fine. Necessario per i connettori.</div>
   </div>
 
   <div class="section-title" id="logTitle" style="display:none">Registro riparazione</div>

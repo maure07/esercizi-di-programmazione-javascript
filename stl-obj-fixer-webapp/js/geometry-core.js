@@ -721,10 +721,16 @@
     let totalZipped = 0;
     let nonManifoldLogged = false;
     let edgeMap = null;
-    const maxPasses = options.maxClosePasses === undefined ? 4 : options.maxClosePasses;
+    const maxPasses = options.maxClosePasses === undefined ? 6 : options.maxClosePasses;
+    // limite superiore per la cucitura: non oltre lo 0,2% della diagonale, per
+    // non deformare la parte unendo bordi realmente distanti
+    const zipEpsilonMax = options.zipEpsilonMax === undefined ? tol.diag * 2e-3 : options.zipEpsilonMax;
     for (let pass = 0; pass < maxPasses; pass++) {
-      // zippering dei bordi quasi coincidenti
-      const zip = MeshCore.weldBoundaryVertices(positions, idx, zipEpsilon);
+      // zippering dei bordi quasi coincidenti: l'epsilon CRESCE a ogni passata
+      // (prima le cuciture strette, poi le crepe piu' larghe), cosi' si chiude
+      // di piu' mantenendo intatti i triangoli originali
+      const passZip = Math.min(zipEpsilonMax, zipEpsilon * Math.pow(3, pass));
+      const zip = MeshCore.weldBoundaryVertices(positions, idx, passZip);
       if (zip.merged > 0) {
         totalZipped += zip.merged;
         idx = MeshCore.removeDegenerateTriangles(positions, zip.indices, areaEpsilon).indices;

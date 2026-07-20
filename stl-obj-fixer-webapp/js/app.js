@@ -26,6 +26,7 @@
     solidRow: document.getElementById('solidRow'),
     solidQuality: document.getElementById('solidQuality'),
     solidifyAllBtn: document.getElementById('solidifyAllBtn'),
+    closeLightBtn: document.getElementById('closeLightBtn'),
     connectorRow: document.getElementById('connectorRow'),
     connectorToggleBtn: document.getElementById('connectorToggleBtn'),
     connectorControls: document.getElementById('connectorControls'),
@@ -565,7 +566,7 @@
       setLoading(true, `Rendo solido il pezzo ${done}/${parts.length} (${part.name})…`);
       await new Promise((r) => setTimeout(r, 20)); // fa disegnare l'overlay
       try {
-        const solid = Voxel.remesh(part.positions, part.indices, { resolution, smoothIterations: 2 });
+        const solid = Voxel.remesh(part.positions, part.indices, { resolution, smoothIterations: 1 });
         if (solid.indices.length > 0) {
           part.positions = solid.positions;
           part.indices = solid.indices;
@@ -582,6 +583,35 @@
     renderResult(currentResult);
   }
   el.solidifyAllBtn.addEventListener('click', () => { solidifyAllParts(); });
+
+  // Chiusura LEGGERA: ripara ogni pezzo mantenendo i triangoli originali
+  // (tappa solo i buchi, cuce le crepe). Preserva il dettaglio, a differenza
+  // della ricostruzione a voxel.
+  async function closeAllPartsLight() {
+    if (!currentResult || currentResult.parts.length === 0) return;
+    const parts = currentResult.parts.filter((p) => p.included);
+    let done = 0, closed = 0;
+    for (const part of parts) {
+      done++;
+      setLoading(true, `Chiudo il pezzo ${done}/${parts.length} (${part.name})…`);
+      await new Promise((r) => setTimeout(r, 15));
+      try {
+        const rep = MeshCore.repairMesh(part.positions, part.indices);
+        part.positions = rep.positions;
+        part.indices = rep.indices;
+        part.stats = rep.stats;
+        part.watertight = rep.watertight;
+        part._topo = null;
+        if (rep.watertight) closed++;
+      } catch (err) { console.error('close', part.name, err); }
+    }
+    setLoading(false);
+    renderResult(currentResult);
+    if (closed < parts.length) {
+      alert(`${closed}/${parts.length} pezzi sono ora chiusi mantenendo i dettagli. Per quelli ancora aperti (gusci molto rotti) usa "Ricostruisci solido (voxel)".`);
+    }
+  }
+  el.closeLightBtn.addEventListener('click', () => { closeAllPartsLight(); });
 
   // ------------------- CONNETTORI (perno+foro / fori per spillo) -------------------
   // Posizionamento a tocco. La booleana e' fatta sulla griglia a voxel, quindi
@@ -684,7 +714,7 @@
   }
 
   function applySolidEdit(part, edits, resolution) {
-    const res = Voxel.applyEdits(part.positions, part.indices, edits, { resolution, smoothIterations: 2 });
+    const res = Voxel.applyEdits(part.positions, part.indices, edits, { resolution, smoothIterations: 1 });
     if (res.indices.length > 0) {
       part.positions = res.positions;
       part.indices = res.indices;
