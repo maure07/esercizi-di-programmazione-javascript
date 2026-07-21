@@ -1211,7 +1211,8 @@
       const topo = ensurePartTopology(part);
       const n = part.indices.length / 3;
       const insideAll = new Set(); // tutte le facce dentro il perimetro (fronte+retro)
-      const front = new Set();     // quelle rivolte verso di te (visibili)
+      const front = new Set();     // rivolte verso di te (visibili)
+      const fillable = new Set();  // fronte + fianco (per riempire i buchi, MA non il retro)
       for (let t = 0; t < n; t++) {
         const cx = topo.centroids[t * 3], cy = topo.centroids[t * 3 + 1], cz = topo.centroids[t * 3 + 2];
         const s = viewer.projectToScreen(cx, cy, cz);
@@ -1219,11 +1220,14 @@
         if (s.x < minX || s.x > maxX || s.y < minY || s.y > maxY) continue;
         if (!pointInPolygon(s.x, s.y, polygon)) continue;
         insideAll.add(t);
-        const vx = cx - camPos[0], vy = cy - camPos[1], vz = cz - camPos[2];
-        if (topo.normals[t * 3] * vx + topo.normals[t * 3 + 1] * vy + topo.normals[t * 3 + 2] * vz < 0) front.add(t);
+        let vx = cx - camPos[0], vy = cy - camPos[1], vz = cz - camPos[2];
+        const vl = Math.sqrt(vx * vx + vy * vy + vz * vz) || 1;
+        const facing = (topo.normals[t * 3] * vx + topo.normals[t * 3 + 1] * vy + topo.normals[t * 3 + 2] * vz) / vl;
+        if (facing < 0) front.add(t);        // verso la camera
+        if (facing < 0.35) fillable.add(t);  // fronte o fianco (esclude il retro netto)
       }
       if (insideAll.size > 0 && (!best || insideAll.size > best.insideAll.size)) {
-        best = { partId: part.id, topo, insideAll, front };
+        best = { partId: part.id, topo, insideAll, front, fillable };
       }
     }
     if (!best) return null;
@@ -1232,14 +1236,15 @@
     if (through) {
       selected = best.insideAll; // taglio passante: tutto quello dentro il perimetro
     } else {
-      // parti dalle facce viste; poi RIEMPI i buchi interni (facce inclinate o
-      // negli incavi, rivolte un po' di lato, circondate da facce selezionate)
-      // e tieni solo la zona contigua: niente piu' selezione "a groviera".
+      // parti dalle facce viste; poi RIEMPI solo i buchi interni usando le facce
+      // di fianco (non quelle del retro, cosi' non sborda sulle superfici sottili
+      // come i capelli). Nessun filtro "zona piu' grande": non si perdono le
+      // ciocche/parti separate.
       selected = new Set(best.front.size > 0 ? best.front : best.insideAll);
       const adj = best.topo.adjacency;
-      for (let it = 0; it < 8; it++) {
+      for (let it = 0; it < 10; it++) {
         let added = 0;
-        best.insideAll.forEach((t) => {
+        best.fillable.forEach((t) => {
           if (selected.has(t)) return;
           let c = 0;
           const a = adj[t];
@@ -1248,7 +1253,6 @@
         });
         if (!added) break;
       }
-      selected = largestFaceComponent(selected, adj);
     }
     return selected.size > 0 ? { partId: best.partId, faces: selected } : null;
   }
