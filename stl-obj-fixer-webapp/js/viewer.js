@@ -235,9 +235,13 @@
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.Float32BufferAttribute(part.positions, 3));
       geometry.setIndex(new THREE.BufferAttribute(part.indices, 1));
+      // colore per-vertice opzionale (per mostrare la texture/colori del modello)
+      const useVC = !!part.vertexColors;
+      if (useVC) geometry.setAttribute('color', new THREE.Float32BufferAttribute(part.vertexColors, 3));
       geometry.computeVertexNormals();
       const material = new THREE.MeshStandardMaterial({
-        color: colorToHex(part.color),
+        color: useVC ? 0xffffff : colorToHex(part.color),
+        vertexColors: useVC,
         metalness: 0.05,
         roughness: 0.75,
         side: THREE.DoubleSide,

@@ -248,6 +248,8 @@
       renderResult(currentResult);
     } else if (n === 2 && currentRepaired) {
       showSingleMesh(currentRepaired.positions, currentRepaired.indices, [0.45, 0.62, 0.85]);
+    } else if (currentAnalysis && n === 1 && showColoredModel(currentParsed)) {
+      // step 1 con texture/colori: mostra il modello com'e' davvero
     } else if (currentAnalysis && (n === 1 || n === 2)) {
       showSingleMesh(currentAnalysis.positions, currentAnalysis.indices, [0.72, 0.70, 0.66]);
     }
@@ -406,6 +408,31 @@
     requestAnimationFrame(() => viewer.frameAll());
   }
 
+  // Mostra il modello grezzo CON I SUOI COLORI reali (texture o materiali):
+  // usa la "triangle soup" non saldata, cosi' ogni triangolo tiene il suo
+  // colore campionato. Se non ci sono colori, ricade sul grigio piatto.
+  function showColoredModel(parsed) {
+    if (!parsed || !parsed.hasColorInfo || !parsed.rawColors) return false;
+    const nTris = parsed.rawPositions.length / 9;
+    const rc = parsed.rawColors;
+    if (!rc || rc.length < nTris * 3) return false;
+    const indices = new Uint32Array(nTris * 3);
+    for (let i = 0; i < indices.length; i++) indices[i] = i;
+    // espandi 1 colore/triangolo -> 3 vertici/triangolo
+    const vc = new Float32Array(nTris * 9);
+    for (let t = 0; t < nTris; t++) {
+      const r = rc[t * 3], g = rc[t * 3 + 1], b = rc[t * 3 + 2];
+      const o = t * 9;
+      vc[o] = r; vc[o + 1] = g; vc[o + 2] = b;
+      vc[o + 3] = r; vc[o + 4] = g; vc[o + 5] = b;
+      vc[o + 6] = r; vc[o + 7] = g; vc[o + 8] = b;
+    }
+    viewer.clearParts();
+    viewer.addPart({ id: 'single', color: [0.8, 0.8, 0.8], positions: parsed.rawPositions, indices, vertexColors: vc });
+    requestAnimationFrame(() => viewer.frameAll());
+    return true;
+  }
+
   async function runAnalysis() {
     if (!currentParsed) return;
     setLoading(true, 'Analisi del modello in corso…');
@@ -434,11 +461,30 @@
       ? issues.join('') + '<div class="dim" style="margin-top:6px">Consiglio: passa da "Ripara e solidifica" prima di segmentare.</div>'
       : '<div class="ok">✔ Nessun problema rilevato: la mesh è già chiusa e pulita.</div>';
 
+    // stato colori/texture, mostrato subito allo step 1 (e' qui che l'utente
+    // si accorge se il modello e' "grigio")
+    let colorHtml = '';
+    const cp = currentParsed;
+    if (cp) {
+      if (cp.textureError) {
+        colorHtml = `<div class="issue" style="margin-top:6px">⚠ Non sono riuscito a leggere l'immagine texture: ${cp.textureError}. Il modello resta grigio.</div>`;
+      } else if (cp.textureApplied) {
+        colorHtml = '<div class="ok" style="margin-top:6px">✔ Texture caricata: il modello è mostrato con i suoi colori.</div>';
+      } else if (cp.hasTextureInfo) {
+        colorHtml = '<div class="issue" style="margin-top:6px">⚠ Questo .obj usa una texture ma non hai selezionato il file immagine (.png/.jpg). Per vedere i colori ricarica <b>insieme</b> .obj + .mtl + immagine (selezionali tutti nella stessa finestra).</div>';
+      } else if (cp.hasColorInfo) {
+        colorHtml = '<div class="ok" style="margin-top:6px">✔ Colori del modello caricati.</div>';
+      } else {
+        colorHtml = '<div class="dim" style="margin-top:6px">Modello senza colori: verrà mostrato in grigio (normale per gli STL). Per i colori serve un .obj con texture.</div>';
+      }
+    }
+
     el.analysisReport.innerHTML = `
       <div><span class="dim">Triangoli:</span> ${fmt(nTris, 0)}</div>
       <div><span class="dim">Dimensioni:</span> ${fmt(size[0], 1)}×${fmt(size[1], 1)}×${fmt(size[2], 1)} mm <span class="dim">(se non corrisponde, imposta l'altezza qui sotto)</span></div>
       <div><span class="dim">Pezzi separati nel file:</span> ${fmt(comp.componentCount, 0)}</div>
       <div style="margin-top:6px">${issuesHtml}</div>
+      ${colorHtml}
     `;
 
     el.emptyState.style.display = 'none';
@@ -1792,6 +1838,15 @@
 
   // accessi di sola lettura usati dai test automatici (nessun effetto sull'app)
   window.__viewerCam = () => viewer.getCameraPosition();
+  window.__viewerScene = () => viewer.scene;
+  window.__parsedInfo = () => currentParsed ? {
+    hasColorInfo: currentParsed.hasColorInfo,
+    hasTextureInfo: currentParsed.hasTextureInfo,
+    hasMaterialInfo: currentParsed.hasMaterialInfo,
+    materialCount: currentParsed.materialCount,
+    textureApplied: !!currentParsed.textureApplied,
+    textureError: currentParsed.textureError || null,
+  } : null;
   window.__lassoCount = () => lassoPoints.length;
   window.__partsInfo = () => currentResult ? currentResult.parts.map((p) => ({ name: p.name, tris: p.indices.length / 3, wt: !!p.watertight })) : null;
   window.__cutInfo = () => {
