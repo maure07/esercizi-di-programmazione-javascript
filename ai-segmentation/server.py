@@ -39,6 +39,30 @@ def cors(resp):
     return resp
 
 
+@app.route("/", methods=["GET"])
+def home():
+    # pagina di conferma: se apri l'indirizzo nel browser vedi che il
+    # companion e' attivo (non e' qui che si usa l'app, e' solo il servizio)
+    motore = "AI (GPU) + geometria" if AI_AVAILABLE else "geometria (motore base)"
+    return (
+        "<!doctype html><meta charset='utf-8'>"
+        "<title>Companion attivo</title>"
+        "<div style='font-family:system-ui;max-width:640px;margin:60px auto;"
+        "padding:0 20px;line-height:1.5'>"
+        "<h1 style='color:#2e7d32'>&#10003; Companion di segmentazione attivo</h1>"
+        "<p>Il servizio locale sta girando correttamente su "
+        "<b>http://127.0.0.1:8760</b>.</p>"
+        "<p>Motore disponibile: <b>" + motore + "</b></p>"
+        "<p style='background:#eef;padding:14px;border-radius:8px'>"
+        "Questa pagina serve solo a confermare che tutto funziona.<br>"
+        "Per usare l'app apri il file <b>stl-obj-fixer.html</b>, carica il "
+        "modello, vai su <b>3&middot;Segmenta</b> e premi "
+        "<b>&#129504; Segmenta con AI (PC locale)</b>.</p>"
+        "<p style='color:#888'>Lascia questa finestra (e la finestra nera) "
+        "aperta mentre usi l'app.</p></div>"
+    )
+
+
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({
