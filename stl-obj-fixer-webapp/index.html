@@ -528,8 +528,10 @@
     <div class="cut-actions" style="margin-bottom:8px">
       <button id="cutToolWandBtn" class="active">🖌 Pennello</button>
       <button id="cutToolLassoBtn">⭕ Lazo</button>
+      <button id="cutToolPlaneBtn">📏 Taglio dritto</button>
       <button id="cutLassoCloseBtn" style="display:none">Chiudi lazo</button>
     </div>
+    <div id="selectExtras">
     <div class="cut-actions" style="margin-bottom:8px">
       <button id="cutModeAddBtn" class="active">➕ Aggiungi</button>
       <button id="cutModeEraseBtn">➖ Rimuovi</button>
@@ -539,7 +541,28 @@
       <input type="checkbox" id="lassoThroughChk" style="width:16px;height:16px;accent-color:var(--accent)" />
       Lazo passante — opzionale (seleziona anche il retro del pezzo)
     </label>
-    <div class="cut-actions">
+    </div>
+
+    <div id="planeControls" style="display:none">
+      <div class="cut-slider-row">
+        <label>Pezzo</label>
+        <select id="planePart" style="flex:1;background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 8px;font-size:13px"></select>
+      </div>
+      <div class="cut-actions" style="margin-bottom:8px">
+        <button id="planeAxisX">↔ X</button>
+        <button id="planeAxisY">↕ Y</button>
+        <button id="planeAxisZ" class="active">⬍ Z (altezza)</button>
+      </div>
+      <div class="cut-slider-row">
+        <label for="planePos">Posizione</label>
+        <input type="range" id="planePos" min="2" max="98" step="1" value="50" />
+        <span id="planePosValue">50%</span>
+      </div>
+      <div class="cut-actions">
+        <button id="planeCutBtn">✂️ Taglia qui (facce piatte)</button>
+      </div>
+    </div>
+    <div class="cut-actions" id="selectFinalRow">
       <button id="cutCreateBtn" disabled>Crea parte (0 triangoli)</button>
       <button id="cutCancelBtn">Annulla</button>
     </div>

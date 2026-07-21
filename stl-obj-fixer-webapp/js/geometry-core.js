@@ -580,6 +580,176 @@
   };
 
   // ---------------------------------------------------------------------
+  // TAGLIO CON UN PIANO: divide la mesh nei due lati di un piano (punto p0,
+  // normale nrm). I triangoli attraversati vengono spezzati sul piano
+  // (Sutherland-Hodgman), e la sezione trasversale viene TAPPATA PIATTA su
+  // entrambi i lati: cosi' le due facce di taglio sono lisce e identiche, e i
+  // pezzi si incastrano perfettamente. Restituisce { above, below } con
+  // { positions, indices } ciascuno.
+  // ---------------------------------------------------------------------
+  MeshCore.cutByPlane = function (positions, indices, p0, nrm) {
+    const nl = Math.sqrt(nrm[0] * nrm[0] + nrm[1] * nrm[1] + nrm[2] * nrm[2]) || 1;
+    const nx = nrm[0] / nl, ny = nrm[1] / nl, nz = nrm[2] / nl;
+    const nV = positions.length / 3;
+    // sposta il piano di un'inezia lungo la normale: cosi' non passa MAI
+    // esattamente per un vertice (che genererebbe triangoli-tappo degeneri).
+    // Lo scostamento e' impercettibile (0,01% della dimensione del modello).
+    let mn = Infinity, mx = -Infinity;
+    for (let i = 0; i < positions.length; i++) { if (positions[i] < mn) mn = positions[i]; if (positions[i] > mx) mx = positions[i]; }
+    const shift = (mx - mn) * 1.37e-4;
+    const q0 = [p0[0] + nx * shift, p0[1] + ny * shift, p0[2] + nz * shift];
+    const dist = new Float64Array(nV);
+    for (let i = 0; i < nV; i++) {
+      dist[i] = (positions[i * 3] - q0[0]) * nx + (positions[i * 3 + 1] - q0[1]) * ny + (positions[i * 3 + 2] - q0[2]) * nz;
+    }
+
+    const posA = [], idxA = [], posB = [], idxB = [];
+    const mapA = new Map(), mapB = new Map();
+    const A = { pos: posA, idx: idxA, map: mapA };
+    const B = { pos: posB, idx: idxB, map: mapB };
+    function addOrig(side, vi) {
+      let m = side.map.get(vi);
+      if (m === undefined) { m = side.pos.length / 3; side.pos.push(positions[vi * 3], positions[vi * 3 + 1], positions[vi * 3 + 2]); side.map.set(vi, m); }
+      return m;
+    }
+    // vertici di intersezione: identificati dalla chiave dello spigolo, condivisi
+    // per lato (indice locale) e in cache come punto 3D per il tappo
+    const cutPos = new Map(); // key -> [x,y,z]
+    const cutA = new Map(), cutB = new Map();
+    function edgeKey(i, j) { return i < j ? i + '_' + j : j + '_' + i; }
+    function cutPointPos(i, j) {
+      const key = edgeKey(i, j);
+      let p = cutPos.get(key);
+      if (!p) {
+        const di = dist[i], dj = dist[j];
+        const t = di / (di - dj);
+        p = [positions[i * 3] + t * (positions[j * 3] - positions[i * 3]),
+        positions[i * 3 + 1] + t * (positions[j * 3 + 1] - positions[i * 3 + 1]),
+        positions[i * 3 + 2] + t * (positions[j * 3 + 2] - positions[i * 3 + 2])];
+        cutPos.set(key, p);
+      }
+      return { key, p };
+    }
+    function addCut(side, cutMap, key, p) {
+      let m = cutMap.get(key);
+      if (m === undefined) { m = side.pos.length / 3; side.pos.push(p[0], p[1], p[2]); cutMap.set(key, m); }
+      return m;
+    }
+
+    // segmenti della sezione (per il tappo): coppie di chiavi spigolo
+    const capSeg = [];
+
+    function emitPoly(side, cutMap, verts) {
+      // verts: lista di {orig?:vi, cut?:{key,p}} in ordine; fan-triangola
+      if (verts.length < 3) return;
+      const local = verts.map((v) => v.orig !== undefined ? addOrig(side, v.orig) : addCut(side, cutMap, v.cut.key, v.cut.p));
+      for (let i = 1; i < local.length - 1; i++) {
+        side.idx.push(local[0], local[i], local[i + 1]);
+      }
+    }
+
+    const nT = indices.length / 3;
+    for (let t = 0; t < nT; t++) {
+      const a = indices[t * 3], b = indices[t * 3 + 1], c = indices[t * 3 + 2];
+      // segno binario: sul piano (d>=0) conta come "sopra". Cosi' evitiamo la
+      // degenerazione quando il piano passa esattamente per dei vertici.
+      const sa = dist[a] >= 0 ? 1 : -1;
+      const sb = dist[b] >= 0 ? 1 : -1;
+      const sc = dist[c] >= 0 ? 1 : -1;
+      if (sa > 0 && sb > 0 && sc > 0) { idxAddTri(A, a, b, c); continue; }
+      if (sa < 0 && sb < 0 && sc < 0) { idxAddTri(B, a, b, c); continue; }
+
+      // triangolo attraversato: costruisci i poligoni sopra/sotto camminando i bordi
+      const vs = [a, b, c], ss = [sa, sb, sc];
+      const aboveV = [], belowV = [];
+      const capPts = [];
+      for (let e = 0; e < 3; e++) {
+        const i = vs[e], j = vs[(e + 1) % 3];
+        const si = ss[e], sj = ss[(e + 1) % 3];
+        if (si > 0) aboveV.push({ orig: i }); else belowV.push({ orig: i });
+        if (si !== sj) {
+          const cp = cutPointPos(i, j);
+          aboveV.push({ cut: cp });
+          belowV.push({ cut: cp });
+          capPts.push(cp);
+        }
+      }
+      emitPoly(A, cutA, aboveV);
+      emitPoly(B, cutB, belowV);
+      if (capPts.length === 2) capSeg.push([capPts[0], capPts[1]]);
+    }
+
+    function idxAddTri(side, a, b, c) {
+      side.idx.push(addOrig(side, a), addOrig(side, b), addOrig(side, c));
+    }
+
+    // TAPPO PIATTO della sezione: traccia i loop dei segmenti e triangola sul piano
+    const capTris = capFromSegments(capSeg);
+    // aggiungi il tappo ai due lati con verso opposto (facce piatte combacianti)
+    for (const loop of capTris) {
+      for (const tri of loop.tris) {
+        const kA = tri.map((pt) => addCut(A, cutA, pt.key, pt.p));
+        idxA.push(kA[0], kA[1], kA[2]);
+        const kB = tri.map((pt) => addCut(B, cutB, pt.key, pt.p));
+        idxB.push(kB[0], kB[2], kB[1]); // verso opposto
+      }
+    }
+
+    // costruisce i triangoli-tappo (in punti 3D con chiave) dai segmenti
+    function capFromSegments(segs) {
+      if (segs.length === 0) return [];
+      // grafo: chiave -> vicini (chiavi) con il punto
+      const nodes = new Map(); // key -> p
+      const adj = new Map();   // key -> [key,...]
+      for (const [p1, p2] of segs) {
+        nodes.set(p1.key, p1.p); nodes.set(p2.key, p2.p);
+        if (!adj.has(p1.key)) adj.set(p1.key, []);
+        if (!adj.has(p2.key)) adj.set(p2.key, []);
+        adj.get(p1.key).push(p2.key); adj.get(p2.key).push(p1.key);
+      }
+      const visited = new Set();
+      const results = [];
+      for (const startKey of adj.keys()) {
+        if (visited.has(startKey)) continue;
+        // traccia una catena/loop
+        const loopKeys = [];
+        let cur = startKey, prev = null, guard = 0;
+        while (cur !== undefined && !visited.has(cur) && guard++ < adj.size + 2) {
+          visited.add(cur); loopKeys.push(cur);
+          const neigh = adj.get(cur) || [];
+          let next;
+          for (const nb of neigh) { if (nb !== prev && !visited.has(nb)) { next = nb; break; } }
+          prev = cur; cur = next;
+        }
+        if (loopKeys.length < 3) continue;
+        const pts3 = loopKeys.map((k) => ({ key: k, p: nodes.get(k) }));
+        // triangola sul piano usando la base (u,v) del piano di taglio
+        const tris = triangulatePlanarLoop(pts3);
+        if (tris.length) results.push({ tris });
+      }
+      return results;
+    }
+
+    function triangulatePlanarLoop(pts3) {
+      // base ortonormale (u,v) sul piano
+      let ux, uy, uz;
+      if (Math.abs(nx) < 0.9) { ux = 1; uy = 0; uz = 0; } else { ux = 0; uy = 1; uz = 0; }
+      const dd = ux * nx + uy * ny + uz * nz;
+      ux -= dd * nx; uy -= dd * ny; uz -= dd * nz;
+      const ul = Math.sqrt(ux * ux + uy * uy + uz * uz) || 1; ux /= ul; uy /= ul; uz /= ul;
+      const vx = ny * uz - nz * uy, vy = nz * ux - nx * uz, vz = nx * uy - ny * ux;
+      const pts2 = pts3.map((o) => ({ x: o.p[0] * ux + o.p[1] * uy + o.p[2] * uz, y: o.p[0] * vx + o.p[1] * vy + o.p[2] * vz }));
+      const localTris = MeshCore.earClipPolygon2D(pts2);
+      return localTris.map(([i0, i1, i2]) => [pts3[i0], pts3[i1], pts3[i2]]);
+    }
+
+    return {
+      above: { positions: Float64Array.from(posA), indices: Uint32Array.from(idxA) },
+      below: { positions: Float64Array.from(posB), indices: Uint32Array.from(idxB) },
+    };
+  };
+
+  // ---------------------------------------------------------------------
   // Statistiche: volume assoluto (mm^3), area superficiale, bbox
   // ---------------------------------------------------------------------
   MeshCore.computeStats = function (positions, indices) {

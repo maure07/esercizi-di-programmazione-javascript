@@ -210,6 +210,23 @@
       setHighlight(null);
     }
 
+    // --- piano di taglio (anteprima) ---
+    let cutPlaneMesh = null;
+    function showCutPlane(point, normal, size) {
+      hideCutPlane();
+      const geo = new THREE.PlaneGeometry(size, size);
+      const mat = new THREE.MeshBasicMaterial({ color: 0xff5b6b, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false });
+      cutPlaneMesh = new THREE.Mesh(geo, mat);
+      const n = new THREE.Vector3(normal[0], normal[1], normal[2]).normalize();
+      cutPlaneMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
+      cutPlaneMesh.position.set(point[0], point[1], point[2]);
+      cutPlaneMesh.renderOrder = 999;
+      scene.add(cutPlaneMesh);
+    }
+    function hideCutPlane() {
+      if (cutPlaneMesh) { scene.remove(cutPlaneMesh); cutPlaneMesh.geometry.dispose(); cutPlaneMesh.material.dispose(); cutPlaneMesh = null; }
+    }
+
     function colorToHex(c) {
       return new THREE.Color(c[0], c[1], c[2]);
     }
@@ -327,7 +344,7 @@
       updateCamera();
     }
 
-    return { scene, camera, renderer, clearParts, addPart, setPartVisible, setPartOffset, frameAll, resize, raycastAt, setHighlight, projectToScreen, getCameraPosition, setPointerDownHook };
+    return { scene, camera, renderer, clearParts, addPart, setPartVisible, setPartOffset, frameAll, resize, raycastAt, setHighlight, projectToScreen, getCameraPosition, setPointerDownHook, showCutPlane, hideCutPlane };
   }
 
   root.createViewer = createViewer;

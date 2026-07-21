@@ -52,12 +52,23 @@
     lassoOverlay: document.getElementById('lassoOverlay'),
     cutToolWandBtn: document.getElementById('cutToolWandBtn'),
     cutToolLassoBtn: document.getElementById('cutToolLassoBtn'),
+    cutToolPlaneBtn: document.getElementById('cutToolPlaneBtn'),
     cutLassoCloseBtn: document.getElementById('cutLassoCloseBtn'),
     cutModeAddBtn: document.getElementById('cutModeAddBtn'),
     cutModeEraseBtn: document.getElementById('cutModeEraseBtn'),
     cutUndoBtn: document.getElementById('cutUndoBtn'),
     cutCreateBtn: document.getElementById('cutCreateBtn'),
     cutCancelBtn: document.getElementById('cutCancelBtn'),
+    selectExtras: document.getElementById('selectExtras'),
+    planeControls: document.getElementById('planeControls'),
+    planePart: document.getElementById('planePart'),
+    planeAxisX: document.getElementById('planeAxisX'),
+    planeAxisY: document.getElementById('planeAxisY'),
+    planeAxisZ: document.getElementById('planeAxisZ'),
+    planePos: document.getElementById('planePos'),
+    planePosValue: document.getElementById('planePosValue'),
+    planeCutBtn: document.getElementById('planeCutBtn'),
+    selectFinalRow: document.getElementById('selectFinalRow'),
     stepper: document.getElementById('stepper'),
     stepChip1: document.getElementById('stepChip1'),
     stepChip2: document.getElementById('stepChip2'),
@@ -1075,7 +1086,7 @@
     el.cutToggleBtn.textContent = active ? '✂️ Ritaglio attivo — dipingi sul modello' : '✂️ Ritaglio manuale';
     el.cutControls.style.display = active ? 'block' : 'none';
     if (active) setCutTool(cutTool); // imposta il messaggio d'aiuto giusto
-    else resetCutSelection();
+    else { resetCutSelection(); viewer.hideCutPlane(); }
   }
 
   function setCutErase(erase) {
@@ -1167,11 +1178,109 @@
     cutTool = tool;
     el.cutToolWandBtn.classList.toggle('active', tool === 'wand');
     el.cutToolLassoBtn.classList.toggle('active', tool === 'lasso');
+    el.cutToolPlaneBtn.classList.toggle('active', tool === 'plane');
     clearLasso();
-    document.getElementById('cutHint').textContent = tool === 'lasso'
-      ? 'Lazo: disegna un cappio CHIUSO tutto attorno alla zona (non un tratto). Metti i punti del contorno, poi chiudi toccando il primo punto o "Chiudi lazo" e "Crea parte". Per selezioni a mano libera conviene il Pennello.'
-      : 'Pennello: TRASCINA il dito/mouse sul modello per dipingere la selezione (giallo) esattamente dove passi. Ruoti la vista trascinando fuori dal modello (sfondo). Regola il Raggio; ➖ Rimuovi fa da gomma.';
+    resetCutSelection();
+    const isPlane = tool === 'plane';
+    el.planeControls.style.display = isPlane ? 'block' : 'none';
+    el.selectExtras.style.display = isPlane ? 'none' : 'block';
+    el.selectFinalRow.style.display = isPlane ? 'none' : 'flex';
+    if (isPlane) { populatePlaneParts(); updatePlanePreview(); }
+    else viewer.hideCutPlane();
+    document.getElementById('cutHint').textContent =
+      tool === 'lasso'
+        ? 'Lazo: disegna un cappio CHIUSO tutto attorno alla zona (non un tratto). Metti i punti del contorno, poi chiudi toccando il primo punto o "Chiudi lazo" e "Crea parte". Per selezioni a mano libera conviene il Pennello.'
+        : tool === 'plane'
+          ? 'Taglio dritto: scegli il pezzo, l\'asse e la posizione del piano rosso, poi "Taglia qui". Le due facce vengono PIATTE e identiche, così i pezzi si incastrano perfettamente. Aggiungi poi i connettori per bloccarli.'
+          : 'Pennello: TRASCINA il dito/mouse sul modello per dipingere la selezione (giallo) esattamente dove passi. Ruoti la vista trascinando fuori dal modello (sfondo). Regola il Raggio; ➖ Rimuovi fa da gomma.';
   }
+
+  // ------------------- TAGLIO DRITTO CON UN PIANO -------------------
+  let planeAxis = 'z';
+  function planePartObj() {
+    if (!currentResult) return null;
+    const id = el.planePart.value;
+    return currentResult.parts.find((p) => p.id === id) || currentResult.parts.filter((p) => p.included)[0] || null;
+  }
+  function populatePlaneParts() {
+    if (!currentResult) return;
+    const included = currentResult.parts.filter((p) => p.included);
+    const prev = el.planePart.value;
+    el.planePart.innerHTML = '';
+    included.forEach((p) => {
+      const o = document.createElement('option');
+      o.value = p.id; o.textContent = p.name;
+      el.planePart.appendChild(o);
+    });
+    if (included.some((p) => p.id === prev)) el.planePart.value = prev;
+  }
+  function setPlaneAxis(ax) {
+    planeAxis = ax;
+    el.planeAxisX.classList.toggle('active', ax === 'x');
+    el.planeAxisY.classList.toggle('active', ax === 'y');
+    el.planeAxisZ.classList.toggle('active', ax === 'z');
+    updatePlanePreview();
+  }
+  function planeFromControls(part) {
+    const ai = planeAxis === 'x' ? 0 : (planeAxis === 'y' ? 1 : 2);
+    const lo = part.stats.bboxMin[ai], hi = part.stats.bboxMax[ai];
+    const f = parseInt(el.planePos.value, 10) / 100;
+    const at = lo + (hi - lo) * f;
+    const cx = (part.stats.bboxMin[0] + part.stats.bboxMax[0]) / 2;
+    const cy = (part.stats.bboxMin[1] + part.stats.bboxMax[1]) / 2;
+    const cz = (part.stats.bboxMin[2] + part.stats.bboxMax[2]) / 2;
+    const point = [cx, cy, cz]; point[ai] = at;
+    const normal = [0, 0, 0]; normal[ai] = 1;
+    return { point, normal, ai };
+  }
+  function updatePlanePreview() {
+    if (cutTool !== 'plane') return;
+    const part = planePartObj();
+    if (!part) { viewer.hideCutPlane(); return; }
+    el.planePosValue.textContent = el.planePos.value + '%';
+    const { point, normal } = planeFromControls(part);
+    const s = part.stats.bboxMax, m = part.stats.bboxMin;
+    const size = 1.4 * Math.max(s[0] - m[0], s[1] - m[1], s[2] - m[2], 1);
+    viewer.showCutPlane(point, normal, size);
+  }
+  el.planePart.addEventListener('change', updatePlanePreview);
+  el.planePos.addEventListener('input', updatePlanePreview);
+  el.planeAxisX.addEventListener('click', () => setPlaneAxis('x'));
+  el.planeAxisY.addEventListener('click', () => setPlaneAxis('y'));
+  el.planeAxisZ.addEventListener('click', () => setPlaneAxis('z'));
+  el.planeCutBtn.addEventListener('click', () => {
+    const part = planePartObj();
+    if (!part) return;
+    const { point, normal } = planeFromControls(part);
+    setLoading(true, 'Taglio con il piano in corso…');
+    setTimeout(() => {
+      try {
+        const res = MeshCore.cutByPlane(part.positions, part.indices, point, normal);
+        if (res.above.indices.length === 0 || res.below.indices.length === 0) {
+          alert('Il piano non attraversa il pezzo: sposta la posizione.');
+          setLoading(false); return;
+        }
+        const ra = MeshCore.repairMesh(res.above.positions, res.above.indices);
+        const rb = MeshCore.repairMesh(res.below.positions, res.below.indices);
+        // sostituisci il pezzo con le due metà
+        const idx = currentResult.parts.indexOf(part);
+        const mk = (rep, suff) => ({
+          id: 'part_plane_' + Date.now() + '_' + suff,
+          name: part.name + ' ' + suff,
+          color: part.color.slice(),
+          sourceTriangleCount: rep.indices.length / 3,
+          positions: rep.positions, indices: rep.indices,
+          log: rep.log, watertight: rep.watertight, stats: rep.stats, included: true,
+        });
+        currentResult.parts.splice(idx, 1, mk(rb, '(sotto)'), mk(ra, '(sopra)'));
+        currentResult.parts.sort((a, b) => b.stats.volume - a.stats.volume);
+        renderResult(currentResult);
+        setCutMode(true); setCutTool('plane');
+      } catch (err) {
+        console.error(err); alert('Errore nel taglio con piano: ' + err.message);
+      } finally { setLoading(false); }
+    }, 30);
+  });
 
   function pointInPolygon(x, y, poly) {
     let inside = false;
@@ -1305,6 +1414,7 @@
 
   el.cutToolWandBtn.addEventListener('click', () => setCutTool('wand'));
   el.cutToolLassoBtn.addEventListener('click', () => setCutTool('lasso'));
+  el.cutToolPlaneBtn.addEventListener('click', () => setCutTool('plane'));
   el.cutLassoCloseBtn.addEventListener('click', () => closeLasso());
   window.addEventListener('resize', () => { if (lassoPoints.length > 0) drawLasso(); });
 
