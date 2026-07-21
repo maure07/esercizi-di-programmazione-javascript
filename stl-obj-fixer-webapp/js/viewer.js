@@ -81,11 +81,20 @@
     // col mouse: tasto destro / centrale / Shift-trascina = sposta (pan);
     // tasto sinistro = ruota. Su touch resta un dito = ruota, due dita = zoom+pan.
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    // hook opzionale: se restituisce true la app "prende" questo pointer (per
+    // dipingere la selezione), e il viewer NON ruota/sposta con quel dito.
+    let pointerDownHook = null;
+    function setPointerDownHook(fn) { pointerDownHook = fn; }
+
     canvas.addEventListener('pointerdown', (e) => {
       canvas.setPointerCapture(e.pointerId);
       const isPan = e.button === 1 || e.button === 2 || e.shiftKey || e.ctrlKey || e.metaKey;
-      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, pan: isPan });
-      canvas.style.cursor = isPan ? 'move' : 'grabbing';
+      let claimed = false;
+      if (pointerDownHook && pointers.size === 0 && !isPan) {
+        claimed = !!pointerDownHook(e.clientX, e.clientY, e.pointerId);
+      }
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, pan: isPan, claimed });
+      canvas.style.cursor = claimed ? 'crosshair' : (isPan ? 'move' : 'grabbing');
       lastPinchDist = pointerDistance();
       lastPinchMid = pointerMidpoint();
     });
@@ -94,10 +103,12 @@
       const prev = pointers.get(e.pointerId);
       const dx = e.clientX - prev.x;
       const dy = e.clientY - prev.y;
-      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, pan: prev.pan });
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, pan: prev.pan, claimed: prev.claimed });
 
       if (pointers.size === 1) {
-        if (prev.pan) {
+        if (prev.claimed) {
+          // pointer "preso" dalla app per dipingere: nessun movimento camera
+        } else if (prev.pan) {
           panBy(dx, dy);
         } else {
           theta -= dx * 0.008;
@@ -279,7 +290,7 @@
       updateCamera();
     }
 
-    return { scene, camera, renderer, clearParts, addPart, setPartVisible, setPartOffset, frameAll, resize, raycastAt, setHighlight, projectToScreen, getCameraPosition };
+    return { scene, camera, renderer, clearParts, addPart, setPartVisible, setPartOffset, frameAll, resize, raycastAt, setHighlight, projectToScreen, getCameraPosition, setPointerDownHook };
   }
 
   root.createViewer = createViewer;

@@ -1072,9 +1072,10 @@
   function setCutMode(active) {
     cutMode = active;
     el.cutToggleBtn.classList.toggle('active', active);
-    el.cutToggleBtn.textContent = active ? '✂️ Ritaglio attivo — tocca il modello' : '✂️ Ritaglio manuale';
+    el.cutToggleBtn.textContent = active ? '✂️ Ritaglio attivo — dipingi sul modello' : '✂️ Ritaglio manuale';
     el.cutControls.style.display = active ? 'block' : 'none';
-    if (!active) resetCutSelection();
+    if (active) setCutTool(cutTool); // imposta il messaggio d'aiuto giusto
+    else resetCutSelection();
   }
 
   function setCutErase(erase) {
@@ -1160,8 +1161,8 @@
     el.cutToolLassoBtn.classList.toggle('active', tool === 'lasso');
     clearLasso();
     document.getElementById('cutHint').textContent = tool === 'lasso'
-      ? 'Tocca il modello per mettere i punti del perimetro: restano attaccati al pezzo, puoi ruotare e spostarti mentre disegni. Chiudi toccando il primo punto o con "Chiudi lazo", poi "Crea parte".'
-      : 'Tocca il modello per selezionare (giallo). Raggio piccolo = tocchi precisi. ➖ Rimuovi cancella dove tocchi, ↩ annulla l\'ultimo tocco.';
+      ? 'Lazo: disegna un cappio CHIUSO tutto attorno alla zona (non un tratto). Metti i punti del contorno, poi chiudi toccando il primo punto o "Chiudi lazo" e "Crea parte". Per selezioni a mano libera conviene il Pennello.'
+      : 'Pennello: TRASCINA il dito/mouse sul modello per dipingere la selezione (giallo) esattamente dove passi. Ruoti la vista trascinando fuori dal modello (sfondo). Regola il Raggio; ➖ Rimuovi fa da gomma.';
   }
 
   function pointInPolygon(x, y, poly) {
@@ -1416,35 +1417,70 @@
 
   function handleCutTap(clientX, clientY) {
     if (!currentResult) return;
-    if (cutTool === 'lasso') {
-      // tutti i punti del lazo passano dal tocco sul viewer: il trascinamento
-      // continua a ruotare la vista anche durante il disegno
-      addLassoPoint(clientX, clientY);
-      return;
-    }
-    const hit = viewer.raycastAt(clientX, clientY);
-    if (!hit) return;
-    const part = currentResult.parts.find((p) => p.id === hit.partId);
-    if (!part) return;
-    // il raggio e' una percentuale della dimensione massima del modello
-    const maxDim = computeOverallMaxDimension(currentResult.parts);
-    const maxRadius = maxDim * (parseInt(el.cutRadius.value, 10) / 100);
-    const tappedFaces = wandSelect(part, hit.faceIndex, maxRadius);
+    // solo il lazo usa il "tocco": mette i punti del perimetro. Il pennello
+    // dipinge (gestito dallo stroke: pointerdown/move sotto).
+    if (cutTool === 'lasso') addLassoPoint(clientX, clientY);
+  }
 
+  // ------------------- PENNELLO CHE DIPINGE -------------------
+  // Selezione a "disco geodetico": dal punto toccato cresce lungo la superficie
+  // (via adiacenza) fino al raggio scelto. Trascinando si dipinge di continuo
+  // esattamente dove passi. Molto piu' prevedibile del lazo.
+  function paintDisk(part, seedFace, center, radius) {
+    const topo = ensurePartTopology(part);
+    const c = topo.centroids;
+    const r2 = radius * radius;
+    const sel = new Set([seedFace]);
+    const stack = [seedFace];
+    while (stack.length) {
+      const f = stack.pop();
+      const adj = topo.adjacency[f];
+      for (let i = 0; i < adj.length; i++) {
+        const nb = adj[i];
+        if (sel.has(nb)) continue;
+        const dx = c[nb * 3] - center[0], dy = c[nb * 3 + 1] - center[1], dz = c[nb * 3 + 2] - center[2];
+        if (dx * dx + dy * dy + dz * dz <= r2) { sel.add(nb); stack.push(nb); }
+      }
+    }
+    return sel;
+  }
+
+  let painting = false;
+  let paintPartId = null;
+  function paintAt(hit) {
+    const part = currentResult && currentResult.parts.find((p) => p.id === hit.partId);
+    if (!part) return;
+    const maxDim = computeOverallMaxDimension(currentResult.parts);
+    const radius = maxDim * (parseInt(el.cutRadius.value, 10) / 100);
+    const faces = paintDisk(part, hit.faceIndex, hit.point, radius);
     if (cutErase) {
-      // gomma: rimuove dalla selezione dove tocchi
-      if (!cutSelection || cutSelection.partId !== hit.partId) return;
-      pushCutHistory();
-      tappedFaces.forEach((f) => cutSelection.faces.delete(f));
+      if (cutSelection && cutSelection.partId === hit.partId) faces.forEach((f) => cutSelection.faces.delete(f));
     } else if (cutSelection && cutSelection.partId === hit.partId) {
-      pushCutHistory();
-      tappedFaces.forEach((f) => cutSelection.faces.add(f));
+      faces.forEach((f) => cutSelection.faces.add(f));
     } else {
-      pushCutHistory();
-      cutSelection = { partId: hit.partId, faces: tappedFaces };
+      cutSelection = { partId: hit.partId, faces };
     }
     refreshCutHighlight();
   }
+
+  // il viewer chiede se prendere questo tocco per dipingere (invece di ruotare)
+  viewer.setPointerDownHook((x, y) => {
+    if (!cutMode || cutTool !== 'wand') return false; // dipinge solo il pennello
+    const hit = viewer.raycastAt(x, y);
+    if (!hit) return false; // tocco fuori dal modello: lascia ruotare la vista
+    pushCutHistory();
+    painting = true;
+    paintPartId = hit.partId;
+    paintAt(hit);
+    return true; // pointer "preso": niente rotazione mentre dipingi
+  });
+  el.viewer.addEventListener('pointermove', (e) => {
+    if (!painting) return;
+    const hit = viewer.raycastAt(e.clientX, e.clientY);
+    if (hit && hit.partId === paintPartId) paintAt(hit);
+  });
+  window.addEventListener('pointerup', () => { painting = false; });
+  window.addEventListener('pointercancel', () => { painting = false; });
 
   el.cutCreateBtn.addEventListener('click', () => {
     if (!cutSelection || cutSelection.faces.size === 0 || !currentResult) return;
