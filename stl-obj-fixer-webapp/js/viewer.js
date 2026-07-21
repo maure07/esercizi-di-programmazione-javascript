@@ -88,13 +88,17 @@
 
     canvas.addEventListener('pointerdown', (e) => {
       canvas.setPointerCapture(e.pointerId);
-      const isPan = e.button === 1 || e.button === 2 || e.shiftKey || e.ctrlKey || e.metaKey;
+      // Mouse: destro o Shift = sposta (pan); CENTRALE = ruota sempre, anche
+      // sopra il modello (comodo quando sei zoomato e non hai sfondo da agganciare);
+      // sinistro = ruota, oppure dipinge se la app "prende" il tocco.
+      const pan = e.button === 2 || e.shiftKey;
+      const paintEligible = e.button === 0 && !pan;
       let claimed = false;
-      if (pointerDownHook && pointers.size === 0 && !isPan) {
+      if (pointerDownHook && pointers.size === 0 && paintEligible) {
         claimed = !!pointerDownHook(e.clientX, e.clientY, e.pointerId);
       }
-      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, pan: isPan, claimed });
-      canvas.style.cursor = claimed ? 'crosshair' : (isPan ? 'move' : 'grabbing');
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, pan, claimed });
+      canvas.style.cursor = claimed ? 'crosshair' : (pan ? 'move' : 'grabbing');
       lastPinchDist = pointerDistance();
       lastPinchMid = pointerMidpoint();
     });
@@ -142,10 +146,43 @@
     canvas.addEventListener('pointercancel', releasePointer);
     canvas.addEventListener('pointerleave', (e) => { if (pointers.size <= 1) releasePointer(e); });
 
+    // punto del mondo sotto il cursore: il modello se colpito, altrimenti il
+    // punto sul piano che passa per il target. Serve per lo zoom "verso il cursore".
+    const zoomRay = new THREE.Raycaster();
+    const zoomDir = new THREE.Vector3();
+    function worldPointUnderCursor(clientX, clientY) {
+      const rect = canvas.getBoundingClientRect();
+      const ndc = new THREE.Vector2(
+        ((clientX - rect.left) / rect.width) * 2 - 1,
+        -((clientY - rect.top) / rect.height) * 2 + 1
+      );
+      zoomRay.setFromCamera(ndc, camera);
+      const list = [];
+      meshes.forEach((m) => { if (m.visible) list.push(m); });
+      const hits = list.length ? zoomRay.intersectObjects(list, false) : [];
+      if (hits.length) return hits[0].point.clone();
+      camera.getWorldDirection(zoomDir);
+      const denom = zoomRay.ray.direction.dot(zoomDir);
+      if (Math.abs(denom) < 1e-6) return null;
+      const t = zoomDir.dot(target) - zoomDir.dot(zoomRay.ray.origin);
+      const tt = t / denom;
+      if (tt <= 0) return null;
+      return zoomRay.ray.origin.clone().add(zoomRay.ray.direction.clone().multiplyScalar(tt));
+    }
+
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
       const scale = Math.exp(e.deltaY * 0.001);
+      const p = worldPointUnderCursor(e.clientX, e.clientY);
+      const oldR = radius;
       radius = Math.max(minRadius, Math.min(maxRadius, radius * scale));
+      // zoom verso il cursore: avvicina il target al punto sotto il mouse
+      if (p) {
+        const k = 1 - radius / oldR;
+        target.x += (p.x - target.x) * k;
+        target.y += (p.y - target.y) * k;
+        target.z += (p.z - target.z) * k;
+      }
       updateCamera();
     }, { passive: false });
 

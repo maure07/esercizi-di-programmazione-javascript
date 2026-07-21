@@ -312,7 +312,7 @@
   .cut-slider-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
   .cut-slider-row label { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
   #cutRadius { flex: 1; }
-  #cutRadiusValue { font-size: 12px; min-width: 38px; text-align: right; color: var(--text-dim); white-space: nowrap; }
+  #cutRadiusValue { font-size: 11px; min-width: 92px; text-align: right; color: var(--text-dim); white-space: nowrap; }
   .cut-actions button.active { border-color: var(--accent); color: var(--accent); font-weight: 600; }
   #cutUndoBtn { flex: 0 0 52px; }
   #cutUndoBtn:disabled { opacity: 0.4; }
@@ -436,7 +436,7 @@
 <div id="viewerWrap">
   <canvas id="viewer"></canvas>
   <canvas id="lassoOverlay"></canvas>
-  <div id="viewerHint" style="display:none">Touch: 1 dito ruota · 2 dita zoom/sposta &nbsp;·&nbsp; Mouse: trascina ruota · rotellina zoom · tasto destro (o Shift) sposta</div>
+  <div id="viewerHint" style="display:none">Touch: 1 dito ruota · 2 dita zoom/sposta &nbsp;·&nbsp; Mouse: sinistro/centrale ruota · rotellina zoom (verso il cursore) · destro o Shift sposta</div>
   <button id="frameBtn" style="display:none">Inquadra</button>
   <div id="emptyState">
     <div class="big">🗿</div>
@@ -522,7 +522,7 @@
     <div id="cutHint">Tocca il modello per selezionare (giallo). Raggio piccolo = tocchi precisi. ➖ Rimuovi cancella dove tocchi, ↩ annulla l'ultimo tocco.</div>
     <div class="cut-slider-row">
       <label for="cutRadius">Raggio</label>
-      <input type="range" id="cutRadius" min="1" max="40" value="8" />
+      <input type="range" id="cutRadius" min="0" max="1000" step="1" value="580" />
       <span id="cutRadiusValue">8%</span>
     </div>
     <div class="cut-actions" style="margin-bottom:8px">

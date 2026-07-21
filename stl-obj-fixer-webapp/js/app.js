@@ -650,7 +650,7 @@
     el.connectorControls.style.display = on ? 'block' : 'none';
     el.viewerHint.textContent = on
       ? 'Connettori: tocca dove due pezzi si uniscono. (Trascina per ruotare)'
-      : 'Touch: 1 dito ruota · 2 dita zoom/sposta   ·   Mouse: trascina ruota · rotellina zoom · tasto destro (o Shift) sposta';
+      : 'Touch: 1 dito ruota · 2 dita zoom/sposta   ·   Mouse: sinistro/centrale ruota · rotellina zoom (verso il cursore) · destro o Shift sposta';
   }
   function setConnType(t) {
     connType = t;
@@ -1084,12 +1084,20 @@
     el.cutModeEraseBtn.classList.toggle('active', erase);
   }
 
+  // raggio del pennello in % della dimensione del modello, con scala
+  // ESPONENZIALE: cursore 0..1000 -> 0,05% .. 40%. Cosi' c'e' tanta finezza
+  // sui valori piccoli (selezioni di precisione) e si arriva comunque a pennelli
+  // grandi. parseFloat perche' il vecchio parseInt buttava via i decimali.
+  function currentBrushPct() {
+    const s = parseFloat(el.cutRadius.value);
+    return 0.05 * Math.pow(800, s / 1000);
+  }
   function updateCutRadiusLabel() {
-    const pct = parseInt(el.cutRadius.value, 10);
-    let label = pct + '%';
+    const pct = currentBrushPct();
+    let label = (pct < 1 ? pct.toFixed(2) : pct.toFixed(1)) + '%';
     if (currentResult && currentResult.parts.length > 0) {
       const mm = computeOverallMaxDimension(currentResult.parts) * (pct / 100);
-      label += ' · ' + fmt(mm, 0) + ' mm';
+      label += ' · ⌀' + (mm * 2 < 1 ? (mm * 2).toFixed(2) : fmt(mm * 2, 1)) + ' mm';
     }
     el.cutRadiusValue.textContent = label;
   }
@@ -1451,7 +1459,7 @@
     const part = currentResult && currentResult.parts.find((p) => p.id === hit.partId);
     if (!part) return;
     const maxDim = computeOverallMaxDimension(currentResult.parts);
-    const radius = maxDim * (parseInt(el.cutRadius.value, 10) / 100);
+    const radius = maxDim * (currentBrushPct() / 100);
     const faces = paintDisk(part, hit.faceIndex, hit.point, radius);
     if (cutErase) {
       if (cutSelection && cutSelection.partId === hit.partId) faces.forEach((f) => cutSelection.faces.delete(f));
