@@ -545,16 +545,47 @@
 
     const minArea = totalArea * (options.minRegionAreaFrac === undefined ? 0.002 : options.minRegionAreaFrac);
 
+    // COLORE = VINCOLO FORTE: due regioni di colore diverso NON vengono mai
+    // fuse tra loro, per quanto piccola sia una delle due. Cosi' i dettagli
+    // dipinti (occhi, sopracciglia, bocca) restano parti separate anche se
+    // minuscoli, invece di essere riassorbiti dalla testa.
+    const hasColors = !!faceColors;
+    function computeColors() {
+      if (!hasColors) return null;
+      const acc = new Map(); // root -> [r*area, g*area, b*area, area]
+      for (let t = 0; t < nTris; t++) {
+        const r = find(t);
+        let s = acc.get(r);
+        if (!s) { s = [0, 0, 0, 0]; acc.set(r, s); }
+        const a = areas[t];
+        s[0] += faceColors[t * 3] * a; s[1] += faceColors[t * 3 + 1] * a; s[2] += faceColors[t * 3 + 2] * a; s[3] += a;
+      }
+      const out = new Map();
+      acc.forEach((s, r) => out.set(r, [s[0] / s[3], s[1] / s[3], s[2] / s[3]]));
+      return out;
+    }
+    // due regioni sono "dello stesso colore" (fondibili) se il loro colore medio
+    // dista meno della soglia; senza colori, sempre fondibili
+    function colorClose(cmap, r1, r2) {
+      if (!cmap) return true;
+      const a = cmap.get(r1), b = cmap.get(r2);
+      if (!a || !b) return true;
+      const d = Math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2);
+      return d <= colorThr;
+    }
+
     // Assorbi i frammenti piccoli nel vicino (via pieghe) con cui condividono
     // piu' spigoli: sono rumore di tassellazione, non parti stampabili.
     // Con la soglia adattiva bassa le regioni iniziali possono essere molte:
     // servono piu' passate perche' le catene di fusioni convergano.
     for (let pass = 0; pass < 8; pass++) {
       const sizes = computeAreas();
+      const colors = computeColors();
       const neighborCount = new Map(); // rootPiccolo -> Map(rootVicino -> lunghezzaConfine)
       for (const [f1, f2, , elen] of creaseEdges) {
         const r1 = find(f1), r2 = find(f2);
         if (r1 === r2) continue;
+        if (!colorClose(colors, r1, r2)) continue; // mai assorbire tra colori diversi
         if (sizes.get(r1) < minArea) {
           let m = neighborCount.get(r1);
           if (!m) { m = new Map(); neighborCount.set(r1, m); }
@@ -582,6 +613,7 @@
     // duplicata): assegnali alla regione grande piu' vicina nello spazio.
     {
       const sizes = computeAreas();
+      const colors = computeColors();
       const bigRoots = [];
       sizes.forEach((size, root) => { if (size >= minArea) bigRoots.push(root); });
       if (bigRoots.length === 0) {
@@ -608,10 +640,11 @@
         let best = -1, bestDist = Infinity;
         for (const [bx, by, bz, br] of bigCentroids) {
           if (br === root) continue;
+          if (!colorClose(colors, root, br)) continue; // solo verso una grande dello STESSO colore
           const d = (bx - cx) ** 2 + (by - cy) ** 2 + (bz - cz) ** 2;
           if (d < bestDist) { bestDist = d; best = br; }
         }
-        if (best !== -1) union(find(best), root);
+        if (best !== -1) union(find(best), root); // se nessuna dello stesso colore: resta separata
       });
     }
 
@@ -637,11 +670,13 @@
       // irregolare. Si fonde prima il confine piu' DEBOLE.
       const strength = (e) => (e.sumBS / e.n) * Math.sqrt(e.sumLen);
       pairs.sort((a, b) => strength(a) - strength(b));
+      const colors = computeColors();
       let regionCount = computeSizes().size;
       for (const p of pairs) {
         if (regionCount <= targetParts) break;
         const r1 = find(p.r1), r2 = find(p.r2);
         if (r1 === r2) continue;
+        if (!colorClose(colors, r1, r2)) continue; // MAI fondere colori diversi (occhi, sopracciglia restano)
         union(r1, r2);
         regionCount--;
       }
