@@ -81,6 +81,7 @@
     layFlatChk: document.getElementById('layFlatChk'),
     toPrintBtn: document.getElementById('toPrintBtn'),
     lassoThroughChk: document.getElementById('lassoThroughChk'),
+    flatCutChk: document.getElementById('flatCutChk'),
     analysisPanel: document.getElementById('analysisPanel'),
     analysisReport: document.getElementById('analysisReport'),
     modelHeight: document.getElementById('modelHeight'),
@@ -1600,6 +1601,48 @@
   window.addEventListener('pointerup', () => { painting = false; });
   window.addEventListener('pointercancel', () => { painting = false; });
 
+  // Appiattisce il BORDO del taglio sul suo piano medio: i vertici condivisi
+  // tra la parte ritagliata e il resto vengono proiettati su un piano, cosi' la
+  // superficie di taglio diventa liscia e i due pezzi combaciano (incastro).
+  function flattenCutBoundary(part, selectedSet) {
+    const pos = part.positions;
+    const idx = part.indices;
+    const em = MeshCore.buildEdgeMap(idx);
+    const bverts = new Set();
+    em.forEach((occ) => {
+      if (occ.length !== 2) return;
+      const s1 = selectedSet.has(occ[0].face);
+      const s2 = selectedSet.has(occ[1].face);
+      if (s1 !== s2) { bverts.add(occ[0].a); bverts.add(occ[0].b); }
+    });
+    if (bverts.size < 3) return;
+    // normale del piano: media (pesata per area) delle normali delle facce
+    // selezionate al bordo -> ~ normale della superficie in quel punto
+    let nx = 0, ny = 0, nz = 0;
+    em.forEach((occ) => {
+      if (occ.length !== 2) return;
+      const s1 = selectedSet.has(occ[0].face), s2 = selectedSet.has(occ[1].face);
+      if (s1 === s2) return;
+      const f = s1 ? occ[0].face : occ[1].face;
+      const a = idx[f * 3], b = idx[f * 3 + 1], c = idx[f * 3 + 2];
+      const ux = pos[b * 3] - pos[a * 3], uy = pos[b * 3 + 1] - pos[a * 3 + 1], uz = pos[b * 3 + 2] - pos[a * 3 + 2];
+      const vx = pos[c * 3] - pos[a * 3], vy = pos[c * 3 + 1] - pos[a * 3 + 1], vz = pos[c * 3 + 2] - pos[a * 3 + 2];
+      nx += uy * vz - uz * vy; ny += uz * vx - ux * vz; nz += ux * vy - uy * vx;
+    });
+    let nl = Math.sqrt(nx * nx + ny * ny + nz * nz);
+    if (nl < 1e-12) return;
+    nx /= nl; ny /= nl; nz /= nl;
+    // punto del piano = baricentro dei vertici di bordo
+    let cx = 0, cy = 0, cz = 0;
+    bverts.forEach((v) => { cx += pos[v * 3]; cy += pos[v * 3 + 1]; cz += pos[v * 3 + 2]; });
+    const n = bverts.size; cx /= n; cy /= n; cz /= n;
+    // proietta ogni vertice di bordo sul piano
+    bverts.forEach((v) => {
+      const d = (pos[v * 3] - cx) * nx + (pos[v * 3 + 1] - cy) * ny + (pos[v * 3 + 2] - cz) * nz;
+      pos[v * 3] -= d * nx; pos[v * 3 + 1] -= d * ny; pos[v * 3 + 2] -= d * nz;
+    });
+  }
+
   el.cutCreateBtn.addEventListener('click', () => {
     if (!cutSelection || cutSelection.faces.size === 0 || !currentResult) return;
     const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
@@ -1616,6 +1659,13 @@
         const selectedSet = cutSelection.faces;
         const restFaces = [];
         for (let t = 0; t < nTris; t++) if (!selectedSet.has(t)) restFaces.push(t);
+
+        // faccia di taglio PIATTA: appiattisce i vertici del bordo di taglio sul
+        // loro piano medio (modifica condivisa da entrambi i pezzi), cosi' la base
+        // del ritaglio e l'incavo rimasto sono lisci e combaciano per l'incastro
+        if (el.flatCutChk && el.flatCutChk.checked) {
+          flattenCutBoundary(part, selectedSet);
+        }
 
         const subSel = MeshCore.extractSubMesh(part.positions, part.indices, selectedFaces);
         const repairedSel = MeshCore.repairMesh(subSel.positions, subSel.indices);
