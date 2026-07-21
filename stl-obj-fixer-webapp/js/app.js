@@ -95,6 +95,7 @@
     toSegmentBtn2: document.getElementById('toSegmentBtn2'),
     segmentPanel: document.getElementById('segmentPanel'),
     segmentBtn: document.getElementById('segmentBtn'),
+    segmentAiBtn: document.getElementById('segmentAiBtn'),
     logTitle: document.getElementById('logTitle'),
     log: document.getElementById('log'),
     partsTitle: document.getElementById('partsTitle'),
@@ -501,6 +502,62 @@
   el.toSegmentBtn.addEventListener('click', () => goToStep(3));
   el.toSegmentBtn2.addEventListener('click', () => goToStep(3));
   el.segmentBtn.addEventListener('click', () => runSegmentation());
+  el.segmentAiBtn.addEventListener('click', () => runAiSegmentation());
+
+  // Segmentazione tramite il companion locale (motore geometria o AI/GPU).
+  // Manda la mesh saldata a http://127.0.0.1:8760 e riceve un'etichetta per
+  // triangolo, poi costruisce le parti come al solito.
+  const AI_URL = 'http://127.0.0.1:8760';
+  async function runAiSegmentation() {
+    if (!currentParsed) {
+      alert('Carica prima un modello.');
+      return;
+    }
+    // controlla che il companion sia acceso
+    let health;
+    try {
+      const h = await fetch(AI_URL + '/health', { method: 'GET' });
+      health = await h.json();
+    } catch (e) {
+      alert('Companion non raggiungibile.\n\nApri la cartella "ai-segmentation" sul PC e fai doppio clic su "avvia.bat" (lascia la finestra nera aperta), poi riprova.');
+      return;
+    }
+    const engine = health.ai_available ? 'auto' : 'geometria';
+    setLoading(true, health.ai_available ? 'Segmentazione AI sul PC (GPU)…' : 'Segmentazione sul PC…');
+    await new Promise((r) => setTimeout(r, 20));
+    try {
+      const tol = MeshCore.suggestTolerances(currentParsed.rawPositions);
+      const welded = MeshCore.weldVertices(currentParsed.rawPositions, tol.weldEpsilon);
+      // vertici come array di terne, facce come array di terne
+      const nV = welded.positions.length / 3;
+      const verts = new Array(nV);
+      for (let i = 0; i < nV; i++) verts[i] = [welded.positions[i * 3], welded.positions[i * 3 + 1], welded.positions[i * 3 + 2]];
+      const nF = welded.indices.length / 3;
+      const faces = new Array(nF);
+      for (let t = 0; t < nF; t++) faces[t] = [welded.indices[t * 3], welded.indices[t * 3 + 1], welded.indices[t * 3 + 2]];
+      const target = parseInt(el.colorParts.value, 10) || 8;
+      const resp = await fetch(AI_URL + '/segment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vertices: verts, faces, target_parts: target, engine }),
+      });
+      const out = await resp.json();
+      const labels = out.labels;
+      if (!labels || labels.length !== nF) throw new Error('risposta del companion non valida');
+      // colori per faccia se il modello li ha (per dare il nome del filamento)
+      const faceColors = (currentParsed.hasColorInfo && currentParsed.rawColors) ? currentParsed.rawColors : null;
+      const result = Segmentation.buildPartsFromLabels(welded.positions, welded.indices, labels, faceColors, {});
+      result.warnings = [`Segmentazione dal companion locale (motore: ${out.engine_used === 'ai' ? 'AI / GPU' : 'geometria'}).`];
+      if (currentScaleFactor !== 1) scaleAllParts(result.parts, currentScaleFactor);
+      currentResult = result;
+      renderResult(result);
+    } catch (err) {
+      console.error(err);
+      alert('Errore dalla segmentazione locale: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
   el.stepChip1.addEventListener('click', () => goToStep(1));
   el.stepChip2.addEventListener('click', () => goToStep(2));
   el.stepChip3.addEventListener('click', () => goToStep(3));
@@ -828,6 +885,7 @@
       geometry: 'Segmentazione per forma: tagli lungo le pieghe della superficie (i dettagli solo dipinti, come gli occhi, non vengono separati)',
       none: 'Nessuna informazione di colore: separazione solo per parti geometricamente disgiunte',
       progetto: 'Progetto caricato: parti pronte per la modifica manuale e la stampa.',
+      ai: 'Segmentazione dal companion locale sul PC (motore per forma / AI su GPU).',
     }[result.mode];
 
     const infoWarn = document.createElement('div');

@@ -914,5 +914,52 @@
     return { parts, mode, warnings };
   }
 
+  // ---------------------------------------------------------------------
+  // Costruisce le parti a partire da etichette per-triangolo fornite
+  // dall'esterno (es. dal companion locale AI). Ogni etichetta -> una parte,
+  // riparata e chiusa come le altre. Se ci sono i colori per faccia, dà anche
+  // il nome del filamento; altrimenti "Parte N".
+  // ---------------------------------------------------------------------
+  Segmentation.buildPartsFromLabels = function (positions, indices, labels, faceColors, options) {
+    options = options || {};
+    const tol = MeshCore.suggestTolerances(positions);
+    if (!options.repairOptions) options.repairOptions = { areaEpsilon: tol.areaEpsilon };
+    const nTris = indices.length / 3;
+    const byLabel = new Map();
+    for (let t = 0; t < nTris; t++) {
+      const l = labels[t];
+      let a = byLabel.get(l);
+      if (!a) { a = []; byLabel.set(l, a); }
+      a.push(t);
+    }
+    const groupsArr = [];
+    byLabel.forEach((tris) => {
+      let color;
+      if (faceColors) {
+        let r = 0, g = 0, b = 0;
+        for (const t of tris) { r += faceColors[t * 3]; g += faceColors[t * 3 + 1]; b += faceColors[t * 3 + 2]; }
+        const n = tris.length; color = [r / n, g / n, b / n];
+      } else {
+        color = FALLBACK_PALETTE[groupsArr.length % FALLBACK_PALETTE.length];
+      }
+      groupsArr.push({ tris, color });
+    });
+    groupsArr.sort((a, b) => b.tris.length - a.tris.length);
+    const groups = new Map();
+    const used = new Map();
+    groupsArr.forEach((grp, i) => {
+      let name;
+      if (faceColors) {
+        const base = Segmentation.colorNameForRGB(grp.color[0], grp.color[1], grp.color[2]);
+        const nn = (used.get(base) || 0) + 1; used.set(base, nn);
+        name = nn === 1 ? base : `${base} (${nn})`;
+      } else {
+        name = 'Parte ' + (i + 1);
+      }
+      groups.set(name, { triangles: grp.tris, color: grp.color });
+    });
+    return finalizeParts(groups, faceColors ? 'combined' : 'ai', options.warnings || [], positions, indices, options);
+  };
+
   return Segmentation;
 });
