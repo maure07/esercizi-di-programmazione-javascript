@@ -1173,6 +1173,30 @@
     return inside;
   }
 
+  // tiene solo la componente connessa piu' grande di un insieme di facce
+  // (rimuove i frammenti sparsi che non fanno parte della zona disegnata)
+  function largestFaceComponent(faceSet, adjacency) {
+    const visited = new Set();
+    let best = null;
+    faceSet.forEach((start) => {
+      if (visited.has(start)) return;
+      const comp = [];
+      const stack = [start];
+      visited.add(start);
+      while (stack.length) {
+        const f = stack.pop();
+        comp.push(f);
+        const adj = adjacency[f];
+        for (let i = 0; i < adj.length; i++) {
+          const nb = adj[i];
+          if (faceSet.has(nb) && !visited.has(nb)) { visited.add(nb); stack.push(nb); }
+        }
+      }
+      if (!best || comp.length > best.length) best = comp;
+    });
+    return new Set(best || []);
+  }
+
   function lassoSelectFaces(polygon) {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     polygon.forEach((p) => {
@@ -1180,30 +1204,53 @@
       if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
     });
     const camPos = viewer.getCameraPosition();
-    let bestPartId = null, bestFaces = null;
+    const through = el.lassoThroughChk.checked; // lazo passante: prendi anche il retro
+    let best = null;
     for (const part of currentResult.parts) {
       if (part.visible === false) continue;
       const topo = ensurePartTopology(part);
       const n = part.indices.length / 3;
-      const faces = [];
-      const through = el.lassoThroughChk.checked; // lazo passante: prendi anche il retro
+      const insideAll = new Set(); // tutte le facce dentro il perimetro (fronte+retro)
+      const front = new Set();     // quelle rivolte verso di te (visibili)
       for (let t = 0; t < n; t++) {
         const cx = topo.centroids[t * 3], cy = topo.centroids[t * 3 + 1], cz = topo.centroids[t * 3 + 2];
-        // di default solo i triangoli rivolti verso la camera: quello che vedi
-        // e' quello che selezioni (non "buca" fino al lato opposto del pezzo)
-        const vx = cx - camPos[0], vy = cy - camPos[1], vz = cz - camPos[2];
-        if (!through && topo.normals[t * 3] * vx + topo.normals[t * 3 + 1] * vy + topo.normals[t * 3 + 2] * vz >= 0) continue;
         const s = viewer.projectToScreen(cx, cy, cz);
         if (s.behind) continue;
         if (s.x < minX || s.x > maxX || s.y < minY || s.y > maxY) continue;
-        if (pointInPolygon(s.x, s.y, polygon)) faces.push(t);
+        if (!pointInPolygon(s.x, s.y, polygon)) continue;
+        insideAll.add(t);
+        const vx = cx - camPos[0], vy = cy - camPos[1], vz = cz - camPos[2];
+        if (topo.normals[t * 3] * vx + topo.normals[t * 3 + 1] * vy + topo.normals[t * 3 + 2] * vz < 0) front.add(t);
       }
-      if (faces.length > 0 && (!bestFaces || faces.length > bestFaces.length)) {
-        bestFaces = faces;
-        bestPartId = part.id;
+      if (insideAll.size > 0 && (!best || insideAll.size > best.insideAll.size)) {
+        best = { partId: part.id, topo, insideAll, front };
       }
     }
-    return bestPartId ? { partId: bestPartId, faces: new Set(bestFaces) } : null;
+    if (!best) return null;
+
+    let selected;
+    if (through) {
+      selected = best.insideAll; // taglio passante: tutto quello dentro il perimetro
+    } else {
+      // parti dalle facce viste; poi RIEMPI i buchi interni (facce inclinate o
+      // negli incavi, rivolte un po' di lato, circondate da facce selezionate)
+      // e tieni solo la zona contigua: niente piu' selezione "a groviera".
+      selected = new Set(best.front.size > 0 ? best.front : best.insideAll);
+      const adj = best.topo.adjacency;
+      for (let it = 0; it < 8; it++) {
+        let added = 0;
+        best.insideAll.forEach((t) => {
+          if (selected.has(t)) return;
+          let c = 0;
+          const a = adj[t];
+          for (let i = 0; i < a.length; i++) if (selected.has(a[i])) c++;
+          if (c >= 2) { selected.add(t); added++; }
+        });
+        if (!added) break;
+      }
+      selected = largestFaceComponent(selected, adj);
+    }
+    return selected.size > 0 ? { partId: best.partId, faces: selected } : null;
   }
 
   function closeLasso() {
@@ -1481,4 +1528,21 @@
   window.__viewerCam = () => viewer.getCameraPosition();
   window.__lassoCount = () => lassoPoints.length;
   window.__partsInfo = () => currentResult ? currentResult.parts.map((p) => ({ name: p.name, tris: p.indices.length / 3, wt: !!p.watertight })) : null;
+  window.__cutInfo = () => {
+    if (!cutSelection || !currentResult) return null;
+    const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
+    if (!part) return null;
+    const topo = ensurePartTopology(part);
+    const sel = cutSelection.faces;
+    // numero di componenti connesse della selezione (1 = zona contigua)
+    const seen = new Set();
+    let comps = 0;
+    sel.forEach((s) => {
+      if (seen.has(s)) return;
+      comps++;
+      const st = [s]; seen.add(s);
+      while (st.length) { const f = st.pop(); for (const nb of topo.adjacency[f]) if (sel.has(nb) && !seen.has(nb)) { seen.add(nb); st.push(nb); } }
+    });
+    return { count: sel.size, components: comps };
+  };
 })();
