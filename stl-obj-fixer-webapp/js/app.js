@@ -68,6 +68,11 @@
     planePos: document.getElementById('planePos'),
     planePosValue: document.getElementById('planePosValue'),
     planeCutBtn: document.getElementById('planeCutBtn'),
+    planeCutProBtn: document.getElementById('planeCutProBtn'),
+    connAutoChk: document.getElementById('connAutoChk'),
+    connGioco: document.getElementById('connGioco'),
+    connGiocoValue: document.getElementById('connGiocoValue'),
+    repairProBtn: document.getElementById('repairProBtn'),
     selectFinalRow: document.getElementById('selectFinalRow'),
     stepper: document.getElementById('stepper'),
     stepChip1: document.getElementById('stepChip1'),
@@ -697,6 +702,149 @@
       setLoading(false);
     }
   }
+  // =====================================================================
+  // MOTORE PRO SUL PC: riparazione (MeshLab) e booleane esatte (manifold3d)
+  // =====================================================================
+  // Chiede al companion se e' acceso e cosa sa fare. Ritorna null se spento.
+  async function companionHealth(silenzioso) {
+    try {
+      const h = await fetch(AI_URL + '/health', { method: 'GET' });
+      return await h.json();
+    } catch (e) {
+      if (!silenzioso) {
+        alert('Companion non raggiungibile.\n\nApri la cartella "ai-segmentation" sul PC e fai doppio clic su "avvia.bat" (lascia la finestra nera aperta), poi riprova.');
+      }
+      return null;
+    }
+  }
+
+  function meshToPayload(positions, indices) {
+    const nV = positions.length / 3, nF = indices.length / 3;
+    const verts = new Array(nV);
+    for (let i = 0; i < nV; i++) verts[i] = [positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]];
+    const faces = new Array(nF);
+    for (let t = 0; t < nF; t++) faces[t] = [indices[t * 3], indices[t * 3 + 1], indices[t * 3 + 2]];
+    return { vertices: verts, faces };
+  }
+  function payloadToMesh(out) {
+    const V = out.vertices, F = out.faces;
+    const positions = new Float64Array(V.length * 3);
+    for (let i = 0; i < V.length; i++) { positions[i * 3] = V[i][0]; positions[i * 3 + 1] = V[i][1]; positions[i * 3 + 2] = V[i][2]; }
+    const indices = new Uint32Array(F.length * 3);
+    for (let t = 0; t < F.length; t++) { indices[t * 3] = F[t][0]; indices[t * 3 + 1] = F[t][1]; indices[t * 3 + 2] = F[t][2]; }
+    return { positions, indices };
+  }
+
+  // Riparazione professionale del modello intero (step 2).
+  async function runRepairPro() {
+    if (!currentAnalysis) { alert('Carica prima un modello.'); return; }
+    const health = await companionHealth();
+    if (!health) return;
+    if (!health.ripara_pro) {
+      alert('La riparazione PRO non è installata sul companion.\n\nApri la cartella "ai-segmentation" e fai doppio clic su "install_pro.bat", poi riavvia "avvia.bat".');
+      return;
+    }
+    setLoading(true, 'Riparazione PRO sul PC (MeshLab + booleane esatte)…');
+    await new Promise((r) => setTimeout(r, 20));
+    try {
+      const body = meshToPayload(currentAnalysis.positions, currentAnalysis.indices);
+      body.aggressivita = 'auto';
+      const resp = await fetch(AI_URL + '/ripara', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const out = await resp.json();
+      if (out.error) throw new Error(out.error);
+      const { positions, indices } = payloadToMesh(out);
+      const stats = MeshCore.computeStats(positions, indices);
+      currentRepaired = {
+        positions, indices, stats,
+        watertight: !!out.watertight,
+        log: out.log || [],
+      };
+      const size = [0, 1, 2].map((i) => stats.bboxMax[i] - stats.bboxMin[i]);
+      el.repairReport.innerHTML = `
+        <div style="color:#6be3ac;margin-bottom:4px">🛠️ Riparazione PRO (motore MeshLab + solido esatto)</div>
+        ${(out.log || []).map((l) => `<div>· ${l}</div>`).join('')}
+        <div style="margin-top:6px">${out.watertight ? '<span class="ok">✔ Solido chiuso ed esatto: pronto per booleane e stampa</span>' : '<span class="issue">⚠ Restano bordi aperti</span>'}</div>
+        <div class="dim" style="margin-top:4px">${fmt(indices.length / 3, 0)} triangoli · ${fmt(size[0], 1)}×${fmt(size[1], 1)}×${fmt(size[2], 1)}</div>
+      `;
+      el.downloadRepairedBtn.style.display = 'block';
+      if (!showMeshWithModelColors(currentParsed, positions, indices)) {
+        showSingleMesh(positions, indices, [0.45, 0.62, 0.85]);
+      }
+      goToStep(2);
+    } catch (err) {
+      console.error(err);
+      alert('Errore dalla riparazione PRO: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+  el.repairProBtn.addEventListener('click', () => runRepairPro());
+
+  // Taglio PRO con piano + connettore quadrato automatico (perno + foro).
+  async function runPlaneCutPro() {
+    const part = planePartObj();
+    if (!part) { alert('Scegli il pezzo da tagliare.'); return; }
+    const health = await companionHealth();
+    if (!health) return;
+    if (!health.booleane_pro) {
+      alert('Le booleane PRO non sono installate sul companion.\n\nApri la cartella "ai-segmentation" e fai doppio clic su "install_pro.bat", poi riavvia "avvia.bat".');
+      return;
+    }
+    const { point, normal } = planeFromControls(part);
+    const conn = el.connAutoChk.checked;
+    const gioco = parseInt(el.connGioco.value, 10) / 100;
+    setLoading(true, conn ? 'Taglio esatto + connettore sul PC…' : 'Taglio esatto sul PC…');
+    await new Promise((r) => setTimeout(r, 20));
+    try {
+      const body = meshToPayload(part.positions, part.indices);
+      body.punto = point; body.normale = normal;
+      body.connettore = conn; body.gioco = gioco;
+      const resp = await fetch(AI_URL + '/taglia', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const out = await resp.json();
+      if (out.error) throw new Error(out.error);
+
+      const idx = currentResult.parts.indexOf(part);
+      const mk = (p, suff) => {
+        const { positions, indices } = payloadToMesh(p);
+        return {
+          id: 'part_pro_' + Date.now() + '_' + suff.replace(/\W/g, ''),
+          name: part.name + ' ' + suff,
+          color: part.color.slice(),
+          sourceTriangleCount: indices.length / 3,
+          positions, indices,
+          log: out.log || [], watertight: !!p.watertight,
+          stats: MeshCore.computeStats(positions, indices),
+          included: true,
+        };
+      };
+      const suffA = conn ? '(perno)' : '(sopra)';
+      const suffB = conn ? '(foro)' : '(sotto)';
+      currentResult.parts.splice(idx, 1, mk(out.b, suffB), mk(out.a, suffA));
+      currentResult.parts.sort((a, b) => b.stats.volume - a.stats.volume);
+      renderResult(currentResult);
+      setCutMode(true); setCutTool('plane');
+      if (out.connettore) {
+        const c = out.connettore;
+        alert(`Taglio esatto riuscito.\n\nConnettore quadrato: lato ${c.lato.toFixed(1)} mm, profondità ${c.profondita.toFixed(1)} mm, gioco ${c.gioco.toFixed(2)} mm.\nIl perno è sul pezzo "(perno)", il foro sul pezzo "(foro)".`);
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Errore dal taglio PRO: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+  el.planeCutProBtn.addEventListener('click', () => runPlaneCutPro());
+  el.connGioco.addEventListener('input', () => {
+    el.connGiocoValue.textContent = (parseInt(el.connGioco.value, 10) / 100).toFixed(2).replace('.', ',') + ' mm';
+  });
+
   el.stepChip1.addEventListener('click', () => goToStep(1));
   el.stepChip2.addEventListener('click', () => goToStep(2));
   el.stepChip3.addEventListener('click', () => goToStep(3));
@@ -1939,6 +2087,11 @@
     materialCount: currentParsed.materialCount,
     textureApplied: !!currentParsed.textureApplied,
     textureError: currentParsed.textureError || null,
+  } : null;
+  window.__repairedInfo = () => currentRepaired ? {
+    tris: currentRepaired.indices.length / 3,
+    watertight: !!currentRepaired.watertight,
+    volume: currentRepaired.stats ? currentRepaired.stats.volume : null,
   } : null;
   window.__lassoCount = () => lassoPoints.length;
   window.__partsInfo = () => currentResult ? currentResult.parts.map((p) => ({ name: p.name, tris: p.indices.length / 3, wt: !!p.watertight })) : null;

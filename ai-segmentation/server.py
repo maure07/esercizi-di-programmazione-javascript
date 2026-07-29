@@ -27,6 +27,23 @@ except Exception:
     ai = None
     AI_AVAILABLE = False
 
+# riparazione professionale (pymeshlab) e booleane esatte (manifold3d)
+try:
+    import ripara_pro
+    RIPARA_AVAILABLE = True
+except Exception as _e:
+    ripara_pro = None
+    RIPARA_AVAILABLE = False
+    print("Riparazione PRO non disponibile:", _e, file=sys.stderr)
+
+try:
+    import taglia_pro
+    TAGLIA_AVAILABLE = True
+except Exception as _e:
+    taglia_pro = None
+    TAGLIA_AVAILABLE = False
+    print("Booleane PRO non disponibili:", _e, file=sys.stderr)
+
 app = Flask(__name__)
 
 
@@ -69,6 +86,71 @@ def health():
         "status": "ok",
         "engines": ["geometria"] + (["ai"] if AI_AVAILABLE else []),
         "ai_available": AI_AVAILABLE,
+        "ripara_pro": RIPARA_AVAILABLE,
+        "booleane_pro": TAGLIA_AVAILABLE,
+    })
+
+
+@app.route("/ripara", methods=["POST", "OPTIONS"])
+def ripara():
+    """Riparazione professionale: MeshLab + rimozione gusci interni + solido esatto."""
+    if request.method == "OPTIONS":
+        return ("", 204)
+    if not RIPARA_AVAILABLE:
+        return jsonify({"error": "Riparazione PRO non installata (serve install_pro.bat)"}), 501
+    data = request.get_json(force=True)
+    vertices = np.asarray(data["vertices"], dtype=np.float64)
+    faces = np.asarray(data["faces"], dtype=np.int64)
+    aggressivita = data.get("aggressivita", "auto")
+    try:
+        r = ripara_pro.ripara(vertices, faces, aggressivita=aggressivita)
+    except Exception as e:
+        print("riparazione fallita:", e, file=sys.stderr)
+        return jsonify({"error": str(e)}), 500
+    return jsonify({
+        "vertices": r["vertices"].tolist(),
+        "faces": r["faces"].tolist(),
+        "watertight": r["watertight"],
+        "volume": r["volume"],
+        "log": r["log"],
+    })
+
+
+@app.route("/taglia", methods=["POST", "OPTIONS"])
+def taglia():
+    """Taglio con piano + connettore quadrato automatico (perno + foro), booleane esatte."""
+    if request.method == "OPTIONS":
+        return ("", 204)
+    if not TAGLIA_AVAILABLE:
+        return jsonify({"error": "Booleane PRO non installate (serve install_pro.bat)"}), 501
+    data = request.get_json(force=True)
+    vertices = np.asarray(data["vertices"], dtype=np.float64)
+    faces = np.asarray(data["faces"], dtype=np.int64)
+    try:
+        r = taglia_pro.taglia_con_piano(
+            vertices, faces,
+            punto=data["punto"], normale=data["normale"],
+            connettore=bool(data.get("connettore", True)),
+            gioco=float(data.get("gioco", 0.20)),
+            lato=data.get("lato"),
+            profondita=data.get("profondita"),
+            n_connettori=int(data.get("n_connettori", 1)),
+        )
+    except Exception as e:
+        print("taglio fallito:", e, file=sys.stderr)
+        return jsonify({"error": str(e)}), 500
+
+    def pack(p):
+        return {
+            "vertices": np.asarray(p["vertices"]).tolist(),
+            "faces": np.asarray(p["faces"]).tolist(),
+            "watertight": p["watertight"],
+            "volume": p["volume"],
+        }
+
+    return jsonify({
+        "a": pack(r["a"]), "b": pack(r["b"]),
+        "log": r["log"], "connettore": r.get("connettore"),
     })
 
 
@@ -98,5 +180,7 @@ def segment():
 if __name__ == "__main__":
     port = 8760
     print("Companion di segmentazione avviato su http://127.0.0.1:%d" % port)
-    print("Motore AI:", "DISPONIBILE (GPU)" if AI_AVAILABLE else "non installato (uso geometria)")
+    print("Motore AI:      ", "DISPONIBILE (GPU)" if AI_AVAILABLE else "non installato (uso geometria)")
+    print("Riparazione PRO:", "DISPONIBILE (MeshLab)" if RIPARA_AVAILABLE else "non installata (install_pro.bat)")
+    print("Booleane PRO:   ", "DISPONIBILI (manifold3d)" if TAGLIA_AVAILABLE else "non installate (install_pro.bat)")
     app.run(host="127.0.0.1", port=port, threaded=True)
