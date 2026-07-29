@@ -247,7 +247,9 @@
     if (n === 3 && currentResult) {
       renderResult(currentResult);
     } else if (n === 2 && currentRepaired) {
-      showSingleMesh(currentRepaired.positions, currentRepaired.indices, [0.45, 0.62, 0.85]);
+      if (!showMeshWithModelColors(currentParsed, currentRepaired.positions, currentRepaired.indices)) {
+        showSingleMesh(currentRepaired.positions, currentRepaired.indices, [0.45, 0.62, 0.85]);
+      }
     } else if (currentAnalysis && n === 1 && showColoredModel(currentParsed)) {
       // step 1 con texture/colori: mostra il modello com'e' davvero
     } else if (currentAnalysis && (n === 1 || n === 2)) {
@@ -408,9 +410,31 @@
     requestAnimationFrame(() => viewer.frameAll());
   }
 
+  // Disegna una mesh indicizzata con UN colore per triangolo: "srotola" ogni
+  // triangolo in 3 vertici propri cosi' il colore per-faccia e' netto (niente
+  // sfumature tra facce diverse). perTri = Float32Array [r,g,b, ...] per triangolo.
+  function showColoredIndexedMesh(positions, indices, perTri) {
+    const nTris = indices.length / 3;
+    const P = new Float32Array(nTris * 9);
+    const VC = new Float32Array(nTris * 9);
+    const IDX = new Uint32Array(nTris * 3);
+    for (let t = 0; t < nTris; t++) {
+      const r = perTri[t * 3], g = perTri[t * 3 + 1], b = perTri[t * 3 + 2];
+      for (let k = 0; k < 3; k++) {
+        const vi = indices[t * 3 + k];
+        const o = (t * 3 + k) * 3;
+        P[o] = positions[vi * 3]; P[o + 1] = positions[vi * 3 + 1]; P[o + 2] = positions[vi * 3 + 2];
+        VC[o] = r; VC[o + 1] = g; VC[o + 2] = b;
+        IDX[t * 3 + k] = t * 3 + k;
+      }
+    }
+    viewer.clearParts();
+    viewer.addPart({ id: 'single', color: [0.8, 0.8, 0.8], positions: P, indices: IDX, vertexColors: VC });
+    requestAnimationFrame(() => viewer.frameAll());
+  }
+
   // Mostra il modello grezzo CON I SUOI COLORI reali (texture o materiali):
-  // usa la "triangle soup" non saldata, cosi' ogni triangolo tiene il suo
-  // colore campionato. Se non ci sono colori, ricade sul grigio piatto.
+  // usa la "triangle soup" non saldata, cosi' ogni triangolo tiene il suo colore.
   function showColoredModel(parsed) {
     if (!parsed || !parsed.hasColorInfo || !parsed.rawColors) return false;
     const nTris = parsed.rawPositions.length / 9;
@@ -418,18 +442,83 @@
     if (!rc || rc.length < nTris * 3) return false;
     const indices = new Uint32Array(nTris * 3);
     for (let i = 0; i < indices.length; i++) indices[i] = i;
-    // espandi 1 colore/triangolo -> 3 vertici/triangolo
-    const vc = new Float32Array(nTris * 9);
-    for (let t = 0; t < nTris; t++) {
-      const r = rc[t * 3], g = rc[t * 3 + 1], b = rc[t * 3 + 2];
+    showColoredIndexedMesh(parsed.rawPositions, indices, rc);
+    return true;
+  }
+
+  // Trasferisce i colori del modello originale su una mesh diversa (es. quella
+  // RIPARATA, che ha vertici/triangoli diversi): per ogni triangolo di arrivo
+  // trova il triangolo originale col centroide piu' vicino e ne copia il colore.
+  // Griglia hash sui centroidi originali -> O(n). Ritorna null se non ci sono colori.
+  function transferColorsToMesh(parsed, positions, indices) {
+    if (!parsed || !parsed.hasColorInfo || !parsed.rawColors) return null;
+    const src = parsed.rawPositions, sc = parsed.rawColors;
+    const nSrc = src.length / 9;
+    if (nSrc === 0) return null;
+    // bbox dei centroidi originali
+    let mnx = Infinity, mny = Infinity, mnz = Infinity, mxx = -Infinity, mxy = -Infinity, mxz = -Infinity;
+    const cent = new Float64Array(nSrc * 3);
+    for (let t = 0; t < nSrc; t++) {
       const o = t * 9;
-      vc[o] = r; vc[o + 1] = g; vc[o + 2] = b;
-      vc[o + 3] = r; vc[o + 4] = g; vc[o + 5] = b;
-      vc[o + 6] = r; vc[o + 7] = g; vc[o + 8] = b;
+      const cx = (src[o] + src[o + 3] + src[o + 6]) / 3;
+      const cy = (src[o + 1] + src[o + 4] + src[o + 7]) / 3;
+      const cz = (src[o + 2] + src[o + 5] + src[o + 8]) / 3;
+      cent[t * 3] = cx; cent[t * 3 + 1] = cy; cent[t * 3 + 2] = cz;
+      if (cx < mnx) mnx = cx; if (cy < mny) mny = cy; if (cz < mnz) mnz = cz;
+      if (cx > mxx) mxx = cx; if (cy > mxy) mxy = cy; if (cz > mxz) mxz = cz;
     }
-    viewer.clearParts();
-    viewer.addPart({ id: 'single', color: [0.8, 0.8, 0.8], positions: parsed.rawPositions, indices, vertexColors: vc });
-    requestAnimationFrame(() => viewer.frameAll());
+    const cell = (Math.max(mxx - mnx, mxy - mny, mxz - mnz) || 1) / 64;
+    const inv = 1 / cell;
+    const gx = Math.max(1, Math.floor((mxx - mnx) * inv) + 1);
+    const gy = Math.max(1, Math.floor((mxy - mny) * inv) + 1);
+    const gz = Math.max(1, Math.floor((mxz - mnz) * inv) + 1);
+    const key = (ix, iy, iz) => ix + iy * gx + iz * gx * gy;
+    const clamp = (v, hi) => (v < 0 ? 0 : (v > hi ? hi : v));
+    const map = new Map();
+    for (let t = 0; t < nSrc; t++) {
+      const ix = clamp(Math.floor((cent[t * 3] - mnx) * inv), gx - 1);
+      const iy = clamp(Math.floor((cent[t * 3 + 1] - mny) * inv), gy - 1);
+      const iz = clamp(Math.floor((cent[t * 3 + 2] - mnz) * inv), gz - 1);
+      const k = key(ix, iy, iz); let arr = map.get(k); if (!arr) { arr = []; map.set(k, arr); } arr.push(t);
+    }
+    const nTgt = indices.length / 3;
+    const out = new Float32Array(nTgt * 3);
+    for (let t = 0; t < nTgt; t++) {
+      const a = indices[t * 3], b = indices[t * 3 + 1], c = indices[t * 3 + 2];
+      const px = (positions[a * 3] + positions[b * 3] + positions[c * 3]) / 3;
+      const py = (positions[a * 3 + 1] + positions[b * 3 + 1] + positions[c * 3 + 1]) / 3;
+      const pz = (positions[a * 3 + 2] + positions[b * 3 + 2] + positions[c * 3 + 2]) / 3;
+      const cix = clamp(Math.floor((px - mnx) * inv), gx - 1);
+      const ciy = clamp(Math.floor((py - mny) * inv), gy - 1);
+      const ciz = clamp(Math.floor((pz - mnz) * inv), gz - 1);
+      let best = Infinity, bt = 0;
+      for (let rad = 1; rad <= Math.max(gx, gy, gz); rad++) {
+        for (let dz = -rad; dz <= rad; dz++) for (let dy = -rad; dy <= rad; dy++) for (let dx = -rad; dx <= rad; dx++) {
+          // solo il guscio nuovo del raggio corrente
+          if (Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dz)) !== rad) continue;
+          const ix = cix + dx, iy = ciy + dy, iz = ciz + dz;
+          if (ix < 0 || iy < 0 || iz < 0 || ix >= gx || iy >= gy || iz >= gz) continue;
+          const arr = map.get(key(ix, iy, iz)); if (!arr) continue;
+          for (let ai = 0; ai < arr.length; ai++) {
+            const s = arr[ai];
+            const d2 = (px - cent[s * 3]) ** 2 + (py - cent[s * 3 + 1]) ** 2 + (pz - cent[s * 3 + 2]) ** 2;
+            if (d2 < best) { best = d2; bt = s; }
+          }
+        }
+        // trovato qualcosa e abbiamo esplorato un guscio oltre: basta
+        if (best < Infinity && rad >= 2) break;
+      }
+      out[t * 3] = sc[bt * 3]; out[t * 3 + 1] = sc[bt * 3 + 1]; out[t * 3 + 2] = sc[bt * 3 + 2];
+    }
+    return out;
+  }
+
+  // Mostra una mesh (riparata/solidificata) con i colori trasferiti dall'originale.
+  // Ritorna true se aveva colori da mostrare, false altrimenti.
+  function showMeshWithModelColors(parsed, positions, indices) {
+    const perTri = transferColorsToMesh(parsed, positions, indices);
+    if (!perTri) return false;
+    showColoredIndexedMesh(positions, indices, perTri);
     return true;
   }
 
@@ -511,7 +600,11 @@
         <div class="dim" style="margin-top:4px">${fmt(repaired.indices.length / 3, 0)} triangoli · ${fmt(size[0], 1)}×${fmt(size[1], 1)}×${fmt(size[2], 1)}</div>
       `;
       el.downloadRepairedBtn.style.display = 'block';
-      showSingleMesh(repaired.positions, repaired.indices, [0.45, 0.62, 0.85]);
+      // se il modello ha colori (texture/materiali), mostralo a colori anche
+      // dopo la riparazione invece del blu piatto
+      if (!showMeshWithModelColors(currentParsed, repaired.positions, repaired.indices)) {
+        showSingleMesh(repaired.positions, repaired.indices, [0.45, 0.62, 0.85]);
+      }
       goToStep(2);
     } catch (err) {
       console.error(err);

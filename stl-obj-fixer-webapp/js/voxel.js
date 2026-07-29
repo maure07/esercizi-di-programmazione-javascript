@@ -260,6 +260,103 @@
     return dx * dx + dy * dy + dz * dz;
   }
 
+  // Punto piu' vicino su un triangolo (Ericson): restituisce le coordinate.
+  function closestPointOnTri(px, py, pz, P, a, b, c) {
+    const ax = P[a * 3], ay = P[a * 3 + 1], az = P[a * 3 + 2];
+    const bx = P[b * 3], by = P[b * 3 + 1], bz = P[b * 3 + 2];
+    const cx = P[c * 3], cy = P[c * 3 + 1], cz = P[c * 3 + 2];
+    const abx = bx - ax, aby = by - ay, abz = bz - az;
+    const acx = cx - ax, acy = cy - ay, acz = cz - az;
+    const apx = px - ax, apy = py - ay, apz = pz - az;
+    const d1 = abx * apx + aby * apy + abz * apz;
+    const d2 = acx * apx + acy * apy + acz * apz;
+    if (d1 <= 0 && d2 <= 0) return [ax, ay, az];
+    const bpx = px - bx, bpy = py - by, bpz = pz - bz;
+    const d3 = abx * bpx + aby * bpy + abz * bpz;
+    const d4 = acx * bpx + acy * bpy + acz * bpz;
+    if (d3 >= 0 && d4 <= d3) return [bx, by, bz];
+    const vc = d1 * d4 - d3 * d2;
+    if (vc <= 0 && d1 >= 0 && d3 <= 0) {
+      const v = d1 / (d1 - d3);
+      return [ax + v * abx, ay + v * aby, az + v * abz];
+    }
+    const cpx = px - cx, cpy = py - cy, cpz = pz - cz;
+    const d5 = abx * cpx + aby * cpy + abz * cpz;
+    const d6 = acx * cpx + acy * cpy + acz * cpz;
+    if (d6 >= 0 && d5 <= d6) return [cx, cy, cz];
+    const vb = d5 * d2 - d1 * d6;
+    if (vb <= 0 && d2 >= 0 && d6 <= 0) {
+      const w = d2 / (d2 - d6);
+      return [ax + w * acx, ay + w * acy, az + w * acz];
+    }
+    const va = d3 * d6 - d5 * d4;
+    if (va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0) {
+      const w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+      return [bx + w * (cx - bx), by + w * (cy - by), bz + w * (cz - bz)];
+    }
+    const denom = 1 / (va + vb + vc);
+    const v = vb * denom, w = vc * denom;
+    return [ax + abx * v + acx * w, ay + aby * v + acy * w, az + abz * v + acz * w];
+  }
+
+  // Riproietta i vertici della mesh ricostruita sulla superficie ORIGINALE:
+  // per ogni vertice cerca il punto piu' vicino sui triangoli originali e ci si
+  // aggancia, se entro maxDist. Recupera i dettagli e le facce di taglio piatte
+  // che la voxelizzazione aveva arrotondato, MANTENENDO la topologia chiusa. I
+  // vertici delle superfici "nuove" (interno ispessito, tappi) restano dove sono
+  // perche' non hanno originale entro maxDist. Griglia hash sui triangoli.
+  Voxel.reprojectToSurface = function (P, origPositions, origIndices, maxDist) {
+    const nTris = origIndices.length / 3;
+    if (nTris === 0) return P;
+    let mnx = Infinity, mny = Infinity, mnz = Infinity, mxx = -Infinity, mxy = -Infinity, mxz = -Infinity;
+    for (let i = 0; i < origPositions.length; i += 3) {
+      const x = origPositions[i], y = origPositions[i + 1], z = origPositions[i + 2];
+      if (x < mnx) mnx = x; if (y < mny) mny = y; if (z < mnz) mnz = z;
+      if (x > mxx) mxx = x; if (y > mxy) mxy = y; if (z > mxz) mxz = z;
+    }
+    const cell = Math.max(maxDist, (Math.max(mxx - mnx, mxy - mny, mxz - mnz) || 1) / 96);
+    const inv = 1 / cell;
+    const gx = Math.max(1, Math.floor((mxx - mnx) * inv) + 1);
+    const gy = Math.max(1, Math.floor((mxy - mny) * inv) + 1);
+    const gz = Math.max(1, Math.floor((mxz - mnz) * inv) + 1);
+    const map = new Map();
+    const key = (ix, iy, iz) => ix + iy * gx + iz * gx * gy;
+    for (let t = 0; t < nTris; t++) {
+      const a = origIndices[t * 3], b = origIndices[t * 3 + 1], c = origIndices[t * 3 + 2];
+      const ax = origPositions[a * 3], ay = origPositions[a * 3 + 1], az = origPositions[a * 3 + 2];
+      const bx = origPositions[b * 3], by = origPositions[b * 3 + 1], bz = origPositions[b * 3 + 2];
+      const cx = origPositions[c * 3], cy = origPositions[c * 3 + 1], cz = origPositions[c * 3 + 2];
+      const x0 = Math.max(0, Math.floor((Math.min(ax, bx, cx) - mnx) * inv)), x1 = Math.min(gx - 1, Math.floor((Math.max(ax, bx, cx) - mnx) * inv));
+      const y0 = Math.max(0, Math.floor((Math.min(ay, by, cy) - mny) * inv)), y1 = Math.min(gy - 1, Math.floor((Math.max(ay, by, cy) - mny) * inv));
+      const z0 = Math.max(0, Math.floor((Math.min(az, bz, cz) - mnz) * inv)), z1 = Math.min(gz - 1, Math.floor((Math.max(az, bz, cz) - mnz) * inv));
+      for (let iz = z0; iz <= z1; iz++) for (let iy = y0; iy <= y1; iy++) for (let ix = x0; ix <= x1; ix++) {
+        const k = key(ix, iy, iz); let arr = map.get(k); if (!arr) { arr = []; map.set(k, arr); } arr.push(t);
+      }
+    }
+    const out = Float64Array.from(P);
+    const nV = P.length / 3;
+    const maxD2 = maxDist * maxDist;
+    const rad = Math.max(1, Math.ceil(maxDist * inv));
+    for (let vi = 0; vi < nV; vi++) {
+      const px = P[vi * 3], py = P[vi * 3 + 1], pz = P[vi * 3 + 2];
+      const cix = Math.floor((px - mnx) * inv), ciy = Math.floor((py - mny) * inv), ciz = Math.floor((pz - mnz) * inv);
+      let best = maxD2, bX = px, bY = py, bZ = pz, found = false;
+      for (let dz = -rad; dz <= rad; dz++) for (let dy = -rad; dy <= rad; dy++) for (let dx = -rad; dx <= rad; dx++) {
+        const ix = cix + dx, iy = ciy + dy, iz = ciz + dz;
+        if (ix < 0 || iy < 0 || iz < 0 || ix >= gx || iy >= gy || iz >= gz) continue;
+        const arr = map.get(key(ix, iy, iz)); if (!arr) continue;
+        for (let ai = 0; ai < arr.length; ai++) {
+          const t = arr[ai];
+          const cp = closestPointOnTri(px, py, pz, origPositions, origIndices[t * 3], origIndices[t * 3 + 1], origIndices[t * 3 + 2]);
+          const d2 = (px - cp[0]) ** 2 + (py - cp[1]) ** 2 + (pz - cp[2]) ** 2;
+          if (d2 < best) { best = d2; bX = cp[0]; bY = cp[1]; bZ = cp[2]; found = true; }
+        }
+      }
+      if (found) { out[vi * 3] = bX; out[vi * 3 + 1] = bY; out[vi * 3 + 2] = bZ; }
+    }
+    return out;
+  };
+
   // Smoothing laplaciano: sposta ogni vertice verso la media dei vicini per
   // ammorbidire la "scalinatura" del voxel, mantenendo la mesh chiusa.
   Voxel.laplacianSmooth = function (positions, indices, iterations, factor) {
@@ -309,6 +406,17 @@
     let I = Uint32Array.from(idxArr);
     const smooth = options.smoothIterations === undefined ? 2 : options.smoothIterations;
     if (smooth > 0) P = Voxel.laplacianSmooth(P, I, smooth);
+    // Riproiezione sulla superficie originale (shrink-wrap): recupera i dettagli
+    // e le facce di taglio piatte che voxel+smoothing avevano arrotondato. Si fa
+    // solo nel percorso "solidifica" (options.origPositions presente), NON quando
+    // ci sono connettori: i perni aggiunti non hanno originale e resterebbero storti.
+    if (options.origPositions && options.origIndices && I.length > 0) {
+      const maxDist = (options.reprojectDist || 1.5) * field.voxel;
+      P = Voxel.reprojectToSurface(P, options.origPositions, options.origIndices, maxDist);
+      // un giro di smoothing leggerissimo ricuce eventuali micro-scalini lasciati
+      // ai bordi della banda di riproiezione, senza rimangiare il dettaglio
+      if (options.postSmooth !== 0) P = Voxel.laplacianSmooth(P, I, 1, 0.25);
+    }
     let watertight = true;
     if (I.length > 0) {
       let edgeMap = MeshCore.buildEdgeMap(I);
@@ -327,7 +435,14 @@
   Voxel.remesh = function (positions, indices, options) {
     options = options || {};
     const field = Voxel.buildSolidField(positions, indices, options);
-    return finishField(field, options);
+    // per la riproiezione finale sulla superficie originale (a meno che non sia
+    // stata disattivata esplicitamente con reproject:false)
+    const opt = Object.assign({}, options);
+    if (options.reproject !== false) {
+      opt.origPositions = positions;
+      opt.origIndices = indices;
+    }
+    return finishField(field, opt);
   };
 
   // "Timbra" un cilindro nel campo: mode 'add' (perno: mette solido) o 'sub'
