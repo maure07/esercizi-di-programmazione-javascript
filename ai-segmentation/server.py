@@ -37,6 +37,14 @@ except Exception as _e:
     print("Riparazione PRO non disponibile:", _e, file=sys.stderr)
 
 try:
+    import rilievi
+    RILIEVI_AVAILABLE = True
+except Exception as _e:
+    rilievi = None
+    RILIEVI_AVAILABLE = False
+    print("Rilevamento dettagli non disponibile:", _e, file=sys.stderr)
+
+try:
     import taglia_pro
     TAGLIA_AVAILABLE = True
 except Exception as _e:
@@ -88,6 +96,7 @@ def health():
         "ai_available": AI_AVAILABLE,
         "ripara_pro": RIPARA_AVAILABLE,
         "booleane_pro": TAGLIA_AVAILABLE,
+        "dettagli_rilievo": RILIEVI_AVAILABLE,
     })
 
 
@@ -174,7 +183,30 @@ def segment():
             print("AI fallita, uso geometria:", e, file=sys.stderr)
 
     labels = geo.segment(vertices, faces, target_parts=target)
-    return jsonify({"labels": np.asarray(labels, dtype=int).tolist(), "engine_used": "geometria"})
+    usato = "geometria"
+    note = []
+
+    # DETTAGLI IN RILIEVO: sopracciglia, occhi, labbra... cioe' i dettagli
+    # morbidi che la segmentazione per pieghe non vede (non hanno spigoli).
+    # Si aggiungono SOPRA, senza rovinare le parti grosse gia' trovate.
+    if RILIEVI_AVAILABLE and data.get("dettagli", True):
+        try:
+            labels, info = rilievi.unisci_a_geometria(
+                labels, vertices, faces,
+                max_dettagli=int(data.get("max_dettagli", 8)),
+            )
+            n = info.get("dettagli_aggiunti", 0)
+            if n:
+                usato = "geometria+dettagli"
+                note.append(f"{n} dettagli in rilievo separati (sopracciglia, occhi, ...)")
+        except Exception as e:
+            print("rilievi falliti:", e, file=sys.stderr)
+
+    return jsonify({
+        "labels": np.asarray(labels, dtype=int).tolist(),
+        "engine_used": usato,
+        "note": note,
+    })
 
 
 if __name__ == "__main__":
@@ -183,4 +215,5 @@ if __name__ == "__main__":
     print("Motore AI:      ", "DISPONIBILE (GPU)" if AI_AVAILABLE else "non installato (uso geometria)")
     print("Riparazione PRO:", "DISPONIBILE (MeshLab)" if RIPARA_AVAILABLE else "non installata (install_pro.bat)")
     print("Booleane PRO:   ", "DISPONIBILI (manifold3d)" if TAGLIA_AVAILABLE else "non installate (install_pro.bat)")
+    print("Dettagli rilievo:", "ATTIVO (sopracciglia, occhi...)" if RILIEVI_AVAILABLE else "non disponibile")
     app.run(host="127.0.0.1", port=port, threaded=True)

@@ -45,6 +45,7 @@
     scaleApplyBtn: document.getElementById('scaleApplyBtn'),
     scaleHint: document.getElementById('scaleHint'),
     cutRow: document.getElementById('cutRow'),
+    cutRowHint: document.getElementById('cutRowHint'),
     cutToggleBtn: document.getElementById('cutToggleBtn'),
     cutControls: document.getElementById('cutControls'),
     cutRadius: document.getElementById('cutRadius'),
@@ -691,7 +692,10 @@
       // colori per faccia se il modello li ha (per dare il nome del filamento)
       const faceColors = (currentParsed.hasColorInfo && currentParsed.rawColors) ? currentParsed.rawColors : null;
       const result = Segmentation.buildPartsFromLabels(welded.positions, welded.indices, labels, faceColors, {});
-      result.warnings = [`Segmentazione dal companion locale (motore: ${out.engine_used === 'ai' ? 'AI / GPU' : 'geometria'}).`];
+      const nomeMotore = out.engine_used === 'ai' ? 'AI / GPU'
+        : (out.engine_used === 'geometria+dettagli' ? 'forma + dettagli in rilievo' : 'geometria');
+      result.warnings = [`Segmentazione dal companion locale (motore: ${nomeMotore}).`]
+        .concat(out.note || []);
       if (currentScaleFactor !== 1) scaleAllParts(result.parts, currentScaleFactor);
       currentResult = result;
       renderResult(result);
@@ -1147,6 +1151,7 @@
     el.connectorRow.style.display = result.parts.length > 1 ? 'block' : 'none';
     el.scaleRow.style.display = result.parts.length > 0 ? 'flex' : 'none';
     el.cutRow.style.display = result.parts.length > 0 ? 'block' : 'none';
+    el.cutRowHint.style.display = result.parts.length > 0 ? 'block' : 'none';
     resetCutSelection();
     updateCutRadiusLabel();
     el.logTitle.style.display = '';
