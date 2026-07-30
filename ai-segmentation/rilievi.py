@@ -133,7 +133,8 @@ def _compattezza(mesh, gruppo):
 def trova_rilievi(mesh_o_vertici, faces=None, sensibilita=5,
                   area_min_frac=0.0008, area_max_frac=0.06,
                   compattezza_min=0.30, max_pezzi=8,
-                  raggio_fine=None, raggio_base=None):
+                  raggio_fine=None, raggio_base=None,
+                  ripulisci=True, passate_ripulitura=12):
     """Zone in rilievo, come liste di indici di faccia.
 
     sensibilita: 1 = solo rilievi molto marcati (prudente)
@@ -147,7 +148,21 @@ def trova_rilievi(mesh_o_vertici, faces=None, sensibilita=5,
             vertices=np.asarray(mesh_o_vertici, dtype=np.float64),
             faces=np.asarray(faces, dtype=np.int64), process=False)
 
-    h, info = altezza_rilievo(mesh, raggio_fine, raggio_base)
+    # Ripulitura dal rumore a livello di triangolo, come per le pieghe: senza,
+    # le increspature della superficie vengono scambiate per rilievi e il
+    # modello si riempie di chiazze. Il levigamento e' di Taubin (non
+    # restringe) e i rilievi veri, molto piu' larghi del rumore, sopravvivono.
+    # Le etichette finali restano comunque sui triangoli ORIGINALI.
+    mesh_mis = mesh
+    if ripulisci:
+        try:
+            pulita = mesh.copy()
+            trimesh.smoothing.filter_taubin(pulita, iterations=int(passate_ripulitura))
+            mesh_mis = pulita
+        except Exception:
+            mesh_mis = mesh
+
+    h, info = altezza_rilievo(mesh_mis, raggio_fine, raggio_base)
     hf = h[mesh.faces].mean(axis=1)
 
     # soglia in "quante volte il rumore di fondo": robusta perche' basata sulla

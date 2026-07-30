@@ -42,6 +42,11 @@
         target.y + radius * Math.cos(phi),
         target.z + radius * sinPhi * Math.cos(theta)
       );
+      // ROTAZIONE INFINITA: phi non e' piu' bloccato ai poli, puo' girare
+      // all'infinito. Quando si passa "oltre" il polo (sin(phi) negativo) il
+      // modello si vede capovolto: si ribalta l'alto della camera, cosi' la
+      // rotazione prosegue liscia invece di impuntarsi.
+      camera.up.set(0, sinPhi >= 0 ? 1 : -1, 0);
       camera.lookAt(target);
     }
     updateCamera();
@@ -117,7 +122,7 @@
         } else {
           theta -= dx * 0.008;
           phi -= dy * 0.008;
-          phi = Math.max(0.05, Math.min(Math.PI - 0.05, phi));
+          // niente blocco: si gira all'infinito in tutte le direzioni
           updateCamera();
         }
       } else if (pointers.size === 2) {
@@ -144,7 +149,9 @@
     }
     canvas.addEventListener('pointerup', releasePointer);
     canvas.addEventListener('pointercancel', releasePointer);
-    canvas.addEventListener('pointerleave', (e) => { if (pointers.size <= 1) releasePointer(e); });
+    // NIENTE rilascio su 'pointerleave': col pointer capture il trascinamento
+    // deve continuare anche se il mouse esce dal riquadro. Rilasciarlo li'
+    // faceva "impuntare" la rotazione appena si usciva dal viewer.
 
     // punto del mondo sotto il cursore: il modello se colpito, altrimenti il
     // punto sul piano che passa per il target. Serve per lo zoom "verso il cursore".

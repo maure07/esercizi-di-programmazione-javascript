@@ -34,7 +34,8 @@ def _union_find(n):
 
 
 def segment(vertices, faces, target_parts=8, crease_percentile=0.55,
-            min_crease_deg=4.0, max_crease_deg=35.0, min_region_area_frac=0.002):
+            min_crease_deg=4.0, max_crease_deg=35.0, min_region_area_frac=0.002,
+            ripulisci=True, passate_ripulitura=None):
     import trimesh
     faces = np.asarray(faces, dtype=np.int64)
     vertices = np.asarray(vertices, dtype=np.float64)
@@ -43,7 +44,26 @@ def segment(vertices, faces, target_parts=8, crease_percentile=0.55,
     if nF == 0:
         return np.zeros(0, dtype=np.int64)
 
-    fn = mesh.face_normals
+    # RIPULITURA DAL RUMORE prima di cercare le pieghe.
+    # I modelli generati dall'AI hanno la superficie increspata a livello di
+    # singolo triangolo. Quelle increspature sembrano pieghe: misurato su un
+    # modello di prova, angoli diedri concavi fino a 78 gradi dove la forma e'
+    # in realta' liscia. Senza questo passaggio la segmentazione spezzetta il
+    # modello in chiazze a caso. Si leviga una COPIA (Taubin, che non
+    # restringe) solo per misurare gli angoli: le etichette restano sui
+    # triangoli originali, quindi non si perde nessun dettaglio.
+    geo = mesh
+    if ripulisci:
+        if passate_ripulitura is None:
+            passate_ripulitura = 12
+        try:
+            pulita = mesh.copy()
+            trimesh.smoothing.filter_taubin(pulita, iterations=int(passate_ripulitura))
+            geo = pulita
+        except Exception:
+            geo = mesh
+
+    fn = geo.face_normals
     areas = mesh.area_faces
     total_area = float(areas.sum()) or 1.0
     centroids = mesh.triangles_center
@@ -51,8 +71,8 @@ def segment(vertices, faces, target_parts=8, crease_percentile=0.55,
     adj = mesh.face_adjacency                 # (E,2) coppie di facce
     if len(adj) == 0:
         return np.zeros(nF, dtype=np.int64)
-    angles = mesh.face_adjacency_angles       # angolo diedro (rad), >=0
-    convex = mesh.face_adjacency_convex        # True se convesso
+    angles = geo.face_adjacency_angles         # angolo diedro (rad), sulla copia pulita
+    convex = geo.face_adjacency_convex         # True se convesso
     # lunghezza dello spigolo condiviso
     edges = mesh.face_adjacency_edges
     elen = np.linalg.norm(vertices[edges[:, 0]] - vertices[edges[:, 1]], axis=1)
