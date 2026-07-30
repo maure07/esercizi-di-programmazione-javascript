@@ -186,6 +186,83 @@
       updateCamera();
     }, { passive: false });
 
+    // --- DOPPIO CLIC: centra la vista sul punto toccato ---
+    // E' la manovra piu' utile quando lavori di precisione: invece di
+    // trascinare a tentativi, punti il dettaglio e ci giri intorno.
+    canvas.addEventListener('dblclick', (e) => {
+      e.preventDefault();
+      const p = worldPointUnderCursor(e.clientX, e.clientY);
+      if (!p) return;
+      animaVerso(p, radius * 0.55);
+    });
+
+    // spostamento morbido del centro di rotazione (e dello zoom)
+    let anim = null;
+    function animaVerso(punto, nuovoRaggio) {
+      const da = target.clone();
+      const r0 = radius;
+      const t0 = performance.now();
+      const durata = 260;
+      if (anim) cancelAnimationFrame(anim);
+      const passo = () => {
+        const k = Math.min(1, (performance.now() - t0) / durata);
+        const e = 1 - Math.pow(1 - k, 3);   // parte veloce, arriva morbido
+        target.set(
+          da.x + (punto.x - da.x) * e,
+          da.y + (punto.y - da.y) * e,
+          da.z + (punto.z - da.z) * e
+        );
+        if (nuovoRaggio) radius = r0 + (nuovoRaggio - r0) * e;
+        updateCamera();
+        if (k < 1) anim = requestAnimationFrame(passo); else anim = null;
+      };
+      passo();
+    }
+
+    // --- VISTE STANDARD da tastiera ---
+    // 1 fronte · 3 lato · 7 sopra · 2 retro · 4 lato opposto · 9 sotto
+    // F inquadra tutto · Shift+tasto = vista opposta
+    const VISTE = {
+      '1': [0, Math.PI / 2],              // fronte
+      '2': [Math.PI, Math.PI / 2],        // retro
+      '3': [Math.PI / 2, Math.PI / 2],    // lato destro
+      '4': [-Math.PI / 2, Math.PI / 2],   // lato sinistro
+      '7': [0, 0.06],                     // dall'alto
+      '9': [0, Math.PI - 0.06],           // dal basso
+    };
+    function impostaVista(th, ph) {
+      const t0 = performance.now(), durata = 260;
+      const th0 = theta, ph0 = phi;
+      // scegli il giro piu' corto
+      let dth = th - th0;
+      while (dth > Math.PI) dth -= 2 * Math.PI;
+      while (dth < -Math.PI) dth += 2 * Math.PI;
+      const passo = () => {
+        const k = Math.min(1, (performance.now() - t0) / durata);
+        const e = 1 - Math.pow(1 - k, 3);
+        theta = th0 + dth * e;
+        phi = ph0 + (ph - ph0) * e;
+        updateCamera();
+        if (k < 1) requestAnimationFrame(passo);
+      };
+      passo();
+    }
+    function gestisciTasto(e) {
+      // non rubare i tasti mentre si scrive in un campo
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA')) return;
+      const k = e.key;
+      if (VISTE[k]) {
+        const [th, ph] = VISTE[k];
+        impostaVista(e.shiftKey ? th + Math.PI : th, ph);
+        e.preventDefault();
+      } else if (k === 'f' || k === 'F') {
+        frameAll();
+        e.preventDefault();
+      }
+    }
+    root.addEventListener('keydown', gestisciTasto);
+
     function resize() {
       const w = canvas.clientWidth || 1;
       const h = canvas.clientHeight || 1;
@@ -348,7 +425,9 @@
       updateCamera();
     }
 
-    return { scene, camera, renderer, clearParts, addPart, setPartVisible, setPartOffset, frameAll, resize, raycastAt, setHighlight, projectToScreen, getCameraPosition, setPointerDownHook, showCutPlane, hideCutPlane };
+    function getTarget() { return [target.x, target.y, target.z]; }
+
+    return { scene, camera, renderer, clearParts, addPart, setPartVisible, setPartOffset, frameAll, resize, raycastAt, setHighlight, projectToScreen, getCameraPosition, getTarget, setPointerDownHook, showCutPlane, hideCutPlane, impostaVista, animaVerso };
   }
 
   root.createViewer = createViewer;

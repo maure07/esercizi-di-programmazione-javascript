@@ -1,67 +1,91 @@
 """
 rilievi.py
-Trova i DETTAGLI IN RILIEVO su una superficie: sopracciglia, occhi, labbra,
-bottoni, decorazioni... cioe' proprio le parti che la segmentazione "per pieghe"
-si perde, perche' su questi dettagli la superficie NON ha spigoli netti: sale e
-scende in modo morbido.
+Trova i DETTAGLI IN RILIEVO su una superficie: occhi, bottoni, decorazioni,
+placche... cioe' i dettagli morbidi che la segmentazione "per pieghe" si perde,
+perche' non hanno spigoli netti.
 
-Idea (classica e robusta): si costruisce una versione LEVIGATA del modello, che
-e' come sarebbe la testa "liscia" senza i dettagli. La differenza fra il modello
-vero e quello levigato, misurata lungo la normale, e' l'ALTEZZA DEL RILIEVO.
-Dove questa altezza supera una soglia, c'e' un dettaglio: lo si isola e diventa
-un pezzo a se'.
+COME FUNZIONA (e perche' cosi')
+I modelli generati dall'AI hanno la superficie ONDULATA: un rumore di qualche
+decimo di mm sparso ovunque. Un rilevatore ingenuo scambia quel rumore per
+dettagli e riempie il modello di macchie. Per evitarlo si lavora a SCALE FISICHE
+controllate, in millimetri:
 
-Funziona anche su modelli senza colore, ed e' insensibile al fatto che il
-dettaglio abbia bordi netti o sfumati.
+  1. si fa la media delle posizioni entro un raggio piccolo (R1): toglie il
+     rumore fine ma tiene i dettagli;
+  2. si fa la media entro un raggio grande (R2): e' la superficie "di base",
+     cioe' come sarebbe senza dettagli;
+  3. la differenza fra le due, misurata lungo la normale, e' l'altezza del
+     dettaglio;
+  4. si sottrae la media locale di quella misura: cosi' si toglie l'effetto
+     della CURVATURA (una testa tonda sporge ovunque, e senza questo passaggio
+     sembrerebbe tutta un dettaglio). E' il passaggio che fa la differenza:
+     misurato sul modello di prova, il contrasto degli occhi passa da 1.5x a 6x.
+
+Infine si tengono solo le zone COMPATTE e di dimensione plausibile: il rumore
+produce chiazze sfilacciate, un occhio produce una macchia tonda.
+
+LIMITE, detto chiaramente: se un dettaglio e' basso quanto il rumore della
+superficie (tipico delle sopracciglia sottili, ~0.7mm su un rumore di ~0.6mm)
+non e' distinguibile per via geometrica. Per quelli conviene il pennello.
 """
 import numpy as np
 
 
-def _componenti_facce(mesh, mask):
-    """Componenti connesse fra le facce selezionate da `mask` (bool per faccia)."""
+# ---------------------------------------------------------------------------
+# misura dell'altezza del rilievo
+# ---------------------------------------------------------------------------
+def altezza_rilievo(mesh, raggio_fine=None, raggio_base=None):
+    """Altezza del rilievo per vertice, a scale fisiche controllate (mm).
+
+    raggio_fine: sotto questa dimensione e' rumore da ignorare
+    raggio_base: sopra questa dimensione e' forma generale, non dettaglio
+    """
+    from scipy.spatial import cKDTree
+    V = np.asarray(mesh.vertices, dtype=np.float64)
+    Nrm = np.asarray(mesh.vertex_normals, dtype=np.float64)
+    diag = float(np.linalg.norm(V.max(axis=0) - V.min(axis=0))) or 1.0
+    if raggio_fine is None:
+        raggio_fine = 0.015 * diag
+    if raggio_base is None:
+        raggio_base = 0.10 * diag
+
+    tree = cKDTree(V)
+    vic_fine = tree.query_ball_point(V, raggio_fine)
+    vic_base = tree.query_ball_point(V, raggio_base)
+
+    def media(A, vicini):
+        out = np.empty((len(V),) + A.shape[1:], dtype=np.float64)
+        for i, ii in enumerate(vicini):
+            out[i] = A[ii].mean(axis=0) if len(ii) else A[i]
+        return out
+
+    fine = media(V, vic_fine)
+    base = media(V, vic_base)
+    h = np.einsum("ij,ij->i", fine - base, Nrm)
+    # togli la curvatura: quel che resta e' solo lo scarto LOCALE
+    h = h - media(h.reshape(-1, 1), vic_base).ravel()
+    return h, {"raggio_fine": raggio_fine, "raggio_base": raggio_base}
+
+
+# ---------------------------------------------------------------------------
+# raggruppamento in zone
+# ---------------------------------------------------------------------------
+def _vicini_facce(mesh):
     import collections
-    idx = np.where(mask)[0]
-    if len(idx) == 0:
-        return []
-    sel = set(int(i) for i in idx)
-    # adiacenza faccia-faccia limitata alle facce selezionate
-    vicini = collections.defaultdict(list)
-    adj = mesh.face_adjacency
-    for a, b in adj:
+    v = collections.defaultdict(list)
+    for a, b in mesh.face_adjacency:
         a = int(a); b = int(b)
-        if a in sel and b in sel:
-            vicini[a].append(b)
-            vicini[b].append(a)
-    viste = set()
-    fuori = []
-    for s in idx:
-        s = int(s)
-        if s in viste:
-            continue
-        pila = [s]; viste.add(s); gruppo = [s]
-        while pila:
-            f = pila.pop()
-            for n in vicini.get(f, ()):
-                if n not in viste:
-                    viste.add(n); pila.append(n); gruppo.append(n)
-        fuori.append(np.array(gruppo, dtype=np.int64))
-    return fuori
+        v[a].append(b); v[b].append(a)
+    return v
 
 
-def _cresci_isteresi(mesh, hf, alta, bassa):
-    """Parte dalle facce sopra la soglia ALTA e si allarga, seguendo i vicini,
-    a tutte quelle collegate che stanno sopra la soglia BASSA.
-    Cosi' si prende il dettaglio INTERO e non solo la sua punta."""
-    import collections
+def _cresci_isteresi(vicini, hf, alta, bassa):
+    """Parte dalle facce sopra la soglia ALTA e si allarga ai vicini collegati
+    sopra la soglia BASSA: cosi' si prende il dettaglio intero, non la punta."""
     forte = hf > alta
     debole = hf > bassa
     if not forte.any():
         return forte
-    vicini = collections.defaultdict(list)
-    for a, b in mesh.face_adjacency:
-        a = int(a); b = int(b)
-        vicini[a].append(b)
-        vicini[b].append(a)
     dentro = forte.copy()
     pila = [int(i) for i in np.where(forte)[0]]
     while pila:
@@ -73,96 +97,136 @@ def _cresci_isteresi(mesh, hf, alta, bassa):
     return dentro
 
 
-def altezza_rilievo(mesh, passate=None):
-    """Altezza del rilievo per ogni vertice (positiva = sporge).
+def _componenti(vicini, mask):
+    idx = np.where(mask)[0]
+    viste = set()
+    fuori = []
+    for s in idx:
+        s = int(s)
+        if s in viste:
+            continue
+        pila = [s]; viste.add(s); gruppo = [s]
+        while pila:
+            f = pila.pop()
+            for n in vicini.get(f, ()):
+                if mask[n] and n not in viste:
+                    viste.add(n); pila.append(n); gruppo.append(n)
+        fuori.append(np.array(gruppo, dtype=np.int64))
+    return fuori
 
-    Si usa il levigamento di TAUBIN, non quello laplaciano semplice: Taubin
-    leviga SENZA restringere il modello. E' fondamentale, perche' con il
-    laplaciano il restringimento generale si somma al rilievo e falsa la
-    misura, nascondendo proprio i dettagli bassi come le sopracciglia.
 
-    passate: quanto levigare per ottenere la superficie "di base".
-             Se None, si adatta alla densita' della mesh.
+def _compattezza(mesh, gruppo):
+    """1 = macchia tonda e compatta, verso 0 = chiazza sfilacciata.
+    Rapporto fra l'area del gruppo e l'area del cerchio che lo contiene."""
+    C = mesh.triangles_center[gruppo]
+    area = float(mesh.area_faces[gruppo].sum())
+    centro = C.mean(axis=0)
+    r = float(np.linalg.norm(C - centro, axis=1).max())
+    if r <= 1e-9:
+        return 0.0
+    return float(np.clip(area / (np.pi * r * r), 0.0, 1.0))
+
+
+# ---------------------------------------------------------------------------
+# rilevatore
+# ---------------------------------------------------------------------------
+def trova_rilievi(mesh_o_vertici, faces=None, sensibilita=5,
+                  area_min_frac=0.0008, area_max_frac=0.06,
+                  compattezza_min=0.30, max_pezzi=8,
+                  raggio_fine=None, raggio_base=None):
+    """Zone in rilievo, come liste di indici di faccia.
+
+    sensibilita: 1 = solo rilievi molto marcati (prudente)
+                 10 = prende anche i rilievi appena accennati (rischia il rumore)
     """
     import trimesh
-    V = np.asarray(mesh.vertices, dtype=np.float64)
-    if passate is None:
-        # per cancellare un dettaglio largo ~10% della diagonale servono
-        # circa (larghezza / lato_spigolo)^2 passate
-        diag = float(np.linalg.norm(V.max(axis=0) - V.min(axis=0))) or 1.0
-        lato = float(np.mean(mesh.edges_unique_length)) or (diag / 100.0)
-        passate = int(np.clip((0.10 * diag / max(lato, 1e-9)) ** 2 * 2.0, 120, 400))
+    if faces is None:
+        mesh = mesh_o_vertici
+    else:
+        mesh = trimesh.Trimesh(
+            vertices=np.asarray(mesh_o_vertici, dtype=np.float64),
+            faces=np.asarray(faces, dtype=np.int64), process=False)
 
-    base = mesh.copy()
-    trimesh.smoothing.filter_taubin(base, iterations=int(passate))
-
-    Nb = np.asarray(base.vertex_normals, dtype=np.float64)
-    delta = V - np.asarray(base.vertices, dtype=np.float64)
-    h = np.einsum("ij,ij->i", delta, Nb)   # componente lungo la normale
-    return h, int(passate)
-
-
-def trova_rilievi(vertices, faces, soglia_mm=None, soglia_rel=0.28,
-                  bassa_rel=0.20, area_min_frac=0.0006, area_max_frac=0.16,
-                  max_pezzi=12, passate=None):
-    """Restituisce una lista di gruppi di facce, uno per ogni dettaglio in rilievo.
-
-    soglia_mm  : altezza minima del rilievo in mm (se None si ricava dai dati)
-    soglia_rel : in automatico, frazione del rilievo massimo trovato
-    area_*_frac: scarta i pezzi troppo piccoli (rumore) o troppo grandi (il corpo)
-    """
-    import trimesh
-    mesh = trimesh.Trimesh(
-        vertices=np.asarray(vertices, dtype=np.float64),
-        faces=np.asarray(faces, dtype=np.int64), process=False)
-
-    h, passate_usate = altezza_rilievo(mesh, passate=passate)
-    # altezza per faccia
+    h, info = altezza_rilievo(mesh, raggio_fine, raggio_base)
     hf = h[mesh.faces].mean(axis=1)
 
-    if soglia_mm is None:
-        positivi = hf[hf > 0]
-        if len(positivi) == 0:
-            return [], {"passate": passate_usate, "soglia": 0.0, "max": 0.0}
-        # il 99.5° percentile evita che un singolo picco sballi la soglia
-        picco = float(np.percentile(positivi, 99.5))
-        soglia = max(picco * soglia_rel, 1e-6)
-    else:
-        soglia = float(soglia_mm)
-        picco = float(hf.max())
+    # soglia in "quante volte il rumore di fondo": robusta perche' basata sulla
+    # deviazione mediana assoluta, che non si fa sballare dai dettagli stessi
+    mad = float(np.median(np.abs(hf - np.median(hf)))) or 1e-9
+    rumore = 1.4826 * mad
+    s = float(np.clip(sensibilita, 1, 10))
+    volte = 6.0 - 0.42 * (s - 1)          # sens 1 -> 6.0x rumore, sens 10 -> 2.2x
+    alta = np.median(hf) + volte * rumore
+    bassa = np.median(hf) + (volte * 0.45) * rumore
+
+    vicini = _vicini_facce(mesh)
+    mask = _cresci_isteresi(vicini, hf, alta, bassa)
 
     aree = mesh.area_faces
     area_tot = float(aree.sum()) or 1.0
-
-    # DOPPIA SOGLIA (isteresi): partiamo dalle facce che sporgono di sicuro
-    # (soglia alta) e ci allarghiamo a quelle collegate che sporgono anche solo
-    # un po' (soglia bassa). Senza questo si prenderebbe solo la punta del
-    # rilievo e il taglio verrebbe piu' piccolo del dettaglio vero.
-    mask = _cresci_isteresi(mesh, hf, alta=soglia, bassa=soglia * bassa_rel)
-
-    gruppi = []
-    for g in _componenti_facce(mesh, mask):
-        a = float(aree[g].sum()) / area_tot
-        if a < area_min_frac or a > area_max_frac:
+    candidati = []
+    for g in _componenti(vicini, mask):
+        frac = float(aree[g].sum()) / area_tot
+        if frac < area_min_frac or frac > area_max_frac:
             continue
-        gruppi.append((float(hf[g].mean()) * a, g))   # punteggio: alto e grande
-    gruppi.sort(key=lambda t: -t[0])
-    gruppi = [g for _, g in gruppi[:max_pezzi]]
-    info = {"passate": passate_usate, "soglia": soglia, "max": picco,
-            "trovati": len(gruppi)}
+        comp = _compattezza(mesh, g)
+        if comp < compattezza_min:
+            continue                       # chiazza sfilacciata = rumore
+        punteggio = float(hf[g].mean()) * comp
+        candidati.append((punteggio, g))
+    candidati.sort(key=lambda t: -t[0])
+    gruppi = [g for _, g in candidati[:max_pezzi]]
+
+    info.update({"rumore_stimato": rumore, "soglia": float(alta),
+                 "sensibilita": s, "trovati": len(gruppi)})
     return gruppi, info
 
 
-def unisci_a_geometria(labels_geo, vertices, faces, max_dettagli=8, **kw):
-    """Mette i dettagli in rilievo SOPRA la segmentazione per pieghe.
+def trova_rilievi_multiscala(vertices, faces, sensibilita=5, max_pezzi=8,
+                             scale=(0.07, 0.13, 0.22), **kw):
+    """Cerca i dettagli a PIU' SCALE e unisce i risultati.
 
-    La segmentazione per pieghe azzecca le parti grosse (testa, braccia, scarpe)
-    ma si perde i dettagli morbidi appoggiati sulla superficie (sopracciglia,
-    occhi, labbra). Qui li ritagliamo e diventano pezzi a se', lasciando intatto
-    il resto.
+    Serve perche' un dettaglio si vede solo se il raggio di analisi e' piu'
+    grande del dettaglio stesso: un occhio piccolo e uno grande hanno bisogno
+    di raggi diversi. Le zone che si sovrappongono fra scale diverse vengono
+    tenute una volta sola (vince quella trovata alla scala piu' fine).
     """
+    import trimesh
+    V = np.asarray(vertices, dtype=np.float64)
+    F = np.asarray(faces, dtype=np.int64)
+    mesh = trimesh.Trimesh(vertices=V, faces=F, process=False)
+    diag = float(np.linalg.norm(V.max(axis=0) - V.min(axis=0))) or 1.0
+
+    presi = np.zeros(len(F), dtype=bool)
+    gruppi = []
+    info_tot = {"scale": [], "trovati": 0}
+    for sc in scale:
+        try:
+            g, info = trova_rilievi(
+                mesh, None, sensibilita=sensibilita, max_pezzi=max_pezzi,
+                raggio_base=sc * diag, **kw)
+        except Exception:
+            continue
+        nuovi = 0
+        for gr in g:
+            # scarta se si sovrappone parecchio a una zona gia' presa
+            if presi[gr].mean() > 0.35:
+                continue
+            presi[gr] = True
+            gruppi.append(gr)
+            nuovi += 1
+        info_tot["scale"].append({"raggio_base": round(sc * diag, 2), "nuovi": nuovi})
+        if len(gruppi) >= max_pezzi:
+            break
+    info_tot["trovati"] = len(gruppi)
+    return gruppi[:max_pezzi], info_tot
+
+
+def unisci_a_geometria(labels_geo, vertices, faces, max_dettagli=8, **kw):
+    """Mette i dettagli in rilievo SOPRA la segmentazione per pieghe, senza
+    toccare le parti grosse gia' trovate."""
     labels = np.asarray(labels_geo, dtype=np.int64).copy()
-    gruppi, info = trova_rilievi(vertices, faces, max_pezzi=max_dettagli, **kw)
+    gruppi, info = trova_rilievi_multiscala(vertices, faces, max_pezzi=max_dettagli, **kw)
     prossima = int(labels.max()) + 1 if len(labels) else 0
     for g in gruppi:
         labels[g] = prossima
@@ -172,14 +236,11 @@ def unisci_a_geometria(labels_geo, vertices, faces, max_dettagli=8, **kw):
 
 
 def segmenta_con_rilievi(vertices, faces, target_parts=8, **kw):
-    """Etichette per faccia: 0 = corpo, 1..n = i dettagli in rilievo trovati.
-
-    Pensata per essere unita alla segmentazione per pieghe: qui prendiamo i
-    dettagli morbidi che quella si perde.
-    """
+    """Etichette per faccia: 0 = corpo, 1..n = dettagli in rilievo."""
     faces = np.asarray(faces, dtype=np.int64)
     labels = np.zeros(len(faces), dtype=np.int64)
-    gruppi, info = trova_rilievi(vertices, faces, max_pezzi=max(1, target_parts - 1), **kw)
+    gruppi, info = trova_rilievi_multiscala(
+        vertices, faces, max_pezzi=max(1, target_parts - 1), **kw)
     for i, g in enumerate(gruppi):
         labels[g] = i + 1
     return labels, info

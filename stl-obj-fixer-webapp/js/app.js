@@ -102,6 +102,9 @@
     segmentPanel: document.getElementById('segmentPanel'),
     segmentBtn: document.getElementById('segmentBtn'),
     segmentAiBtn: document.getElementById('segmentAiBtn'),
+    dettagliChk: document.getElementById('dettagliChk'),
+    dettagliSens: document.getElementById('dettagliSens'),
+    dettagliSensValue: document.getElementById('dettagliSensValue'),
     logTitle: document.getElementById('logTitle'),
     log: document.getElementById('log'),
     partsTitle: document.getElementById('partsTitle'),
@@ -648,6 +651,9 @@
   el.toSegmentBtn2.addEventListener('click', () => goToStep(3));
   el.segmentBtn.addEventListener('click', () => runSegmentation());
   el.segmentAiBtn.addEventListener('click', () => runAiSegmentation());
+  el.dettagliSens.addEventListener('input', () => {
+    el.dettagliSensValue.textContent = el.dettagliSens.value;
+  });
 
   // Segmentazione tramite il companion locale (motore geometria o AI/GPU).
   // Manda la mesh saldata a http://127.0.0.1:8760 e riceve un'etichetta per
@@ -684,7 +690,11 @@
       const resp = await fetch(AI_URL + '/segment', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vertices: verts, faces, target_parts: target, engine }),
+        body: JSON.stringify({
+          vertices: verts, faces, target_parts: target, engine,
+          dettagli: el.dettagliChk.checked,
+          sensibilita_dettagli: parseInt(el.dettagliSens.value, 10),
+        }),
       });
       const out = await resp.json();
       const labels = out.labels;
@@ -2085,6 +2095,7 @@
   // accessi di sola lettura usati dai test automatici (nessun effetto sull'app)
   window.__viewerCam = () => viewer.getCameraPosition();
   window.__viewerScene = () => viewer.scene;
+  window.__viewerTarget = () => viewer.getTarget();
   window.__parsedInfo = () => currentParsed ? {
     hasColorInfo: currentParsed.hasColorInfo,
     hasTextureInfo: currentParsed.hasTextureInfo,

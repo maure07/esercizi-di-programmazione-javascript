@@ -194,11 +194,16 @@ def segment():
             labels, info = rilievi.unisci_a_geometria(
                 labels, vertices, faces,
                 max_dettagli=int(data.get("max_dettagli", 8)),
+                sensibilita=float(data.get("sensibilita_dettagli", 5)),
             )
             n = info.get("dettagli_aggiunti", 0)
             if n:
                 usato = "geometria+dettagli"
-                note.append(f"{n} dettagli in rilievo separati (sopracciglia, occhi, ...)")
+                note.append(
+                    f"{n} dettagli in rilievo separati (occhi, bottoni, placche). "
+                    "Se ne ha presi troppi o troppo pochi, regola la sensibilita'. "
+                    "I rilievi bassi quanto le ondulazioni della superficie "
+                    "(spesso le sopracciglia sottili) vanno presi col pennello.")
         except Exception as e:
             print("rilievi falliti:", e, file=sys.stderr)
 
