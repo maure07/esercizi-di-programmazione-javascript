@@ -110,6 +110,78 @@ def _render_views(vertices, faces, n_views=12, res=1024):
     return out
 
 
+def _riduci_a_griglia(vertices, faces, obiettivo_facce):
+    """Riduzione dei triangoli SENZA dipendenze esterne (raggruppamento su
+    griglia): i vertici vicini vengono fusi in uno solo e i triangoli che
+    collassano vengono buttati. Non e' raffinata come una decimazione a
+    quadriche, ma qui serve solo a dare a SAM una mesh leggera su cui
+    ragionare: le etichette vengono poi riportate sulla mesh piena.
+    Soprattutto: funziona sempre, e quindi non si rischia piu' di ritrovarsi
+    con la mesh intera e un'allocazione da terabyte.
+    """
+    V = np.asarray(vertices, dtype=np.float64)
+    F = np.asarray(faces, dtype=np.int64)
+    nF = len(F)
+    if nF <= obiettivo_facce:
+        return V, F
+    lo = V.min(axis=0); hi = V.max(axis=0)
+    diag = float(np.linalg.norm(hi - lo)) or 1.0
+    # parti da una griglia proporzionale al numero di facce desiderate e
+    # stringi finche' non si scende sotto l'obiettivo
+    n = max(8, int(round((obiettivo_facce * 2.0) ** (1.0 / 3.0) * 3)))
+    for _ in range(24):
+        passo = diag / n
+        chiavi = np.floor((V - lo) / passo).astype(np.int64)
+        _, inv = np.unique(chiavi, axis=0, return_inverse=True)
+        # posizione media di ogni cella
+        nuovo_n = int(inv.max()) + 1
+        somma = np.zeros((nuovo_n, 3)); conta = np.zeros(nuovo_n)
+        np.add.at(somma, inv, V); np.add.at(conta, inv, 1.0)
+        NV = somma / np.maximum(conta, 1)[:, None]
+        NF = inv[F]
+        # butta i triangoli degeneri (due o tre vertici finiti nella stessa cella)
+        ok = (NF[:, 0] != NF[:, 1]) & (NF[:, 1] != NF[:, 2]) & (NF[:, 0] != NF[:, 2])
+        NF = NF[ok]
+        # e i doppioni
+        if len(NF):
+            NF = np.unique(np.sort(NF, axis=1), axis=0)
+        if len(NF) <= obiettivo_facce or n <= 8:
+            return NV, NF
+        n = max(8, int(n * 0.75))
+    return NV, NF
+
+
+def _riduci_mesh(full_mesh, obiettivo_facce):
+    """Prova le riduzioni buone; se non ci sono, usa quella a griglia.
+    Non ritorna MAI la mesh intera: e' proprio quello che causava il crash."""
+    import trimesh
+    V = np.asarray(full_mesh.vertices, dtype=np.float64)
+    F = np.asarray(full_mesh.faces, dtype=np.int64)
+    if len(F) <= obiettivo_facce:
+        return V, F
+    # 1) decimazione a quadriche di trimesh (serve 'fast_simplification')
+    for kw in ({"face_count": int(obiettivo_facce)}, {"percent": float(obiettivo_facce) / len(F)}):
+        try:
+            r = full_mesh.simplify_quadric_decimation(**kw)
+            if 0 < len(r.faces) <= obiettivo_facce * 1.5:
+                return np.asarray(r.vertices, dtype=np.float64), np.asarray(r.faces, dtype=np.int64)
+        except Exception:
+            pass
+    # 2) open3d, se c'e'
+    try:
+        import open3d as o3d
+        m = o3d.geometry.TriangleMesh(
+            o3d.utility.Vector3dVector(V), o3d.utility.Vector3iVector(F))
+        m = m.simplify_quadric_decimation(int(obiettivo_facce))
+        NF = np.asarray(m.triangles, dtype=np.int64)
+        if 0 < len(NF) <= obiettivo_facce * 1.5:
+            return np.asarray(m.vertices, dtype=np.float64), NF
+    except Exception:
+        pass
+    # 3) ripiego che funziona sempre
+    return _riduci_a_griglia(V, F, obiettivo_facce)
+
+
 def segment(vertices, faces, target_parts=8, n_views=12, work_faces=6000):
     import torch
     import trimesh
@@ -124,26 +196,60 @@ def segment(vertices, faces, target_parts=8, n_views=12, work_faces=6000):
     # di affinita' e' O(facce^2)); poi le etichette si trasferiscono alla mesh
     # piena per faccia piu' vicina. Indispensabile sui modelli densi (800k tri).
     full_mesh = trimesh.Trimesh(vertices=vertices_full, faces=faces_full, process=False)
-    if nF_full > work_faces:
-        try:
-            work = full_mesh.simplify_quadric_decimation(work_faces)
-        except Exception:
-            work = full_mesh
-    else:
-        work = full_mesh
-    vertices = np.asarray(work.vertices, dtype=np.float64)
-    faces = np.asarray(work.faces, dtype=np.int64)
+    vertices, faces = _riduci_mesh(full_mesh, work_faces)
     nF = len(faces)
+    print(f"[AI] mesh ridotta da {nF_full} a {nF} facce per l'analisi", flush=True)
+
+    # BARRIERA DI SICUREZZA: la tabella delle affinita' occupa facce^2 x 4 byte.
+    # Prima qui si arrivava a chiedere 2.41 TiB (con 813.448 facce) e il PC
+    # andava in crisi. Ora si controlla PRIMA di allocare: se non ci sta in un
+    # tetto ragionevole, si stringe ancora la mesh invece di provarci e morire.
+    TETTO_GB = 1.5
+    while nF > 1 and (nF * nF * 4) / (1024 ** 3) > TETTO_GB:
+        nuovo = int(nF * 0.7)
+        print(f"[AI] {nF} facce chiederebbero {(nF*nF*4)/(1024**3):.1f} GB: riduco a {nuovo}", flush=True)
+        vertices, faces = _riduci_a_griglia(vertices, faces, nuovo)
+        if len(faces) >= nF:      # non sta scendendo: fermati qui
+            break
+        nF = len(faces)
+
+    # --- GPU: consumo di memoria video tenuto sotto controllo ---
+    # Su una scheda da 8 GB, SAM con troppi punti per immagine in un colpo solo
+    # riempie la memoria video e fa cadere tutto. Si limita quanti punti vengono
+    # elaborati insieme (points_per_batch): il risultato e' identico, cambia solo
+    # che il lavoro viene fatto a scaglioni. In piu' si dice a PyTorch di non
+    # superare una quota della scheda, e si libera la memoria dopo ogni vista.
+    libera_gb = 8.0
+    try:
+        libera_gb = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+    except Exception:
+        pass
+    if libera_gb <= 9:            # 8 GB (es. RTX 3060): vai leggero
+        punti_lato, punti_lotto = 16, 32
+    else:
+        punti_lato, punti_lotto = 24, 64
+    try:
+        # non usare piu' dell'80% della scheda: lascia respirare Windows
+        torch.cuda.set_per_process_memory_fraction(0.8, 0)
+    except Exception:
+        pass
+    print(f"[AI] scheda video da {libera_gb:.1f} GB -> {punti_lato}x{punti_lato} punti, "
+          f"lotti da {punti_lotto}", flush=True)
 
     sam = sam_model_registry[_MODEL_TYPE](checkpoint=_MODEL_PATH).to("cuda")
-    gen = SamAutomaticMaskGenerator(sam, points_per_side=24)
+    try:
+        gen = SamAutomaticMaskGenerator(sam, points_per_side=punti_lato,
+                                        points_per_batch=punti_lotto)
+    except TypeError:             # versioni piu' vecchie senza points_per_batch
+        gen = SamAutomaticMaskGenerator(sam, points_per_side=punti_lato)
 
     # affinita' tra facce: quante volte finiscono nella stessa maschera
     aff = np.zeros((nF, nF), dtype=np.float32)
     seen = np.zeros(nF, dtype=np.float32)
 
-    for color, face_id in _render_views(vertices, faces, n_views=n_views):
-        masks = gen.generate(color[:, :, :3])
+    for iv, (color, face_id) in enumerate(_render_views(vertices, faces, n_views=n_views)):
+        with torch.inference_mode():     # niente gradienti: meta' memoria video
+            masks = gen.generate(color[:, :, :3])
         for m in masks:
             seg = m["segmentation"]
             fids = face_id[seg]
@@ -154,6 +260,19 @@ def segment(vertices, faces, target_parts=8, n_views=12, work_faces=6000):
             seen[uniq] += 1
             # incrementa l'affinita' tra tutte le facce di questa maschera
             aff[np.ix_(uniq, uniq)] += 1.0
+        del masks
+        try:
+            torch.cuda.empty_cache()     # restituisci la memoria video tra una vista e l'altra
+        except Exception:
+            pass
+        print(f"[AI] vista {iv + 1}/{n_views}", flush=True)
+
+    # il modello non serve piu': libera subito la scheda
+    try:
+        del gen, sam
+        torch.cuda.empty_cache()
+    except Exception:
+        pass
 
     # facce mai viste: attaccale via geometria alla fine
     np.fill_diagonal(aff, 0)
