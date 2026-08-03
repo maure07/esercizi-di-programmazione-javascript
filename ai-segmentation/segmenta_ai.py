@@ -315,10 +315,13 @@ def segment(vertices, faces, target_parts=8, n_views=12, work_faces=6000):
     # della faccia lavorata piu' vicina (per baricentro)
     if nF != nF_full:
         from scipy.spatial import cKDTree
-        work_centroids = np.asarray(work.triangles_center)
+        # baricentri della mesh ridotta, calcolati direttamente dai dati che
+        # abbiamo usato per l'analisi
+        work_centroids = vertices[faces].mean(axis=1)
         full_centroids = np.asarray(full_mesh.triangles_center)
         tree = cKDTree(work_centroids)
         _, idx = tree.query(full_centroids, k=1)
         labels = labels[idx]
+        print(f"[AI] etichette riportate su {nF_full} facce", flush=True)
 
     return labels.astype(np.int64)
