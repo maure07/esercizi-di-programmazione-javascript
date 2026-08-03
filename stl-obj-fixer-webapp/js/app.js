@@ -1967,26 +1967,107 @@
     return cur;
   }
 
-  // Cresce dal triangolo toccato attraversando solo le zone LISCE.
-  // gradi = quanto puo' piegare la superficie prima di considerarla un bordo.
-  function smartSelect(part, seedFace, gradi, maxFrazione) {
+  // Cresce dal triangolo toccato pagando un COSTO a ogni passo, e si ferma
+  // quando ha speso il budget.
+  //
+  // Perche' non basta una soglia secca sull'angolo: sui modelli generati
+  // dall'AI non ci sono spigoli. Fra la scarpa e la gamba non c'e' uno
+  // scalino, c'e' una VALLE dolce. Misurato su un modello di prova: angolo
+  // mediano fra le facce 6.4 gradi ovunque, e la caviglia si distingue dalla
+  // gamba liscia solo per 3.4 contro 1.9 gradi. Con una soglia la selezione
+  // dilagava su tutto il modello.
+  //
+  // Qui invece attraversare una piega CONCAVA costa: le valli sono i confini
+  // naturali fra le parti, mentre i rigonfiamenti convessi (un muscolo, una
+  // piega del vestito) sono gratis e non spezzano nulla. Si somma il costo
+  // lungo il cammino: una valle poco profonda si supera, una marcata no.
+  // Il cursore regola quanto si e' disposti a spendere.
+  // Quanto e' "in valle" ogni triangolo: media delle pieghe CONCAVE verso i
+  // vicini, poi ammorbidita. Le valli (caviglia, attaccatura del braccio,
+  // contorno di un occhio) formano bande continue di valore alto; le
+  // increspature del rumore, sparse e isolate, si spengono.
+  function ensureConcavita(part) {
     const topo = ensurePartTopology(part);
+    if (topo.concavita) return topo.concavita;
     const N = ensureSmoothNormals(part);
+    const C = topo.centroids;
     const nTris = part.indices.length / 3;
-    const limite = Math.cos(Math.max(1, gradi) * Math.PI / 180);
-    const maxFacce = Math.max(20, Math.floor(nTris * (maxFrazione || 0.6)));
-    const sel = new Set([seedFace]);
-    const coda = [seedFace];
+    let campo = new Float32Array(nTris);
+    for (let f = 0; f < nTris; f++) {
+      const adj = topo.adjacency[f];
+      let somma = 0;
+      for (let i = 0; i < adj.length; i++) {
+        const nb = adj[i];
+        const d = Math.min(1, Math.max(-1,
+          N[f * 3] * N[nb * 3] + N[f * 3 + 1] * N[nb * 3 + 1] + N[f * 3 + 2] * N[nb * 3 + 2]));
+        const vx = C[nb * 3] - C[f * 3], vy = C[nb * 3 + 1] - C[f * 3 + 1], vz = C[nb * 3 + 2] - C[f * 3 + 2];
+        const concavo = (vx * N[f * 3] + vy * N[f * 3 + 1] + vz * N[f * 3 + 2]) > 0;
+        if (concavo) somma += Math.acos(d) * 180 / Math.PI;
+      }
+      campo[f] = adj.length ? somma / adj.length : 0;
+    }
+    // ammorbidisci: le valli restano, i puntini di rumore spariscono
+    for (let pass = 0; pass < 3; pass++) {
+      const out = new Float32Array(nTris);
+      for (let f = 0; f < nTris; f++) {
+        const adj = topo.adjacency[f];
+        let s = campo[f], n = 1;
+        for (let i = 0; i < adj.length; i++) { s += campo[adj[i]]; n++; }
+        out[f] = s / n;
+      }
+      campo = out;
+    }
+    topo.concavita = campo;
+    return campo;
+  }
+
+  // Cresce dal triangolo toccato fermandosi sulle VALLI.
+  //
+  // Sui modelli generati dall'AI non ci sono spigoli: fra la scarpa e la gamba
+  // non c'e' uno scalino ma una valle dolce. Misurato su un modello di prova:
+  // angolo mediano fra le facce 6.4 gradi ovunque, e la caviglia si distingue
+  // dalla gamba liscia solo per 3.4 contro 1.9 gradi.
+  //
+  // Non si sommano i costi lungo il cammino (allargarsi sulla scarpa costerebbe
+  // quanto scavalcare la caviglia): conta solo la VALLE PIU' PROFONDA che si e'
+  // dovuta attraversare per arrivare a un triangolo. Cosi' ci si allarga
+  // liberamente sulla superficie della scarpa, e ci si ferma dove il terreno
+  // sale davvero. Il cursore dice quanto in alto si e' disposti a salire.
+  function smartSelect(part, seedFace, estensione, maxFrazione) {
+    const topo = ensurePartTopology(part);
+    const conc = ensureConcavita(part);
+    const nTris = part.indices.length / 3;
+    const maxFacce = Math.max(20, Math.floor(nTris * (maxFrazione || 0.85)));
+
+    // La soglia si tara sul MODELLO, non su un numero fisso: si prende la
+    // profondita' di valle tipica della superficie (la mediana) e il cursore
+    // dice quante volte tanto si e' disposti a superare. Cosi' funziona
+    // uguale su mesh fitte o rade, grandi o piccole.
+    // Misurato sul modello di prova: superficie liscia 0.55-0.75, caviglia
+    // 1.38 — cioe' il doppio. Con il cursore intorno a 20 la soglia cade in
+    // mezzo e la selezione si ferma alla caviglia.
+    const campione = [];
+    for (let t = 0; t < nTris; t += Math.max(1, Math.floor(nTris / 4000))) campione.push(conc[t]);
+    campione.sort((a, b) => a - b);
+    const tipica = campione.length ? campione[Math.floor(campione.length / 2)] : 0.5;
+    const soglia = Math.max(1e-4, tipica * (0.6 + estensione / 22));
+
+    const arrivo = new Float64Array(nTris).fill(Infinity);
+    arrivo[seedFace] = conc[seedFace];
+    const coda = [[arrivo[seedFace], seedFace]];
+    const sel = new Set();
     while (coda.length && sel.size < maxFacce) {
-      const f = coda.shift();
+      let bi = 0;
+      for (let i = 1; i < coda.length; i++) if (coda[i][0] < coda[bi][0]) bi = i;
+      const [c, f] = coda.splice(bi, 1)[0];
+      if (c > arrivo[f]) continue;
+      if (c > soglia) break;              // oltre questa valle non si passa
+      sel.add(f);
       const adj = topo.adjacency[f];
       for (let i = 0; i < adj.length; i++) {
         const nb = adj[i];
-        if (sel.has(nb)) continue;
-        const d = N[f * 3] * N[nb * 3] + N[f * 3 + 1] * N[nb * 3 + 1] + N[f * 3 + 2] * N[nb * 3 + 2];
-        if (d < limite) continue;          // qui c'e' una piega: fermati
-        sel.add(nb);
-        coda.push(nb);
+        const q = Math.max(c, conc[nb]);  // la valle piu' profonda del cammino
+        if (q < arrivo[nb]) { arrivo[nb] = q; coda.push([q, nb]); }
       }
     }
     return sel;
@@ -2259,6 +2340,56 @@
     return { zmin, zmax, modelZmin: part.stats.bboxMin[2], modelZmax: part.stats.bboxMax[2] };
   };
   window.__raycast = (x, y) => { const h = viewer.raycastAt(x, y); return h ? { partId: h.partId, faceIndex: h.faceIndex, z: h.point[2] } : null; };
+  window.__resetSel = () => { cutSelection = null; refreshCutHighlight(); };
+  // aggancio di prova: sceglie il triangolo piu' vicino a una quota e ci fa
+  // partire la selezione intelligente, restituendo com'e' andata
+  window.__concStats = () => {
+    if (!currentResult) return null;
+    const part = currentResult.parts[0];
+    const c = ensureConcavita(part);
+    const nT = c.length;
+    const perZ = {};
+    for (let t = 0; t < nT; t++) {
+      let z = 0;
+      for (let k = 0; k < 3; k++) z += part.positions[part.indices[t * 3 + k] * 3 + 2];
+      z /= 3;
+      const b = Math.floor(z / 10) * 10;
+      if (!perZ[b]) perZ[b] = [];
+      perZ[b].push(c[t]);
+    }
+    const out = {};
+    Object.keys(perZ).forEach((k) => {
+      const a = perZ[k].slice().sort((x, y) => x - y);
+      out[k] = { mediana: a[Math.floor(a.length / 2)], n: a.length };
+    });
+    return out;
+  };
+  window.__smartTest = (zSeed, estensione) => {
+    if (!currentResult) return null;
+    let part = currentResult.parts[0];
+    for (const p of currentResult.parts) {
+      if (zSeed >= p.stats.bboxMin[2] && zSeed <= p.stats.bboxMax[2]) { part = p; break; }
+    }
+    const nT = part.indices.length / 3;
+    let best = 0, bestD = Infinity;
+    for (let t = 0; t < nT; t++) {
+      let z = 0;
+      for (let k = 0; k < 3; k++) z += part.positions[part.indices[t * 3 + k] * 3 + 2];
+      z /= 3;
+      const d = Math.abs(z - zSeed);
+      if (d < bestD) { bestD = d; best = t; }
+    }
+    const sel = smartSelect(part, best, estensione, 0.98);
+    let zmin = Infinity, zmax = -Infinity;
+    sel.forEach((f) => {
+      for (let k = 0; k < 3; k++) {
+        const z = part.positions[part.indices[f * 3 + k] * 3 + 2];
+        if (z < zmin) zmin = z; if (z > zmax) zmax = z;
+      }
+    });
+    return { count: sel.size, totale: nT, zmin, zmax,
+             modelZmax: part.stats.bboxMax[2] };
+  };
   window.__lassoCount = () => lassoPoints.length;
   window.__partsInfo = () => currentResult ? currentResult.parts.map((p) => ({ name: p.name, tris: p.indices.length / 3, wt: !!p.watertight })) : null;
   window.__cutInfo = () => {
