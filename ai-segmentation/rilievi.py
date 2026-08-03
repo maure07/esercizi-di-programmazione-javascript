@@ -34,13 +34,71 @@ import numpy as np
 # ---------------------------------------------------------------------------
 # misura dell'altezza del rilievo
 # ---------------------------------------------------------------------------
+def _media_su_griglia(V, A, R):
+    """Media dei valori A sui punti che stanno entro circa un raggio R.
+
+    NON si costruisce l'elenco dei vicini: su una mesh densa quell'elenco
+    diventa di miliardi di coppie e satura la RAM (e' quello che faceva
+    impallare il PC). Qui si usa una griglia: si sommano i valori nella cella
+    di appartenenza e poi si somma il blocco 3x3x3 di celle attorno. Il
+    risultato e' lo stesso tipo di media locale, ma la memoria dipende dal
+    numero di celle, non dal numero di coppie: resta piccola sempre.
+    """
+    V = np.asarray(V, dtype=np.float64)
+    A = np.asarray(A, dtype=np.float64)
+    scalare = (A.ndim == 1)
+    if scalare:
+        A = A.reshape(-1, 1)
+    lo = V.min(axis=0)
+    passo = max(R, 1e-12) / 1.5          # 3 celle coprono circa il diametro 2R
+    dim = np.maximum(np.ceil((V.max(axis=0) - lo) / passo).astype(np.int64) + 1, 1)
+    # non far esplodere il numero di celle su modelli enormi
+    while int(dim.prod()) > 6_000_000:
+        passo *= 1.3
+        dim = np.maximum(np.ceil((V.max(axis=0) - lo) / passo).astype(np.int64) + 1, 1)
+
+    idx = np.clip(((V - lo) / passo).astype(np.int64), 0, dim - 1)
+    nx, ny, nz = int(dim[0]), int(dim[1]), int(dim[2])
+    piatto = (idx[:, 0] * ny + idx[:, 1]) * nz + idx[:, 2]
+
+    k = A.shape[1]
+    somma = np.zeros((nx * ny * nz, k), dtype=np.float64)
+    conta = np.zeros(nx * ny * nz, dtype=np.float64)
+    np.add.at(somma, piatto, A)
+    np.add.at(conta, piatto, 1.0)
+    somma = somma.reshape(nx, ny, nz, k)
+    conta = conta.reshape(nx, ny, nz)
+
+    # somma sul blocco 3x3x3 con somme cumulative (veloce e a memoria fissa)
+    def blocco(M):
+        C = np.cumsum(np.cumsum(np.cumsum(M, axis=0), axis=1), axis=2)
+        pad = [(1, 0)] * 3 + [(0, 0)] * (C.ndim - 3)
+        C = np.pad(C, pad)
+        a0 = np.clip(np.arange(nx) - 1, 0, nx); a1 = np.clip(np.arange(nx) + 2, 0, nx)
+        b0 = np.clip(np.arange(ny) - 1, 0, ny); b1 = np.clip(np.arange(ny) + 2, 0, ny)
+        c0 = np.clip(np.arange(nz) - 1, 0, nz); c1 = np.clip(np.arange(nz) + 2, 0, nz)
+        def g(i, j, l):
+            return C[np.ix_(i, j, l)] if C.ndim == 3 else C[np.ix_(i, j, l)]
+        return (g(a1, b1, c1) - g(a0, b1, c1) - g(a1, b0, c1) - g(a1, b1, c0)
+                + g(a0, b0, c1) + g(a0, b1, c0) + g(a1, b0, c0) - g(a0, b0, c0))
+
+    S = np.stack([blocco(somma[..., j]) for j in range(k)], axis=-1)
+    N = blocco(conta)
+    med = S / np.maximum(N, 1.0)[..., None]
+    out = med[idx[:, 0], idx[:, 1], idx[:, 2], :]
+    # celle vuote (non dovrebbe capitare): tieni il valore originale
+    vuote = N[idx[:, 0], idx[:, 1], idx[:, 2]] < 0.5
+    if vuote.any():
+        out[vuote] = A[vuote]
+    return out.ravel() if scalare else out
+
+
 def altezza_rilievo(mesh, raggio_fine=None, raggio_base=None):
     """Altezza del rilievo per vertice, a scale fisiche controllate (mm).
 
     raggio_fine: sotto questa dimensione e' rumore da ignorare
     raggio_base: sopra questa dimensione e' forma generale, non dettaglio
     """
-    from scipy.spatial import cKDTree
     V = np.asarray(mesh.vertices, dtype=np.float64)
     Nrm = np.asarray(mesh.vertex_normals, dtype=np.float64)
     diag = float(np.linalg.norm(V.max(axis=0) - V.min(axis=0))) or 1.0
@@ -49,21 +107,11 @@ def altezza_rilievo(mesh, raggio_fine=None, raggio_base=None):
     if raggio_base is None:
         raggio_base = 0.10 * diag
 
-    tree = cKDTree(V)
-    vic_fine = tree.query_ball_point(V, raggio_fine)
-    vic_base = tree.query_ball_point(V, raggio_base)
-
-    def media(A, vicini):
-        out = np.empty((len(V),) + A.shape[1:], dtype=np.float64)
-        for i, ii in enumerate(vicini):
-            out[i] = A[ii].mean(axis=0) if len(ii) else A[i]
-        return out
-
-    fine = media(V, vic_fine)
-    base = media(V, vic_base)
+    fine = _media_su_griglia(V, V, raggio_fine)
+    base = _media_su_griglia(V, V, raggio_base)
     h = np.einsum("ij,ij->i", fine - base, Nrm)
     # togli la curvatura: quel che resta e' solo lo scarto LOCALE
-    h = h - media(h.reshape(-1, 1), vic_base).ravel()
+    h = h - _media_su_griglia(V, h, raggio_base)
     return h, {"raggio_fine": raggio_fine, "raggio_base": raggio_base}
 
 

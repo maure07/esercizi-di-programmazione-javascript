@@ -55,6 +55,27 @@ except Exception as _e:
 app = Flask(__name__)
 
 
+def _leggi_mesh(data):
+    """Legge vertici e facce accettando due formati:
+      - a terne:  [[x,y,z], ...]           (vecchio)
+      - piatto:   [x,y,z,x,y,z, ...]       (nuovo, molto piu' leggero)
+    Il formato piatto evita al browser di creare centinaia di migliaia di
+    piccoli array: su un modello da 800.000 triangoli e' la differenza fra
+    far respirare il PC e farlo inginocchiare.
+    """
+    v = data["vertices"]
+    f = data["faces"]
+    piatto_v = len(v) == 0 or not isinstance(v[0], (list, tuple))
+    piatto_f = len(f) == 0 or not isinstance(f[0], (list, tuple))
+    vertices = np.asarray(v, dtype=np.float64)
+    faces = np.asarray(f, dtype=np.int64)
+    if piatto_v:
+        vertices = vertices.reshape(-1, 3)
+    if piatto_f:
+        faces = faces.reshape(-1, 3)
+    return vertices, faces
+
+
 @app.after_request
 def cors(resp):
     # l'app gira come file locale (origine "null"): permetti la chiamata
@@ -108,8 +129,7 @@ def ripara():
     if not RIPARA_AVAILABLE:
         return jsonify({"error": "Riparazione PRO non installata (serve install_pro.bat)"}), 501
     data = request.get_json(force=True)
-    vertices = np.asarray(data["vertices"], dtype=np.float64)
-    faces = np.asarray(data["faces"], dtype=np.int64)
+    vertices, faces = _leggi_mesh(data)
     aggressivita = data.get("aggressivita", "auto")
     try:
         r = ripara_pro.ripara(vertices, faces, aggressivita=aggressivita)
@@ -133,8 +153,7 @@ def taglia():
     if not TAGLIA_AVAILABLE:
         return jsonify({"error": "Booleane PRO non installate (serve install_pro.bat)"}), 501
     data = request.get_json(force=True)
-    vertices = np.asarray(data["vertices"], dtype=np.float64)
-    faces = np.asarray(data["faces"], dtype=np.int64)
+    vertices, faces = _leggi_mesh(data)
     try:
         r = taglia_pro.taglia_con_piano(
             vertices, faces,
@@ -168,8 +187,7 @@ def segment():
     if request.method == "OPTIONS":
         return ("", 204)
     data = request.get_json(force=True)
-    vertices = np.asarray(data["vertices"], dtype=np.float64)
-    faces = np.asarray(data["faces"], dtype=np.int64)
+    vertices, faces = _leggi_mesh(data)
     target = int(data.get("target_parts", 8))
     engine = data.get("engine", "auto")
 

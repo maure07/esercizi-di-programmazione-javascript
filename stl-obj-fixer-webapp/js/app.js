@@ -679,22 +679,19 @@
     try {
       const tol = MeshCore.suggestTolerances(currentParsed.rawPositions);
       const welded = MeshCore.weldVertices(currentParsed.rawPositions, tol.weldEpsilon);
-      // vertici come array di terne, facce come array di terne
-      const nV = welded.positions.length / 3;
-      const verts = new Array(nV);
-      for (let i = 0; i < nV; i++) verts[i] = [welded.positions[i * 3], welded.positions[i * 3 + 1], welded.positions[i * 3 + 2]];
       const nF = welded.indices.length / 3;
-      const faces = new Array(nF);
-      for (let t = 0; t < nF; t++) faces[t] = [welded.indices[t * 3], welded.indices[t * 3 + 1], welded.indices[t * 3 + 2]];
-      const target = parseInt(el.colorParts.value, 10) || 8;
+      setLoading(true, `Invio ${fmt(nF, 0)} triangoli al PC…`);
+      await new Promise((r) => setTimeout(r, 20));
+      const body = meshToPayload(welded.positions, welded.indices);
+      body.target_parts = parseInt(el.colorParts.value, 10) || 8;
+      body.engine = engine;
+      body.dettagli = el.dettagliChk.checked;
+      body.sensibilita_dettagli = parseInt(el.dettagliSens.value, 10);
+      setLoading(true, `Analisi di ${fmt(nF, 0)} triangoli sul PC… (guarda la finestra nera per l'avanzamento)`);
       const resp = await fetch(AI_URL + '/segment', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          vertices: verts, faces, target_parts: target, engine,
-          dettagli: el.dettagliChk.checked,
-          sensibilita_dettagli: parseInt(el.dettagliSens.value, 10),
-        }),
+        body: JSON.stringify(body),
       });
       const out = await resp.json();
       const labels = out.labels;
@@ -732,13 +729,12 @@
     }
   }
 
+  // Dati mandati in forma PIATTA ([x,y,z,x,y,z,...]) invece che a terne.
+  // Su un modello da 800.000 triangoli la versione a terne obbligava il browser
+  // a creare centinaia di migliaia di piccoli array: memoria che esplodeva e PC
+  // in ginocchio. Cosi' e' un array solo, e il JSON e' pure piu' corto.
   function meshToPayload(positions, indices) {
-    const nV = positions.length / 3, nF = indices.length / 3;
-    const verts = new Array(nV);
-    for (let i = 0; i < nV; i++) verts[i] = [positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]];
-    const faces = new Array(nF);
-    for (let t = 0; t < nF; t++) faces[t] = [indices[t * 3], indices[t * 3 + 1], indices[t * 3 + 2]];
-    return { vertices: verts, faces };
+    return { vertices: Array.from(positions), faces: Array.from(indices) };
   }
   function payloadToMesh(out) {
     const V = out.vertices, F = out.faces;
