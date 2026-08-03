@@ -1024,7 +1024,22 @@
     el.connTypePinBtn.classList.toggle('active', t === 'pin');
   }
 
-  async function applyConnectorAt(hitPartId, P) {
+  // Normale della superficie nel punto toccato: e' la direzione giusta per il
+  // perno, perche' e' perpendicolare alla faccia dove i due pezzi si toccano.
+  function faceNormalOf(part, faceIndex) {
+    if (faceIndex === undefined || faceIndex === null) return null;
+    const I = part.indices, Pp = part.positions;
+    const a = I[faceIndex * 3], b = I[faceIndex * 3 + 1], c = I[faceIndex * 3 + 2];
+    if (a === undefined) return null;
+    const ux = Pp[b * 3] - Pp[a * 3], uy = Pp[b * 3 + 1] - Pp[a * 3 + 1], uz = Pp[b * 3 + 2] - Pp[a * 3 + 2];
+    const vx = Pp[c * 3] - Pp[a * 3], vy = Pp[c * 3 + 1] - Pp[a * 3 + 1], vz = Pp[c * 3 + 2] - Pp[a * 3 + 2];
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    const l = Math.sqrt(nx * nx + ny * ny + nz * nz);
+    if (!(l > 1e-12)) return null;
+    return [nx / l, ny / l, nz / l];
+  }
+
+  async function applyConnectorAt(hitPartId, P, faceIndex) {
     if (typeof Voxel === 'undefined') { alert('Modulo connettori non disponibile.'); return; }
     const parts = currentResult.parts.filter((p) => p.included);
     const A = parts.find((p) => p.id === hitPartId);
@@ -1053,7 +1068,8 @@
     try {
       if (connType === 'pin') {
         // fori allineati passanti su entrambi i pezzi
-        const a = normalize3([partCenter(A)[0] - partCenter(B)[0], partCenter(A)[1] - partCenter(B)[1], partCenter(A)[2] - partCenter(B)[2]]);
+        let a = faceNormalOf(A, faceIndex);
+        if (!a) a = normalize3([partCenter(A)[0] - partCenter(B)[0], partCenter(A)[1] - partCenter(B)[1], partCenter(A)[2] - partCenter(B)[2]]);
         const p0 = [P[0] - a[0] * depth, P[1] - a[1] * depth, P[2] - a[2] * depth];
         const p1 = [P[0] + a[0] * depth, P[1] + a[1] * depth, P[2] + a[2] * depth];
         const edit = { p0, p1, radius: r, mode: 'sub' };
@@ -1063,9 +1079,24 @@
         // perno sul pezzo piu' grande, foro nel piu' piccolo
         const big = A.stats.volume >= B.stats.volume ? A : B;
         const small = big === A ? B : A;
+        // Direzione del perno: la NORMALE della superficie nel punto toccato,
+        // girata verso l'altro pezzo. Prima si usava la direzione fra i centri
+        // dei due pezzi, che non ha niente a che vedere con la faccia dove si
+        // toccano: su pezzi affiancati il perno usciva di traverso e non
+        // agganciava nulla.
         const cb = partCenter(big), cs = partCenter(small);
-        const d = normalize3([cs[0] - cb[0], cs[1] - cb[1], cs[2] - cb[2]]);
-        const peg = { p0: [P[0] - d[0] * r, P[1] - d[1] * r, P[2] - d[2] * r], p1: [P[0] + d[0] * depth, P[1] + d[1] * depth, P[2] + d[2] * depth], radius: r, mode: 'add' };
+        let d = faceNormalOf(A, faceIndex);
+        if (d) {
+          // orienta la normale in modo che punti verso il pezzo piccolo
+          const verso = [cs[0] - P[0], cs[1] - P[1], cs[2] - P[2]];
+          if (d[0] * verso[0] + d[1] * verso[1] + d[2] * verso[2] < 0) d = [-d[0], -d[1], -d[2]];
+        } else {
+          d = normalize3([cs[0] - cb[0], cs[1] - cb[1], cs[2] - cb[2]]);
+        }
+        // il perno affonda nel pezzo grande di quanto e' profondo, cosi' resta
+        // saldamente attaccato invece di appoggiarsi appena alla superficie
+        const ancora = Math.max(r, depth * 0.6);
+        const peg = { p0: [P[0] - d[0] * ancora, P[1] - d[1] * ancora, P[2] - d[2] * ancora], p1: [P[0] + d[0] * depth, P[1] + d[1] * depth, P[2] + d[2] * depth], radius: r, mode: 'add' };
         const socket = { p0: [P[0] - d[0] * 0.5, P[1] - d[1] * 0.5, P[2] - d[2] * 0.5], p1: [P[0] + d[0] * (depth + clr), P[1] + d[1] * (depth + clr), P[2] + d[2] * (depth + clr)], radius: r + clr, mode: 'sub' };
         applySolidEdit(big, [peg], resolution);
         applySolidEdit(small, [socket], resolution);
@@ -2081,7 +2112,7 @@
     if (moved < 10 && elapsed < 600) {
       if (connectorMode) {
         const hit = viewer.raycastAt(e.clientX, e.clientY);
-        if (hit) applyConnectorAt(hit.partId, hit.point);
+        if (hit) applyConnectorAt(hit.partId, hit.point, hit.faceIndex);
       } else {
         handleCutTap(e.clientX, e.clientY);
       }
@@ -2105,6 +2136,7 @@
     watertight: !!currentRepaired.watertight,
     volume: currentRepaired.stats ? currentRepaired.stats.volume : null,
   } : null;
+  window.__partsVolumes = () => currentResult ? currentResult.parts.map((p) => p.stats.volume) : null;
   window.__lassoCount = () => lassoPoints.length;
   window.__partsInfo = () => currentResult ? currentResult.parts.map((p) => ({ name: p.name, tris: p.indices.length / 3, wt: !!p.watertight })) : null;
   window.__cutInfo = () => {

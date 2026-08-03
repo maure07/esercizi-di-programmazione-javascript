@@ -283,6 +283,7 @@ def segment(vertices, faces, target_parts=8, n_views=12, work_faces=6000):
     seen = np.zeros(nF, dtype=np.float32)
 
     tot_maschere = 0
+    tot_maschere_utili = 0
     tot_pixel_validi = 0
     tot_pixel_modello = 0
     for iv, (color, face_id) in enumerate(_render_views(vertices, faces, n_views=n_views)):
@@ -316,6 +317,7 @@ def segment(vertices, faces, target_parts=8, n_views=12, work_faces=6000):
             if len(fids) < 3:
                 continue
             usate += 1
+            tot_maschere_utili += 1
             uniq = np.unique(fids)
             seen[uniq] += 1
             # incrementa l'affinita' tra tutte le facce di questa maschera
@@ -349,10 +351,17 @@ def segment(vertices, faces, target_parts=8, n_views=12, work_faces=6000):
     # raggruppamento sarebbe campato per aria e uscirebbe un pezzo unico che
     # sembra "non aver fatto niente". Meglio dirlo e lasciare il posto al
     # motore per forma, che un risultato lo da' sempre.
-    if float((seen > 0).mean()) < 0.25:
+    coperto = float((seen > 0).mean())
+    if coperto < 0.75:
         raise RuntimeError(
-            "l'AI ha riconosciuto solo il %.0f%% delle facce: risultato non "
-            "affidabile" % (100.0 * float((seen > 0).mean())))
+            "l'AI ha riconosciuto solo il %.0f%% delle facce (ne servirebbe "
+            "almeno il 75%%): con cosi' poche informazioni i pezzi verrebbero "
+            "a caso" % (100.0 * coperto))
+    if tot_maschere_utili < 8 * max(1, n_views) // 4:
+        raise RuntimeError(
+            "SAM ha trovato solo %d regioni utili in %d viste: troppo poche "
+            "per dividere il modello in modo sensato"
+            % (tot_maschere_utili, n_views))
 
     # facce mai viste: attaccale via geometria alla fine
     np.fill_diagonal(aff, 0)
