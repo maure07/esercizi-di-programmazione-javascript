@@ -64,9 +64,12 @@ def _installa_finti():
             self.n = points_per_side
 
         def generate(self, img):
-            """Maschere finte: fasce orizzontali dell'immagine."""
+            """Maschere finte come quelle vere di SAM: una che copre TUTTO
+            l'oggetto (inutile, va scartata) piu' alcune che ritagliano parti."""
             h, w = img.shape[:2]
             fuori = []
+            tutta = np.ones((h, w), dtype=bool)
+            fuori.append({"segmentation": tutta})       # quella che rovina tutto
             for k in range(4):
                 m = np.zeros((h, w), dtype=bool)
                 m[k * h // 4:(k + 1) * h // 4, :] = True
@@ -82,12 +85,19 @@ def _finte_viste(vertices, faces, n_views=12, res=256):
     """Sostituisce il renderer: immagine grigia + buffer con gli id delle facce.
     Mette apposta qualche id FUORI INTERVALLO, come fa il renderer vero quando
     sfuma i colori sui bordi: serve a verificare che vengano scartati."""
+    # Il renderer vero disegna facce VICINE in pixel vicini: le maschere di SAM
+    # raccolgono quindi gruppi di facce coerenti. Qui si imita quel
+    # comportamento assegnando gli identificativi a fasce, altrimenti si
+    # otterrebbe rumore e nessun raggruppamento avrebbe senso.
     nF = len(faces)
-    rng = np.random.default_rng(0)
     for _ in range(n_views):
         color = np.full((res, res, 3), 128, dtype=np.uint8)
-        face_id = rng.integers(-1, nF, size=(res, res)).astype(np.int64)
-        # sporca il bordo con id inventati, come il renderer vero
+        righe = (np.arange(res) * nF // res).reshape(-1, 1)
+        face_id = np.repeat(righe, res, axis=1).astype(np.int64)
+        face_id += (np.arange(res) % max(1, nF // res)).reshape(1, -1)
+        face_id = np.clip(face_id, 0, nF - 1)
+        # sporca il bordo con identificativi inventati, come fa quello vero
+        # quando sfuma i colori: devono venire scartati
         face_id[0, :] = nF + 12
         face_id[-1, :] = nF + 3
         yield color, face_id
@@ -116,6 +126,28 @@ def main():
         assert etichette.min() >= 0, "etichette negative"
         print("  OK: %d etichette, %d parti distinte"
               % (len(etichette), len(set(etichette.tolist()))))
+
+    # --- la rete di sicurezza deve scattare quando l'AI non legge le facce ---
+    print("\n=== caso limite: il renderer non produce identificativi validi ===")
+
+    def _viste_rotte(vertices, faces, n_views=12, res=256):
+        nF = len(faces)
+        for _ in range(n_views):
+            color = np.full((res, res, 3), 128, dtype=np.uint8)
+            # tutti gli identificativi fuori intervallo, come se il renderer
+            # alterasse i colori che li trasportano
+            face_id = np.full((res, res), nF + 500, dtype=np.int64)
+            yield color, face_id
+
+    segmenta_ai._render_views = _viste_rotte
+    m = trimesh.creation.icosphere(subdivisions=4)
+    try:
+        segmenta_ai.segment(np.asarray(m.vertices), np.asarray(m.faces),
+                            target_parts=6, n_views=3)
+        print("  ERRORE: doveva rifiutarsi, invece ha restituito un risultato")
+        raise SystemExit(1)
+    except RuntimeError as e:
+        print("  OK: si e' fermata dicendo ->", e)
 
     print("\nRISULTATO: PERCORSO AI COMPLETO SENZA ERRORI")
 

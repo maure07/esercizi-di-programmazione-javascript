@@ -17,6 +17,7 @@ NOTA: questo motore va collaudato la prima volta sul PC con la GPU. Se qualcosa
 non va, il server ripiega automaticamente sul motore geometrico.
 """
 import os
+import sys
 import numpy as np
 
 _MODEL_PATH = os.environ.get("SAM_CHECKPOINT", os.path.join(os.path.dirname(__file__), "models", "sam_vit_b_01ec64.pth"))
@@ -108,6 +109,40 @@ def _render_views(vertices, faces, n_views=12, res=1024):
         out.append((color, face_id))
     r.delete()
     return out
+
+
+def _riduci_a_n_parti(labels, adj, n_parti):
+    """Scende al numero di parti richiesto fondendo ogni volta il gruppo piu'
+    PICCOLO nel vicino con cui condivide piu' confine. Cosi' i pezzi restano
+    attaccati e non si perdono le parti importanti."""
+    labels = np.asarray(labels, dtype=np.int64).copy()
+    if n_parti <= 0:
+        return labels
+    for _ in range(len(np.unique(labels))):
+        gruppi, conteggi = np.unique(labels, return_counts=True)
+        if len(gruppi) <= n_parti:
+            break
+        piccolo = gruppi[int(np.argmin(conteggi))]
+        # quanto confina con ciascun altro gruppo
+        confini = {}
+        if len(adj):
+            la = labels[adj[:, 0]]
+            lb = labels[adj[:, 1]]
+            m1 = (la == piccolo) & (lb != piccolo)
+            m2 = (lb == piccolo) & (la != piccolo)
+            for etichetta in np.concatenate([lb[m1], la[m2]]):
+                confini[int(etichetta)] = confini.get(int(etichetta), 0) + 1
+        if confini:
+            destinazione = max(confini, key=confini.get)
+        else:
+            # isolato: attaccalo al gruppo piu' grande
+            destinazione = int(gruppi[int(np.argmax(conteggi))])
+            if destinazione == piccolo:
+                break
+        labels[labels == piccolo] = destinazione
+    # rinumera da 0
+    _, labels = np.unique(labels, return_inverse=True)
+    return labels.astype(np.int64)
 
 
 def _riduci_a_griglia(vertices, faces, obiettivo_facce):
@@ -247,11 +282,30 @@ def segment(vertices, faces, target_parts=8, n_views=12, work_faces=6000):
     aff = np.zeros((nF, nF), dtype=np.float32)
     seen = np.zeros(nF, dtype=np.float32)
 
+    tot_maschere = 0
+    tot_pixel_validi = 0
+    tot_pixel_modello = 0
     for iv, (color, face_id) in enumerate(_render_views(vertices, faces, n_views=n_views)):
         with torch.inference_mode():     # niente gradienti: meta' memoria video
             masks = gen.generate(color[:, :, :3])
+        tot_maschere += len(masks)
+        sul_modello = int((face_id >= 0).sum())
+        validi = int(((face_id >= 0) & (face_id < nF)).sum())
+        tot_pixel_modello += sul_modello
+        tot_pixel_validi += validi
+        usate = 0
+        scartate_grandi = 0
         for m in masks:
             seg = m["segmentation"]
+            # Le maschere che coprono quasi tutta la figura non dicono nulla:
+            # mettono ogni faccia insieme a ogni altra. Se restano dentro,
+            # l'affinita' diventa uniforme e il raggruppamento impasta tutto in
+            # un pezzo unico (e sembra che l'AI non abbia fatto niente).
+            # Interessano le maschere che ritagliano una PARTE.
+            copertura = (int((seg & (face_id >= 0)).sum()) / sul_modello) if sul_modello else 0.0
+            if copertura > 0.55 or copertura < 0.004:
+                scartate_grandi += 1
+                continue
             fids = face_id[seg]
             # L'identificativo della faccia viaggia dentro il COLORE del pixel e
             # il renderer lo sfuma sui bordi fra un triangolo e l'altro: quei
@@ -261,6 +315,7 @@ def segment(vertices, faces, target_parts=8, n_views=12, work_faces=6000):
             fids = fids[(fids >= 0) & (fids < nF)]
             if len(fids) < 3:
                 continue
+            usate += 1
             uniq = np.unique(fids)
             seen[uniq] += 1
             # incrementa l'affinita' tra tutte le facce di questa maschera
@@ -270,7 +325,18 @@ def segment(vertices, faces, target_parts=8, n_views=12, work_faces=6000):
             torch.cuda.empty_cache()     # restituisci la memoria video tra una vista e l'altra
         except Exception:
             pass
-        print(f"[AI] vista {iv + 1}/{n_views}", flush=True)
+        pct = (100.0 * validi / sul_modello) if sul_modello else 0.0
+        print(f"[AI] vista {iv + 1}/{n_views}: {usate} maschere utili "
+              f"({scartate_grandi} scartate perche' troppo grandi o minuscole), "
+              f"{pct:.0f}% dei pixel del modello leggibili", flush=True)
+
+    viste_ok = float((seen > 0).mean()) * 100.0
+    print(f"[AI] riepilogo: {tot_maschere} maschere, "
+          f"{viste_ok:.0f}% delle facce riconosciute almeno una volta", flush=True)
+    if tot_pixel_modello and tot_pixel_validi / tot_pixel_modello < 0.5:
+        print("[AI] ATTENZIONE: la maggior parte dei pixel non e' leggibile "
+              "(il renderer altera i colori che portano il numero della faccia)",
+              file=sys.stderr, flush=True)
 
     # il modello non serve piu': libera subito la scheda
     try:
@@ -279,22 +345,61 @@ def segment(vertices, faces, target_parts=8, n_views=12, work_faces=6000):
     except Exception:
         pass
 
+    # RETE DI SICUREZZA: se l'AI non ha visto abbastanza superficie, qualunque
+    # raggruppamento sarebbe campato per aria e uscirebbe un pezzo unico che
+    # sembra "non aver fatto niente". Meglio dirlo e lasciare il posto al
+    # motore per forma, che un risultato lo da' sempre.
+    if float((seen > 0).mean()) < 0.25:
+        raise RuntimeError(
+            "l'AI ha riconosciuto solo il %.0f%% delle facce: risultato non "
+            "affidabile" % (100.0 * float((seen > 0).mean())))
+
     # facce mai viste: attaccale via geometria alla fine
     np.fill_diagonal(aff, 0)
     denom = np.maximum(seen[:, None] + seen[None, :], 1.0)
     affn = aff / denom  # normalizza
 
-    # distanza = 1 - affinita'; clustering agglomerativo al numero di parti
+    # distanza = 1 - affinita'
     dist = 1.0 - affn
     np.fill_diagonal(dist, 0)
     k = max(1, min(target_parts, nF))
-    cl = AgglomerativeClustering(n_clusters=k, metric="precomputed", linkage="average")
-    labels = cl.fit_predict(dist)
 
-    # facce non viste (seen==0): assegnale alla parte del vicino piu' votato
     import trimesh
     mt = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
     adj = mt.face_adjacency
+
+    # VINCOLO DI CONTIGUITA': si possono unire solo facce ATTACCATE fra loro.
+    # Senza questo vincolo il raggruppamento guarda unicamente "quante volte due
+    # facce sono finite nella stessa maschera", e quando quel segnale e' povero
+    # finisce per impastare tutto in un pezzo solo — che e' il caso in cui
+    # sembra che l'AI non abbia fatto niente. In piu' un pezzo da stampare deve
+    # essere per forza tutto attaccato, quindi il vincolo e' anche giusto.
+    connettivita = None
+    try:
+        from scipy.sparse import coo_matrix
+        if len(adj):
+            righe = np.concatenate([adj[:, 0], adj[:, 1]])
+            colonne = np.concatenate([adj[:, 1], adj[:, 0]])
+            dati = np.ones(len(righe), dtype=np.float64)
+            connettivita = coo_matrix((dati, (righe, colonne)), shape=(nF, nF)).tocsr()
+    except Exception as e:
+        print("[AI] vincolo di contiguita' non applicabile:", e, file=sys.stderr)
+
+    # NIENTE numero di parti forzato in questa fase. L'affinita' e' quasi
+    # binaria ("le due facce sono finite insieme" oppure no): appena i gruppi
+    # naturali si sono formati, tutte le fusioni successive valgono uguale e
+    # verrebbero fatte a caso, impastando l'intero modello in un pezzo solo.
+    # Si taglia invece a una distanza significativa, e solo dopo si scende al
+    # numero di parti richiesto fondendo i gruppi piu' piccoli nel vicino con
+    # cui confinano di piu'.
+    cl = AgglomerativeClustering(n_clusters=None, distance_threshold=0.9,
+                                 metric="precomputed", linkage="average",
+                                 connectivity=connettivita)
+    labels = cl.fit_predict(dist)
+    print(f"[AI] gruppi naturali trovati: {len(np.unique(labels))}", flush=True)
+    labels = _riduci_a_n_parti(labels, adj, k)
+
+    # facce non viste (seen==0): assegnale alla parte del vicino piu' votato
     for _ in range(6):
         unseen = np.where(seen == 0)[0]
         if len(unseen) == 0:
@@ -323,5 +428,16 @@ def segment(vertices, faces, target_parts=8, n_views=12, work_faces=6000):
         _, idx = tree.query(full_centroids, k=1)
         labels = labels[idx]
         print(f"[AI] etichette riportate su {nF_full} facce", flush=True)
+
+    # secondo controllo: se una sola parte si mangia quasi tutto, l'AI non ha
+    # diviso niente di utile. Anche qui e' piu' onesto passare la mano.
+    conteggi = np.bincount(labels.astype(np.int64))
+    dominante = conteggi.max() / float(len(labels))
+    print(f"[AI] parti ottenute: {int((conteggi > 0).sum())}, "
+          f"la piu' grande copre il {100 * dominante:.0f}%", flush=True)
+    if dominante > 0.97 and target_parts > 1:
+        raise RuntimeError(
+            "l'AI ha messo il %.0f%% del modello in un pezzo solo: non ha "
+            "diviso nulla" % (100 * dominante))
 
     return labels.astype(np.int64)
