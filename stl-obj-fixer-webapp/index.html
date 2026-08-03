@@ -564,6 +564,24 @@
       <button id="cutToolWandBtn" class="active">🖌 Pennello</button>
       <button id="cutToolLassoBtn">⭕ Lazo</button>
       <button id="cutToolPlaneBtn">📏 Taglio dritto</button>
+    </div>
+    <div style="margin:8px 0;padding:10px;border:1px solid var(--border);border-radius:10px">
+      <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text);cursor:pointer">
+        <input type="checkbox" id="smartSelChk" checked style="width:16px;height:16px;accent-color:var(--accent2)" />
+        <b>Un clic = tutta la zona</b> (si ferma sulle pieghe)
+      </label>
+      <div class="cut-slider-row" style="margin-top:6px">
+        <label for="smartSelAngle">Estensione</label>
+        <input type="range" id="smartSelAngle" min="5" max="60" step="1" value="22" />
+        <span id="smartSelAngleValue">22°</span>
+      </div>
+      <div style="font-size:11px;color:var(--text-dim);line-height:1.4">
+        Clicca sulla scarpa, sul braccio o sull'occhio: la selezione si allarga da sola e si ferma
+        al bordo. Se prende <b>troppo poco</b> alza l'estensione, se prende <b>troppo</b> abbassala.
+        Trascinando invece dipingi a mano come prima.
+      </div>
+    </div>
+    <div class="cut-actions" style="margin-bottom:8px">
       <button id="cutLassoCloseBtn" style="display:none">Chiudi lazo</button>
     </div>
     <div id="selectExtras">

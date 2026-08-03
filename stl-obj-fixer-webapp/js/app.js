@@ -69,6 +69,9 @@
     planePos: document.getElementById('planePos'),
     planePosValue: document.getElementById('planePosValue'),
     planeCutBtn: document.getElementById('planeCutBtn'),
+    smartSelChk: document.getElementById('smartSelChk'),
+    smartSelAngle: document.getElementById('smartSelAngle'),
+    smartSelAngleValue: document.getElementById('smartSelAngleValue'),
     planeCutProBtn: document.getElementById('planeCutProBtn'),
     connAutoChk: document.getElementById('connAutoChk'),
     connGioco: document.getElementById('connGioco'),
@@ -651,6 +654,9 @@
   el.toSegmentBtn2.addEventListener('click', () => goToStep(3));
   el.segmentBtn.addEventListener('click', () => runSegmentation());
   el.segmentAiBtn.addEventListener('click', () => runAiSegmentation());
+  el.smartSelAngle.addEventListener('input', () => {
+    el.smartSelAngleValue.textContent = el.smartSelAngle.value + '\u00b0';
+  });
   el.dettagliSens.addEventListener('input', () => {
     el.dettagliSensValue.textContent = el.dettagliSens.value;
   });
@@ -1928,6 +1934,64 @@
     if (cutTool === 'lasso') addLassoPoint(clientX, clientY);
   }
 
+  // ------------------- SELEZIONE INTELLIGENTE: UN CLIC = TUTTA LA ZONA -------
+  // Dal punto toccato la selezione si allarga sulla superficie e si FERMA da
+  // sola sulle pieghe: il bordo della scarpa, l'attaccatura del braccio, il
+  // contorno di un occhio. A differenza dell'AI questo e' deterministico e lo
+  // guidi tu: se prende troppo o troppo poco, sposti un cursore.
+  //
+  // Le normali vengono prima ammorbidite sui vicini, perche' le mesh generate
+  // dall'AI sono increspate e ogni increspatura sembrerebbe una piega
+  // (misurato altrove: angoli falsi fino a 78 gradi su superfici lisce).
+  function ensureSmoothNormals(part) {
+    const topo = ensurePartTopology(part);
+    if (topo.smoothNormals) return topo.smoothNormals;
+    const n = topo.normals;
+    const nTris = n.length / 3;
+    let cur = Float32Array.from(n);
+    for (let pass = 0; pass < 3; pass++) {
+      const out = new Float32Array(nTris * 3);
+      for (let f = 0; f < nTris; f++) {
+        let x = cur[f * 3], y = cur[f * 3 + 1], z = cur[f * 3 + 2];
+        const adj = topo.adjacency[f];
+        for (let i = 0; i < adj.length; i++) {
+          const a = adj[i];
+          x += cur[a * 3]; y += cur[a * 3 + 1]; z += cur[a * 3 + 2];
+        }
+        const l = Math.sqrt(x * x + y * y + z * z) || 1;
+        out[f * 3] = x / l; out[f * 3 + 1] = y / l; out[f * 3 + 2] = z / l;
+      }
+      cur = out;
+    }
+    topo.smoothNormals = cur;
+    return cur;
+  }
+
+  // Cresce dal triangolo toccato attraversando solo le zone LISCE.
+  // gradi = quanto puo' piegare la superficie prima di considerarla un bordo.
+  function smartSelect(part, seedFace, gradi, maxFrazione) {
+    const topo = ensurePartTopology(part);
+    const N = ensureSmoothNormals(part);
+    const nTris = part.indices.length / 3;
+    const limite = Math.cos(Math.max(1, gradi) * Math.PI / 180);
+    const maxFacce = Math.max(20, Math.floor(nTris * (maxFrazione || 0.6)));
+    const sel = new Set([seedFace]);
+    const coda = [seedFace];
+    while (coda.length && sel.size < maxFacce) {
+      const f = coda.shift();
+      const adj = topo.adjacency[f];
+      for (let i = 0; i < adj.length; i++) {
+        const nb = adj[i];
+        if (sel.has(nb)) continue;
+        const d = N[f * 3] * N[nb * 3] + N[f * 3 + 1] * N[nb * 3 + 1] + N[f * 3 + 2] * N[nb * 3 + 2];
+        if (d < limite) continue;          // qui c'e' una piega: fermati
+        sel.add(nb);
+        coda.push(nb);
+      }
+    }
+    return sel;
+  }
+
   // ------------------- PENNELLO CHE DIPINGE -------------------
   // Selezione a "disco geodetico": dal punto toccato cresce lungo la superficie
   // (via adiacenza) fino al raggio scelto. Trascinando si dipinge di continuo
@@ -1970,23 +2034,66 @@
   }
 
   // il viewer chiede se prendere questo tocco per dipingere (invece di ruotare)
+  // Un CLIC (senza trascinare) seleziona tutta la zona fermandosi sulle pieghe;
+  // TRASCINANDO invece si dipinge a mano come prima. Si distinguono guardando
+  // se il puntatore si e' spostato piu' di qualche pixel.
+  let attesaClic = null;
   viewer.setPointerDownHook((x, y) => {
     if (!cutMode || cutTool !== 'wand') return false; // dipinge solo il pennello
     const hit = viewer.raycastAt(x, y);
     if (!hit) return false; // tocco fuori dal modello: lascia ruotare la vista
-    pushCutHistory();
-    painting = true;
     paintPartId = hit.partId;
-    paintAt(hit);
-    return true; // pointer "preso": niente rotazione mentre dipingi
+    if (el.smartSelChk && el.smartSelChk.checked) {
+      // aspetta: potrebbe essere un clic (zona intera) o un trascinamento (pennello)
+      attesaClic = { x, y, hit };
+      painting = false;
+    } else {
+      pushCutHistory();
+      painting = true;
+      paintAt(hit);
+    }
+    return true; // pointer "preso": niente rotazione mentre si lavora
   });
   el.viewer.addEventListener('pointermove', (e) => {
+    if (attesaClic) {
+      const d = Math.hypot(e.clientX - attesaClic.x, e.clientY - attesaClic.y);
+      if (d > 5) {                       // si sta trascinando: passa al pennello
+        pushCutHistory();
+        painting = true;
+        paintAt(attesaClic.hit);
+        attesaClic = null;
+      } else {
+        return;
+      }
+    }
     if (!painting) return;
     const hit = viewer.raycastAt(e.clientX, e.clientY);
     if (hit && hit.partId === paintPartId) paintAt(hit);
   });
-  window.addEventListener('pointerup', () => { painting = false; });
-  window.addEventListener('pointercancel', () => { painting = false; });
+  function chiudiTratto() {
+    if (attesaClic) {
+      // era un clic secco: prendi tutta la zona
+      applicaSelezioneIntelligente(attesaClic.hit);
+      attesaClic = null;
+    }
+    painting = false;
+  }
+  window.addEventListener('pointerup', chiudiTratto);
+  window.addEventListener('pointercancel', chiudiTratto);
+
+  function applicaSelezioneIntelligente(hit) {
+    const part = currentResult && currentResult.parts.find((p) => p.id === hit.partId);
+    if (!part) return;
+    pushCutHistory();
+    const gradi = parseInt(el.smartSelAngle.value, 10) || 22;
+    const zona = smartSelect(part, hit.faceIndex, gradi, 0.6);
+    if (!cutSelection || cutSelection.partId !== part.id) {
+      cutSelection = { partId: part.id, faces: new Set() };
+    }
+    if (cutErase) zona.forEach((f) => cutSelection.faces.delete(f));
+    else zona.forEach((f) => cutSelection.faces.add(f));
+    refreshCutHighlight();
+  }
 
   // Appiattisce il BORDO del taglio sul suo piano medio: i vertici condivisi
   // tra la parte ritagliata e il resto vengono proiettati su un piano, cosi' la
@@ -2137,6 +2244,21 @@
     volume: currentRepaired.stats ? currentRepaired.stats.volume : null,
   } : null;
   window.__partsVolumes = () => currentResult ? currentResult.parts.map((p) => p.stats.volume) : null;
+  window.__selezioneZ = () => {
+    if (!cutSelection || !currentResult) return null;
+    const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
+    if (!part) return null;
+    let zmin = Infinity, zmax = -Infinity;
+    cutSelection.faces.forEach((f) => {
+      for (let k = 0; k < 3; k++) {
+        const v = part.indices[f * 3 + k];
+        const z = part.positions[v * 3 + 2];
+        if (z < zmin) zmin = z; if (z > zmax) zmax = z;
+      }
+    });
+    return { zmin, zmax, modelZmin: part.stats.bboxMin[2], modelZmax: part.stats.bboxMax[2] };
+  };
+  window.__raycast = (x, y) => { const h = viewer.raycastAt(x, y); return h ? { partId: h.partId, faceIndex: h.faceIndex, z: h.point[2] } : null; };
   window.__lassoCount = () => lassoPoints.length;
   window.__partsInfo = () => currentResult ? currentResult.parts.map((p) => ({ name: p.name, tris: p.indices.length / 3, wt: !!p.watertight })) : null;
   window.__cutInfo = () => {
