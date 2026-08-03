@@ -68,7 +68,14 @@ def _render_views(vertices, faces, n_views=12, res=1024):
     mesh_t = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
     center = mesh_t.bounds.mean(axis=0)
     mesh_t.apply_translation(-center)
-    radius = float(np.linalg.norm(mesh_t.extents)) * 1.1 + 1e-6
+    # RAGGIO VERO della sfera che contiene il modello. Prima si usava la
+    # diagonale dell'ingombro moltiplicata per 1.1, cioe' circa il doppio del
+    # necessario: la telecamera finiva quasi al doppio della distanza giusta e
+    # il modello riempiva solo il 16% dell'immagine. SAM campiona su una
+    # griglia regolare, quindi l'84% dei suoi punti cadeva sullo sfondo nero e
+    # trovava pochissime regioni. Inquadrando stretto i punti utili si
+    # moltiplicano per oltre tre.
+    radius = float(np.linalg.norm(np.asarray(mesh_t.vertices), axis=1).max()) + 1e-6
 
     # mesh ombreggiata (grigia) per SAM
     shaded = pyrender.Mesh.from_trimesh(mesh_t, smooth=False)
@@ -88,7 +95,10 @@ def _render_views(vertices, faces, n_views=12, res=1024):
 
     r = pyrender.OffscreenRenderer(res, res)
     cam = pyrender.PerspectiveCamera(yfov=np.pi / 3.0)
-    poses = _camera_poses(n_views, radius / np.tan(np.pi / 6.0))
+    # distanza che fa riempire l'inquadratura al modello (con un filo di
+    # margine): raggio / sin(mezzo campo visivo)
+    distanza = radius / np.sin(np.pi / 6.0) * 1.06
+    poses = _camera_poses(n_views, distanza)
     out = []
     for pose in poses:
         sc = pyrender.Scene(bg_color=[0, 0, 0, 0], ambient_light=[0.4, 0.4, 0.4])
@@ -259,10 +269,15 @@ def segment(vertices, faces, target_parts=8, n_views=12, work_faces=6000):
         libera_gb = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
     except Exception:
         pass
-    if libera_gb <= 9:            # 8 GB (es. RTX 3060): vai leggero
-        punti_lato, punti_lotto = 16, 32
+    # Quanti punti SAM campiona sull'immagine. La memoria video NON dipende da
+    # quanti punti sono in tutto, ma da quanti se ne elaborano insieme
+    # (punti_lotto): si puo' quindi campionare fitto restando leggeri, facendo
+    # il lavoro a scaglioni. Con pochi punti SAM trovava 2-3 regioni per vista,
+    # troppo poche per dividere qualcosa.
+    if libera_gb <= 9:            # 8 GB (es. RTX 3060)
+        punti_lato, punti_lotto = 32, 24
     else:
-        punti_lato, punti_lotto = 24, 64
+        punti_lato, punti_lotto = 48, 64
     try:
         # non usare piu' dell'80% della scheda: lascia respirare Windows
         torch.cuda.set_per_process_memory_fraction(0.8, 0)
@@ -272,11 +287,25 @@ def segment(vertices, faces, target_parts=8, n_views=12, work_faces=6000):
           f"lotti da {punti_lotto}", flush=True)
 
     sam = sam_model_registry[_MODEL_TYPE](checkpoint=_MODEL_PATH).to("cuda")
-    try:
-        gen = SamAutomaticMaskGenerator(sam, points_per_side=punti_lato,
-                                        points_per_batch=punti_lotto)
-    except TypeError:             # versioni piu' vecchie senza points_per_batch
-        gen = SamAutomaticMaskGenerator(sam, points_per_side=punti_lato)
+    # Soglie di qualita' piu' permissive di quelle predefinite: SAM e' nato per
+    # le fotografie, dove conviene essere selettivi. Qui le immagini sono rese
+    # grigie di un oggetto, con meno contrasto: con le soglie di fabbrica scarta
+    # quasi tutto. Abbassandole trova molte piu' regioni, e a scremare ci
+    # pensano i controlli successivi.
+    opzioni = dict(points_per_side=punti_lato, points_per_batch=punti_lotto,
+                   pred_iou_thresh=0.80, stability_score_thresh=0.85,
+                   min_mask_region_area=64)
+    gen = None
+    for tentativo in (opzioni,
+                      dict(points_per_side=punti_lato, points_per_batch=punti_lotto),
+                      dict(points_per_side=punti_lato)):
+        try:
+            gen = SamAutomaticMaskGenerator(sam, **tentativo)
+            break
+        except TypeError:
+            continue
+    if gen is None:
+        gen = SamAutomaticMaskGenerator(sam)
 
     # affinita' tra facce: quante volte finiscono nella stessa maschera
     aff = np.zeros((nF, nF), dtype=np.float32)
@@ -304,7 +333,7 @@ def segment(vertices, faces, target_parts=8, n_views=12, work_faces=6000):
             # un pezzo unico (e sembra che l'AI non abbia fatto niente).
             # Interessano le maschere che ritagliano una PARTE.
             copertura = (int((seg & (face_id >= 0)).sum()) / sul_modello) if sul_modello else 0.0
-            if copertura > 0.55 or copertura < 0.004:
+            if copertura > 0.80 or copertura < 0.0015:
                 scartate_grandi += 1
                 continue
             fids = face_id[seg]
