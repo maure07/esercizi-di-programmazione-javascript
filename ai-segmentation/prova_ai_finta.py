@@ -60,7 +60,14 @@ def _installa_finti():
             return self
 
     class _Generatore:
-        def __init__(self, sam, points_per_side=16, points_per_batch=None):
+        def __init__(self, sam, points_per_side=16, points_per_batch=None,
+                     pred_iou_thresh=None, stability_score_thresh=None,
+                     min_mask_region_area=0):
+            # Imita SAM vero: con min_mask_region_area serve OpenCV, e se manca
+            # esplode con ImportError. E' l'errore "No module named 'cv2'"
+            # capitato all'utente: qui si verifica che il ripiego lo gestisca.
+            if min_mask_region_area:
+                raise ImportError("No module named 'cv2'")
             self.n = points_per_side
 
         def generate(self, img):

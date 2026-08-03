@@ -64,7 +64,7 @@ if !TORCH_OK!==0 (
 
 echo.
 echo === Installo SAM, il renderer e le utility ===
-pip install segment-anything pyrender pillow scikit-learn fast-simplification
+pip install segment-anything pyrender pillow scikit-learn fast-simplification opencv-python
 
 echo.
 echo === Scarico il modello SAM (sam_vit_b ~ 375 MB) ===

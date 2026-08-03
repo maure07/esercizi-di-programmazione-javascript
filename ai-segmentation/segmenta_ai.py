@@ -295,17 +295,31 @@ def segment(vertices, faces, target_parts=8, n_views=12, work_faces=6000):
     opzioni = dict(points_per_side=punti_lato, points_per_batch=punti_lotto,
                    pred_iou_thresh=0.80, stability_score_thresh=0.85,
                    min_mask_region_area=64)
+    # Si prova dalla configurazione migliore e si scende: alcune opzioni non
+    # esistono nelle versioni piu' vecchie di SAM (TypeError) e altre tirano
+    # dentro librerie che possono mancare — min_mask_region_area vuole OpenCV e
+    # senza quello fallisce con ImportError. Si cattura QUALSIASI errore,
+    # altrimenti basta una libreria assente per far saltare tutto il motore.
     gen = None
-    for tentativo in (opzioni,
-                      dict(points_per_side=punti_lato, points_per_batch=punti_lotto),
-                      dict(points_per_side=punti_lato)):
+    for etichetta, tentativo in (
+            ("completa", opzioni),
+            ("senza pulizia regioni", {k: v for k, v in opzioni.items()
+                                       if k != "min_mask_region_area"}),
+            ("essenziale", dict(points_per_side=punti_lato,
+                                points_per_batch=punti_lotto)),
+            ("minima", dict(points_per_side=punti_lato)),
+            ("predefinita", {})):
         try:
             gen = SamAutomaticMaskGenerator(sam, **tentativo)
+            if etichetta != "completa":
+                print(f"[AI] configurazione SAM: {etichetta}", flush=True)
             break
-        except TypeError:
+        except Exception as e:
+            print(f"[AI] configurazione '{etichetta}' non utilizzabile ({e})",
+                  file=sys.stderr, flush=True)
             continue
     if gen is None:
-        gen = SamAutomaticMaskGenerator(sam)
+        raise RuntimeError("non riesco a inizializzare SAM")
 
     # affinita' tra facce: quante volte finiscono nella stessa maschera
     aff = np.zeros((nF, nF), dtype=np.float32)
