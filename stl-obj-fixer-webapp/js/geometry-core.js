@@ -491,15 +491,191 @@
       return { indices: outIndices, newVertex: null };
     }
 
-    // ventaglio dal baricentro: chiusura garantita e senza sovrapposizioni
-    // anche su fori molto curvi o non convessi. Il winding viene poi
-    // uniformato/orientato verso l'esterno da repairMesh.
+    // Chiusura che SEGUE IL BORDO (orecchie in 3D). Si "mangia" il contorno un
+    // vertice alla volta, scegliendo ogni volta il triangolo piu' compatto fra
+    // tre vertici consecutivi. Non si aggiunge nessun punto al centro, quindi
+    // la toppa resta appoggiata al bordo invece di formare quella raggiera
+    // appuntita che si vedeva prima sui tagli.
+    const seguiBordo = MeshCore.fillLoop3D(pts3, loopVertexIndices);
+    if (seguiBordo) return { indices: seguiBordo, newVertex: null };
+
+    // ultima spiaggia: ventaglio dal baricentro (chiusura sempre garantita)
     const cIdx = options.newVertexIndex;
     const outIndices = [];
     for (let i = 0; i < n; i++) {
       outIndices.push(loopVertexIndices[i], loopVertexIndices[(i + 1) % n], cIdx);
     }
     return { indices: outIndices, newVertex: [cx, cy, cz] };
+  };
+
+  // ---------------------------------------------------------------------
+  // Chiusura di un contorno CURVO senza aggiungere punti: a ogni passo si
+  // toglie ("orecchia") il vertice il cui triangolo con i due vicini e' il
+  // piu' conveniente — piccolo e ben proporzionato, non una scheggia. E'
+  // l'approccio classico per tappare i buchi seguendo la forma del bordo.
+  // Restituisce la lista di indici, oppure null se non ci riesce.
+  // ---------------------------------------------------------------------
+  // ---------------------------------------------------------------------
+  // Lisciatura dei BORDI APERTI (le linee di taglio).
+  // Un bordo nato da una segmentazione segue gli spigoli dei triangoli, quindi
+  // e' seghettato. Quel dente di sega si vede sul pezzo stampato e, quando il
+  // buco viene tappato, viene amplificato in una brutta raggiera. Qui ogni
+  // vertice di bordo viene portato verso la media dei suoi due vicini LUNGO IL
+  // BORDO: la linea si distende, la superficie del pezzo non viene toccata.
+  // Siccome i due pezzi condividono lo stesso bordo, lisciandolo allo stesso
+  // modo continuano a combaciare.
+  // ---------------------------------------------------------------------
+  MeshCore.smoothBoundaryLoops = function (positions, indices, iterations, strength) {
+    iterations = iterations === undefined ? 6 : iterations;
+    strength = strength === undefined ? 0.5 : strength;
+    if (iterations <= 0) return positions;
+    const edgeMap = MeshCore.buildEdgeMap(indices);
+    // vicini lungo il bordo: ogni vertice di bordo ne ha due
+    const vicini = new Map();
+    edgeMap.forEach((occ) => {
+      if (occ.length !== 1) return;
+      const { a, b } = occ[0];
+      if (!vicini.has(a)) vicini.set(a, []);
+      if (!vicini.has(b)) vicini.set(b, []);
+      vicini.get(a).push(b);
+      vicini.get(b).push(a);
+    });
+    if (vicini.size === 0) return positions;
+
+    // Si lisciano SOLO i contorni fatti di tanti vertici, cioe' le linee di
+    // taglio nate dalla segmentazione (decine o centinaia di punti, seghettate).
+    // Un contorno con pochi vertici e' uno spigolo voluto — il bordo quadrato di
+    // un pezzetto — e lisciarlo lo arrotonderebbe facendogli perdere volume.
+    const minVerticiContorno = 16;
+    const daLisciare = new Set();
+    const visti = new Set();
+    vicini.forEach((_nb, avvio) => {
+      if (visti.has(avvio)) return;
+      // percorri il contorno a cui appartiene questo vertice
+      const contorno = [];
+      const pila = [avvio];
+      visti.add(avvio);
+      while (pila.length) {
+        const v = pila.pop();
+        contorno.push(v);
+        for (const w of (vicini.get(v) || [])) {
+          if (!visti.has(w)) { visti.add(w); pila.push(w); }
+        }
+      }
+      if (contorno.length >= minVerticiContorno) {
+        for (const v of contorno) daLisciare.add(v);
+      }
+    });
+    if (daLisciare.size === 0) return positions;
+
+    const P = Float64Array.from(positions);
+    const originale = Float64Array.from(positions);
+
+    // Tetto allo spostamento: nessun vertice puo' allontanarsi dalla sua
+    // posizione originale piu' di una frazione della distanza fra i vertici del
+    // bordo. Senza questo, su un pezzo piccolo il contorno si stringerebbe su
+    // se' stesso e il pezzo perderebbe volume (misurato: -67%).
+    let somma = 0, conteggio = 0;
+    daLisciare.forEach((v) => {
+      for (const w of (vicini.get(v) || [])) {
+        somma += Math.sqrt(
+          (originale[v * 3] - originale[w * 3]) ** 2 +
+          (originale[v * 3 + 1] - originale[w * 3 + 1]) ** 2 +
+          (originale[v * 3 + 2] - originale[w * 3 + 2]) ** 2);
+        conteggio++;
+      }
+    });
+    const tetto = conteggio ? (somma / conteggio) * 0.75 : 0;
+    if (!(tetto > 0)) return positions;
+
+    // Si alternano un passo che liscia e uno che "rigonfia" (coefficiente
+    // negativo): e' lo schema di Taubin, che toglie il dente di sega senza
+    // restringere la linea.
+    const mu = -(strength / (1 - 0.1 * strength)) * 1.02;
+    for (let it = 0; it < iterations * 2; it++) {
+      const fattore = (it % 2 === 0) ? strength : mu;
+      const next = Float64Array.from(P);
+      vicini.forEach((nb, v) => {
+        if (nb.length !== 2 || !daLisciare.has(v)) return;  // biforcazioni e spigoli voluti: non toccarli
+        const [p, q] = nb;
+        for (let k = 0; k < 3; k++) {
+          const media = (P[p * 3 + k] + P[q * 3 + k]) / 2;
+          next[v * 3 + k] = P[v * 3 + k] + fattore * (media - P[v * 3 + k]);
+        }
+      });
+      P.set(next);
+    }
+
+    // applica il tetto allo spostamento complessivo
+    daLisciare.forEach((v) => {
+      const dx = P[v * 3] - originale[v * 3];
+      const dy = P[v * 3 + 1] - originale[v * 3 + 1];
+      const dz = P[v * 3 + 2] - originale[v * 3 + 2];
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (d > tetto) {
+        const s = tetto / d;
+        P[v * 3] = originale[v * 3] + dx * s;
+        P[v * 3 + 1] = originale[v * 3 + 1] + dy * s;
+        P[v * 3 + 2] = originale[v * 3 + 2] + dz * s;
+      }
+    });
+    return P;
+  };
+
+  MeshCore.fillLoop3D = function (pts3, loopVertexIndices, maxN) {
+    const n = pts3.length;
+    if (n < 3) return null;
+    // La ricerca esplora tutte le suddivisioni possibili: e' il metodo che da'
+    // la toppa migliore, ma il lavoro cresce col cubo del numero di vertici.
+    // Oltre una certa soglia si lascia perdere e si usa il ventaglio.
+    if (n > (maxN || 260)) return null;
+
+    const dist = (a, b) => Math.sqrt(
+      (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2);
+    // costo di un triangolo: si vuole poca superficie e nessuna scheggia, cioe'
+    // niente triangoli lunghi e sottili (erano quelli a formare la raggiera)
+    function costo(i, j, k) {
+      const p = pts3[i], q = pts3[j], r = pts3[k];
+      const a = dist(p, q), b = dist(q, r), c = dist(r, p);
+      const s = (a + b + c) / 2;
+      const area = Math.sqrt(Math.max(s * (s - a) * (s - b) * (s - c), 0));
+      const lato = Math.max(a, b, c);
+      if (area <= 1e-14) return lato * lato * 100 + 1e3;
+      // rapporto fra il lato piu' lungo e l'altezza corrispondente:
+      // vale ~1 per un triangolo equilatero, cresce moltissimo per le schegge
+      const magrezza = (lato * lato) / (2 * area);
+      return area + 6.0 * magrezza * lato;
+    }
+
+    // ricerca della triangolazione di costo minimo (programmazione dinamica):
+    // W[i][j] = costo migliore per chiudere il tratto di contorno da i a j
+    const W = new Float64Array(n * n).fill(0);
+    const scelta = new Int32Array(n * n).fill(-1);
+    for (let salto = 2; salto < n; salto++) {
+      for (let i = 0; i + salto < n; i++) {
+        const j = i + salto;
+        let best = Infinity, bestK = -1;
+        for (let k = i + 1; k < j; k++) {
+          const v = W[i * n + k] + W[k * n + j] + costo(i, k, j);
+          if (v < best) { best = v; bestK = k; }
+        }
+        W[i * n + j] = best;
+        scelta[i * n + j] = bestK;
+      }
+    }
+    if (!isFinite(W[0 * n + (n - 1)])) return null;
+
+    const out = [];
+    const pila = [[0, n - 1]];
+    while (pila.length) {
+      const [i, j] = pila.pop();
+      if (j - i < 2) continue;
+      const k = scelta[i * n + j];
+      if (k < 0) return null;
+      out.push(loopVertexIndices[i], loopVertexIndices[k], loopVertexIndices[j]);
+      pila.push([i, k], [k, j]);
+    }
+    return out.length ? out : null;
   };
 
   // ---------------------------------------------------------------------

@@ -892,6 +892,13 @@
     let idx = 0;
     groups.forEach((group, name) => {
       const sub = MeshCore.extractSubMesh(positions, indices, group.triangles);
+      // La linea di taglio nata dalla segmentazione segue gli spigoli dei
+      // triangoli, quindi e' seghettata: si distende prima di tappare il buco,
+      // altrimenti il dente di sega si vede sul pezzo e la toppa esce a raggiera.
+      if (options.smoothCut !== false) {
+        sub.positions = MeshCore.smoothBoundaryLoops(sub.positions, sub.indices,
+          options.smoothCutIterations === undefined ? 8 : options.smoothCutIterations);
+      }
       const repaired = MeshCore.repairMesh(sub.positions, sub.indices, options.repairOptions);
       parts.push({
         id: 'part_' + (idx++),

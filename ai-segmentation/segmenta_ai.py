@@ -253,7 +253,12 @@ def segment(vertices, faces, target_parts=8, n_views=12, work_faces=6000):
         for m in masks:
             seg = m["segmentation"]
             fids = face_id[seg]
-            fids = fids[fids >= 0]
+            # L'identificativo della faccia viaggia dentro il COLORE del pixel e
+            # il renderer lo sfuma sui bordi fra un triangolo e l'altro: quei
+            # pixel decodificano numeri che non esistono (es. 6012 su 6000
+            # facce) e prima facevano cadere tutto. Si tengono solo i valori
+            # validi: i pixel interni, che sono la stragrande maggioranza.
+            fids = fids[(fids >= 0) & (fids < nF)]
             if len(fids) < 3:
                 continue
             uniq = np.unique(fids)
