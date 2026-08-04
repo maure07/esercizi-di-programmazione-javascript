@@ -56,8 +56,12 @@ def trova_contatto(vA, fA, vB, fB, tolleranza=None):
     B = trimesh.Trimesh(vertices=np.asarray(vB, dtype=np.float64),
                         faces=np.asarray(fB, dtype=np.int64), process=False)
     if tolleranza is None:
-        diag = float(np.linalg.norm(A.extents)) or 1.0
-        tolleranza = diag * 0.02
+        # si prende come riferimento il pezzo PIU' PICCOLO: un ritaglio minuto
+        # attaccato a un corpo grande ha comunque bisogno di una tolleranza
+        # proporzionata a se stesso, non al corpo
+        dA = float(np.linalg.norm(A.extents)) or 1.0
+        dB = float(np.linalg.norm(B.extents)) or 1.0
+        tolleranza = min(dA, dB) * 0.05
 
     centri = A.triangles_center
     # Distanza di ogni triangolo di A dalla superficie di B. Il metodo preciso
@@ -77,12 +81,14 @@ def trova_contatto(vA, fA, vB, fB, tolleranza=None):
     tocca = distanza <= tolleranza
     if not tocca.any():
         # allarga finche' non si trova qualcosa
-        for k in (2.0, 4.0, 8.0):
+        for k in (2.0, 4.0, 8.0, 16.0, 32.0):
             tocca = distanza <= tolleranza * k
             if tocca.any():
                 break
     if not tocca.any():
-        raise ValueError("i due pezzi non si toccano da nessuna parte")
+        raise ValueError(
+            "i due pezzi non si sfiorano nemmeno: il piu' vicino dista %.2f mm"
+            % float(distanza.min()))
 
     aree = A.area_faces[tocca]
     centro = np.average(centri[tocca], axis=0, weights=aree)

@@ -69,6 +69,7 @@
     planePos: document.getElementById('planePos'),
     planePosValue: document.getElementById('planePosValue'),
     planeCutBtn: document.getElementById('planeCutBtn'),
+    cutFlatProBtn: document.getElementById('cutFlatProBtn'),
     smartSelChk: document.getElementById('smartSelChk'),
     smartSelAngle: document.getElementById('smartSelAngle'),
     smartSelAngleValue: document.getElementById('smartSelAngleValue'),
@@ -1148,6 +1149,151 @@
   // due pezzi si toccano. Le booleane girano sul companion e sono esatte: il
   // resto della mesh resta identico, mentre la vecchia versione ricostruiva
   // tutto il pezzo su una griglia a voxel e rovinava il modello.
+  // Distanza minima fra le superfici di due pezzi, campionando i vertici.
+  // Serve a capire quale pezzo confina davvero con quale.
+  function distanzaMinimaFraSuperfici(a, b) {
+    const A = a.positions, B = b.positions;
+    const nA = A.length / 3, nB = B.length / 3;
+    const passoA = Math.max(1, Math.floor(nA / 800));
+    const passoB = Math.max(1, Math.floor(nB / 800));
+    // scarta subito i pezzi lontani confrontando gli ingombri
+    let sep = 0;
+    for (let k = 0; k < 3; k++) {
+      const d = Math.max(a.stats.bboxMin[k] - b.stats.bboxMax[k],
+                         b.stats.bboxMin[k] - a.stats.bboxMax[k], 0);
+      sep += d * d;
+    }
+    if (sep > 0) return Math.sqrt(sep);   // gli ingombri non si sovrappongono
+    let best = Infinity;
+    for (let i = 0; i < nA; i += passoA) {
+      const ax = A[i * 3], ay = A[i * 3 + 1], az = A[i * 3 + 2];
+      for (let j = 0; j < nB; j += passoB) {
+        const dx = ax - B[j * 3], dy = ay - B[j * 3 + 1], dz = az - B[j * 3 + 2];
+        const d = dx * dx + dy * dy + dz * dz;
+        if (d < best) best = d;
+      }
+    }
+    return Math.sqrt(best);
+  }
+
+  // Piano medio del BORDO della selezione: i vertici che stanno sulla linea
+  // fra i triangoli scelti e quelli lasciati fuori. E' il piano su cui i due
+  // pezzi si separeranno.
+  function pianoDelBordo(part, sel) {
+    const topo = ensurePartTopology(part);
+    const bordo = new Set();
+    sel.forEach((f) => {
+      const adj = topo.adjacency[f];
+      for (let i = 0; i < adj.length; i++) {
+        if (!sel.has(adj[i])) {
+          for (let k = 0; k < 3; k++) bordo.add(part.indices[f * 3 + k]);
+        }
+      }
+    });
+    if (bordo.size < 3) return null;
+    let cx = 0, cy = 0, cz = 0;
+    bordo.forEach((v) => { cx += part.positions[v * 3]; cy += part.positions[v * 3 + 1]; cz += part.positions[v * 3 + 2]; });
+    const n = bordo.size; cx /= n; cy /= n; cz /= n;
+    // matrice di dispersione: la direzione con meno dispersione e' la
+    // perpendicolare al piano che meglio approssima il bordo
+    let xx = 0, xy = 0, xz = 0, yy = 0, yz = 0, zz = 0;
+    bordo.forEach((v) => {
+      const dx = part.positions[v * 3] - cx, dy = part.positions[v * 3 + 1] - cy, dz = part.positions[v * 3 + 2] - cz;
+      xx += dx * dx; xy += dx * dy; xz += dx * dz; yy += dy * dy; yz += dy * dz; zz += dz * dz;
+    });
+    // trova l'autovettore piu' piccolo per iterazione inversa semplificata:
+    // si prova con le tre direzioni base e si tiene quella con dispersione minima
+    let migliore = null, minVar = Infinity;
+    const prova = [];
+    for (let a = 0; a < 12; a++) {
+      const th = Math.PI * a / 12;
+      for (let b = 0; b < 12; b++) {
+        const ph = Math.PI * b / 12;
+        prova.push([Math.sin(ph) * Math.cos(th), Math.sin(ph) * Math.sin(th), Math.cos(ph)]);
+      }
+    }
+    for (const d of prova) {
+      const varianza = d[0] * (xx * d[0] + xy * d[1] + xz * d[2])
+                     + d[1] * (xy * d[0] + yy * d[1] + yz * d[2])
+                     + d[2] * (xz * d[0] + yz * d[1] + zz * d[2]);
+      if (varianza < minVar) { minVar = varianza; migliore = d; }
+    }
+    if (!migliore) return null;
+    // la normale deve puntare VERSO la selezione
+    let sx = 0, sy = 0, sz = 0, ns = 0;
+    sel.forEach((f) => {
+      for (let k = 0; k < 3; k++) {
+        const v = part.indices[f * 3 + k];
+        sx += part.positions[v * 3]; sy += part.positions[v * 3 + 1]; sz += part.positions[v * 3 + 2]; ns++;
+      }
+    });
+    sx /= ns; sy /= ns; sz /= ns;
+    const verso = (sx - cx) * migliore[0] + (sy - cy) * migliore[1] + (sz - cz) * migliore[2];
+    if (verso < 0) migliore = [-migliore[0], -migliore[1], -migliore[2]];
+    return { punto: [cx, cy, cz], normale: migliore, nBordo: n };
+  }
+
+  // Taglio PIATTO sulla selezione, con booleane esatte sul companion.
+  // Ritagliare gruppi di triangoli lascia sempre un bordo frastagliato: qui
+  // invece si taglia il solido con il PIANO medio del bordo della selezione,
+  // quindi le due facce che si toccano sono piatte e combaciano davvero.
+  async function tagliaPiattoSullaSelezione() {
+    if (!cutSelection || cutSelection.faces.size < 4 || !currentResult) {
+      alert('Prima seleziona una zona sul modello.');
+      return;
+    }
+    const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
+    if (!part) return;
+    const piano = pianoDelBordo(part, cutSelection.faces);
+    if (!piano) { alert('Non riesco a ricavare un piano dal bordo della selezione.'); return; }
+    const health = await companionHealth();
+    if (!health) return;
+    if (!health.booleane_pro) {
+      alert('Le booleane PRO non sono installate sul companion.\n\nApri "ai-segmentation" e fai doppio clic su "install_pro.bat", poi riavvia "avvia.bat".');
+      return;
+    }
+    const conn = el.connAutoChk ? el.connAutoChk.checked : true;
+    const gioco = el.connGioco ? parseInt(el.connGioco.value, 10) / 100 : 0.2;
+    setLoading(true, 'Taglio piatto con booleane esatte…');
+    await new Promise((r) => setTimeout(r, 20));
+    try {
+      const body = meshToPayload(part.positions, part.indices);
+      body.punto = piano.punto; body.normale = piano.normale;
+      body.connettore = conn; body.gioco = gioco;
+      const resp = await fetch(AI_URL + '/taglia', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const out = await resp.json();
+      if (out.error) throw new Error(out.error);
+      const idx = currentResult.parts.indexOf(part);
+      const mk = (p, suff) => {
+        const m = payloadToMesh(p);
+        return {
+          id: 'part_piatto_' + Date.now() + '_' + suff.replace(/\W/g, ''),
+          name: part.name + ' ' + suff,
+          color: part.color.slice(),
+          sourceTriangleCount: m.indices.length / 3,
+          positions: m.positions, indices: m.indices,
+          log: out.log || [], watertight: !!p.watertight,
+          stats: MeshCore.computeStats(m.positions, m.indices),
+          included: true,
+        };
+      };
+      currentResult.parts.splice(idx, 1, mk(out.b, conn ? '(foro)' : '(B)'), mk(out.a, conn ? '(perno)' : '(A)'));
+      currentResult.parts.sort((a, b) => b.stats.volume - a.stats.volume);
+      cutSelection = null;
+      renderResult(currentResult);
+      alert('Taglio piatto riuscito: le due facce che si toccano sono piane e combaciano.' +
+            (out.connettore ? `\n\nConnettore: lato ${out.connettore.lato.toFixed(1)} mm, gioco ${out.connettore.gioco.toFixed(2)} mm.` : ''));
+    } catch (err) {
+      console.error(err);
+      alert('Errore nel taglio piatto: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function connettoreAutomatico(part) {
     if (!currentResult) return;
     const altri = currentResult.parts.filter((p) => p !== part && p.included);
@@ -1158,14 +1304,16 @@
       alert('Il connettore automatico non e\' installato sul companion.\n\nApri la cartella "ai-segmentation" e fai doppio clic su "install_pro.bat", poi riavvia "avvia.bat".');
       return;
     }
-    // il vicino: il pezzo con il centro piu' vicino
-    const c = partCenter(part);
-    let vicino = altri[0], best = Infinity;
+    // Il compagno giusto e' quello la cui SUPERFICIE tocca questo pezzo, non
+    // quello con il centro piu' vicino: un ritaglio piccolo ha il centro
+    // vicinissimo al pezzo da cui e' stato staccato, ma anche a pezzi che non
+    // lo sfiorano nemmeno — ed e' cosi' che usciva "i due pezzi non si toccano".
+    let vicino = null, best = Infinity;
     for (const p of altri) {
-      const q = partCenter(p);
-      const d = (q[0] - c[0]) ** 2 + (q[1] - c[1]) ** 2 + (q[2] - c[2]) ** 2;
+      const d = distanzaMinimaFraSuperfici(part, p);
       if (d < best) { best = d; vicino = p; }
     }
+    if (!vicino) { alert('Non trovo un pezzo confinante.'); setLoading(false); return; }
     const gioco = el.connGioco ? parseInt(el.connGioco.value, 10) / 100 : 0.2;
     setLoading(true, `Perno e foro fra "${part.name}" e "${vicino.name}"…`);
     await new Promise((r) => setTimeout(r, 20));
@@ -1200,6 +1348,7 @@
     }
   }
 
+  el.cutFlatProBtn.addEventListener('click', () => tagliaPiattoSullaSelezione());
   el.connectorToggleBtn.addEventListener('click', () => setConnectorMode(!connectorMode));
   el.connTypePegBtn.addEventListener('click', () => setConnType('peg'));
   el.connTypePinBtn.addEventListener('click', () => setConnType('pin'));
@@ -2494,29 +2643,31 @@
   };
   window.__raycast = (x, y) => { const h = viewer.raycastAt(x, y); return h ? { partId: h.partId, faceIndex: h.faceIndex, z: h.point[2] } : null; };
   window.__resetSel = () => { cutSelection = null; refreshCutHighlight(); };
-  // aggancio di prova: sceglie il triangolo piu' vicino a una quota e ci fa
-  // partire la selezione intelligente, restituendo com'e' andata
-  window.__concStats = () => {
-    if (!currentResult) return null;
-    const part = currentResult.parts[0];
-    const c = ensureConcavita(part);
-    const nT = c.length;
-    const perZ = {};
+  window.__applicaSelTest = (zSeed, estensione) => {
+    if (!currentResult) return 0;
+    let part = currentResult.parts[0];
+    for (const p of currentResult.parts) {
+      if (zSeed >= p.stats.bboxMin[2] && zSeed <= p.stats.bboxMax[2]) { part = p; break; }
+    }
+    const nT = part.indices.length / 3;
+    let best = 0, bestD = Infinity;
     for (let t = 0; t < nT; t++) {
       let z = 0;
       for (let k = 0; k < 3; k++) z += part.positions[part.indices[t * 3 + k] * 3 + 2];
       z /= 3;
-      const b = Math.floor(z / 10) * 10;
-      if (!perZ[b]) perZ[b] = [];
-      perZ[b].push(c[t]);
+      const d = Math.abs(z - zSeed);
+      if (d < bestD) { bestD = d; best = t; }
     }
-    const out = {};
-    Object.keys(perZ).forEach((k) => {
-      const a = perZ[k].slice().sort((x, y) => x - y);
-      out[k] = { mediana: a[Math.floor(a.length / 2)], n: a.length };
-    });
-    return out;
+    const zona = pulisciSelezione(part, smartSelect(part, best, estensione, 0.85));
+    cutSelection = { partId: part.id, faces: zona };
+    refreshCutHighlight();
+    return zona.size;
   };
+  // quanto e' piatta la faccia di taglio: scarto massimo fra le facce complanari
+  // Misura la faccia di taglio: il piu' grande gruppo di facce COMPLANARI E
+  // ATTACCATE fra loro. Richiedere che siano attaccate e' essenziale: su una
+  // superficie curva ci sono tante facce parallele fra loro ma in punti
+  // lontanissimi, e senza questo vincolo la misura risultava falsata.
   window.__smartTest = (zSeed, estensione) => {
     if (!currentResult) return null;
     let part = currentResult.parts[0];
@@ -2532,7 +2683,7 @@
       const d = Math.abs(z - zSeed);
       if (d < bestD) { bestD = d; best = t; }
     }
-    const sel = smartSelect(part, best, estensione, 0.98);
+    const sel = pulisciSelezione(part, smartSelect(part, best, estensione, 0.85));
     let zmin = Infinity, zmax = -Infinity;
     sel.forEach((f) => {
       for (let k = 0; k < 3; k++) {
@@ -2540,8 +2691,43 @@
         if (z < zmin) zmin = z; if (z > zmax) zmax = z;
       }
     });
-    return { count: sel.size, totale: nT, zmin, zmax,
-             modelZmax: part.stats.bboxMax[2] };
+    return { count: sel.size, totale: nT, zmin, zmax, modelZmax: part.stats.bboxMax[2] };
+  };
+  window.__planarita = () => {
+    if (!currentResult) return null;
+    return currentResult.parts.slice(0, 3).map((part) => {
+      const topo = ensurePartTopology(part);
+      const N = topo.normals, C = topo.centroids;
+      const nT = part.indices.length / 3;
+      const visti = new Uint8Array(nT);
+      let migliore = null;
+      for (let s0 = 0; s0 < nT; s0++) {
+        if (visti[s0]) continue;
+        const nx = N[s0 * 3], ny = N[s0 * 3 + 1], nz = N[s0 * 3 + 2];
+        const gruppo = [s0]; const pila = [s0]; visti[s0] = 1;
+        while (pila.length) {
+          const f = pila.pop();
+          const adj = topo.adjacency[f];
+          for (let i = 0; i < adj.length; i++) {
+            const nb = adj[i];
+            if (visti[nb]) continue;
+            const d = N[nb * 3] * nx + N[nb * 3 + 1] * ny + N[nb * 3 + 2] * nz;
+            if (d < 0.9995) continue;
+            visti[nb] = 1; pila.push(nb); gruppo.push(nb);
+          }
+        }
+        if (!migliore || gruppo.length > migliore.g.length) migliore = { g: gruppo, n: [nx, ny, nz] };
+      }
+      if (!migliore) return null;
+      const [nx, ny, nz] = migliore.n;
+      let mn = Infinity, mx = -Infinity;
+      for (const f of migliore.g) {
+        const q = C[f * 3] * nx + C[f * 3 + 1] * ny + C[f * 3 + 2] * nz;
+        if (q < mn) mn = q; if (q > mx) mx = q;
+      }
+      return { nome: part.name, facceComplanari: migliore.g.length,
+               scartoMax: +(mx - mn).toFixed(4) };
+    });
   };
   window.__lassoCount = () => lassoPoints.length;
   window.__partsInfo = () => currentResult ? currentResult.parts.map((p) => ({ name: p.name, tris: p.indices.length / 3, wt: !!p.watertight })) : null;
