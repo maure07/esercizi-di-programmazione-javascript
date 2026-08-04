@@ -25,13 +25,26 @@
 
     const grid = new THREE.GridHelper(200, 20, 0x30333c, 0x22242c);
     grid.visible = false;
+    // Il GridHelper di three.js nasce sdraiato sul piano Y=0 (convenzione
+    // Y-in-su). Qui l'asse verticale del mondo e' Z (vedi sotto): lo si
+    // ruota di 90 gradi cosi' rappresenta il piano di stampa Z=0.
+    grid.rotation.x = Math.PI / 2;
     scene.add(grid);
 
     // --- stato camera orbit ---
+    // ASSE VERTICALE = Z, non Y. Gli STL nascono per la stampa 3D, dove Z e'
+    // sempre l'altezza (il piano di stampa e' Z=0): lo fa anche layFlat() in
+    // geometry-core.js, che raddrizza il pezzo verso (0,0,-1). Con l'orbita a
+    // Y-in-su un modello Z-up (com'e' quasi sempre uno STL, incluso quelli
+    // generati da Meshy) appariva SDRAIATO DI LATO nel visualizzatore: le
+    // viste numeriche (1=fronte, 7=sopra...) mostravano il taglio sbagliato,
+    // e ruotare col mouse "in alto/in basso" giravano attorno all'asse
+    // sbagliato. Le coordinate della mesh non cambiano: cambia solo come la
+    // camera orbita attorno ad esse.
     const target = new THREE.Vector3(0, 0, 0);
     let radius = 100;
     let theta = Math.PI / 4; // azimut
-    let phi = Math.PI / 3; // polare (0=sopra, PI=sotto)
+    let phi = Math.PI / 3; // polare (0=sopra, PI=sotto), misurato da +Z
     let minRadius = 0.01;
     let maxRadius = 100000;
 
@@ -39,14 +52,14 @@
       const sinPhi = Math.sin(phi);
       camera.position.set(
         target.x + radius * sinPhi * Math.sin(theta),
-        target.y + radius * Math.cos(phi),
-        target.z + radius * sinPhi * Math.cos(theta)
+        target.y + radius * sinPhi * Math.cos(theta),
+        target.z + radius * Math.cos(phi)
       );
       // ROTAZIONE INFINITA: phi non e' piu' bloccato ai poli, puo' girare
       // all'infinito. Quando si passa "oltre" il polo (sin(phi) negativo) il
       // modello si vede capovolto: si ribalta l'alto della camera, cosi' la
       // rotazione prosegue liscia invece di impuntarsi.
-      camera.up.set(0, sinPhi >= 0 ? 1 : -1, 0);
+      camera.up.set(0, 0, sinPhi >= 0 ? 1 : -1);
       camera.lookAt(target);
     }
     updateCamera();

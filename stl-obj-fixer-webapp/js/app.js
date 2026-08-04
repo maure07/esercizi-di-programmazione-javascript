@@ -2731,6 +2731,20 @@
   };
   window.__lassoCount = () => lassoPoints.length;
   window.__partsInfo = () => currentResult ? currentResult.parts.map((p) => ({ name: p.name, tris: p.indices.length / 3, wt: !!p.watertight })) : null;
+  window.__partsBBox = () => currentResult ? currentResult.parts.map((p) => ({ name: p.name, bboxMin: p.stats.bboxMin, bboxMax: p.stats.bboxMax, vol: p.stats.volume })) : null;
+  window.__sceneInfo = () => {
+    const out = [];
+    viewer.scene.traverse((o) => {
+      if (o.isMesh) {
+        o.geometry.computeBoundingBox();
+        const bb = o.geometry.boundingBox;
+        out.push({ id: o.userData.partId || o.uuid.slice(0,6), visible: o.visible,
+          pos: [o.position.x, o.position.y, o.position.z],
+          bbMin: [bb.min.x, bb.min.y, bb.min.z], bbMax: [bb.max.x, bb.max.y, bb.max.z] });
+      }
+    });
+    return out;
+  };
   window.__cutInfo = () => {
     if (!cutSelection || !currentResult) return null;
     const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
