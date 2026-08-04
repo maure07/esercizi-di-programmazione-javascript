@@ -742,12 +742,27 @@
   function meshToPayload(positions, indices) {
     return { vertices: Array.from(positions), faces: Array.from(indices) };
   }
+  // Accetta ENTRAMBI i formati: a terne ([[x,y,z],...]) o piatto ([x,y,z,...]).
+  // Il companion risponde in piatto per essere leggero; leggere solo le terne
+  // produceva vertici NaN e volumi nulli.
   function payloadToMesh(out) {
     const V = out.vertices, F = out.faces;
-    const positions = new Float64Array(V.length * 3);
-    for (let i = 0; i < V.length; i++) { positions[i * 3] = V[i][0]; positions[i * 3 + 1] = V[i][1]; positions[i * 3 + 2] = V[i][2]; }
-    const indices = new Uint32Array(F.length * 3);
-    for (let t = 0; t < F.length; t++) { indices[t * 3] = F[t][0]; indices[t * 3 + 1] = F[t][1]; indices[t * 3 + 2] = F[t][2]; }
+    const piattoV = V.length === 0 || typeof V[0] === 'number';
+    const piattoF = F.length === 0 || typeof F[0] === 'number';
+    let positions;
+    if (piattoV) {
+      positions = Float64Array.from(V);
+    } else {
+      positions = new Float64Array(V.length * 3);
+      for (let i = 0; i < V.length; i++) { positions[i * 3] = V[i][0]; positions[i * 3 + 1] = V[i][1]; positions[i * 3 + 2] = V[i][2]; }
+    }
+    let indices;
+    if (piattoF) {
+      indices = Uint32Array.from(F);
+    } else {
+      indices = new Uint32Array(F.length * 3);
+      for (let t = 0; t < F.length; t++) { indices[t * 3] = F[t][0]; indices[t * 3 + 1] = F[t][1]; indices[t * 3 + 2] = F[t][2]; }
+    }
     return { positions, indices };
   }
 
@@ -1128,6 +1143,63 @@
     }
   }
 
+  // ------------------- CONNETTORE AUTOMATICO -------------------
+  // Si sceglie il pezzo dall'ELENCO: il punto giusto lo trova da solo, dove i
+  // due pezzi si toccano. Le booleane girano sul companion e sono esatte: il
+  // resto della mesh resta identico, mentre la vecchia versione ricostruiva
+  // tutto il pezzo su una griglia a voxel e rovinava il modello.
+  async function connettoreAutomatico(part) {
+    if (!currentResult) return;
+    const altri = currentResult.parts.filter((p) => p !== part && p.included);
+    if (altri.length === 0) { alert('Serve almeno un altro pezzo incluso.'); return; }
+    const health = await companionHealth();
+    if (!health) return;
+    if (!health.connettore_pro) {
+      alert('Il connettore automatico non e\' installato sul companion.\n\nApri la cartella "ai-segmentation" e fai doppio clic su "install_pro.bat", poi riavvia "avvia.bat".');
+      return;
+    }
+    // il vicino: il pezzo con il centro piu' vicino
+    const c = partCenter(part);
+    let vicino = altri[0], best = Infinity;
+    for (const p of altri) {
+      const q = partCenter(p);
+      const d = (q[0] - c[0]) ** 2 + (q[1] - c[1]) ** 2 + (q[2] - c[2]) ** 2;
+      if (d < best) { best = d; vicino = p; }
+    }
+    const gioco = el.connGioco ? parseInt(el.connGioco.value, 10) / 100 : 0.2;
+    setLoading(true, `Perno e foro fra "${part.name}" e "${vicino.name}"…`);
+    await new Promise((r) => setTimeout(r, 20));
+    try {
+      const resp = await fetch(AI_URL + '/connettore', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          a: meshToPayload(part.positions, part.indices),
+          b: meshToPayload(vicino.positions, vicino.indices),
+          gioco,
+        }),
+      });
+      const out = await resp.json();
+      if (out.error) throw new Error(out.error);
+      const applica = (p, dati) => {
+        const m = payloadToMesh(dati);
+        p.positions = m.positions;
+        p.indices = m.indices;
+        p.stats = MeshCore.computeStats(m.positions, m.indices);
+        p._topo = null;
+      };
+      applica(part, out.a);
+      applica(vicino, out.b);
+      renderResult(currentResult);
+      const k = out.connettore;
+      alert(`Fatto.\n\nPerno sul pezzo "${part.name}", foro su "${vicino.name}".\nLato ${k.lato.toFixed(1)} mm, profondita' ${k.profondita.toFixed(1)} mm, gioco ${k.gioco.toFixed(2)} mm.\n\nIl resto del modello non e' stato toccato.`);
+    } catch (err) {
+      console.error(err);
+      alert('Errore nel connettore automatico: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   el.connectorToggleBtn.addEventListener('click', () => setConnectorMode(!connectorMode));
   el.connTypePegBtn.addEventListener('click', () => setConnType('peg'));
   el.connTypePinBtn.addEventListener('click', () => setConnType('pin'));
@@ -1353,6 +1425,23 @@
     actions.appendChild(downloadBtn);
 
     card.appendChild(actions);
+
+    // Connettore AUTOMATICO: si sceglie il pezzo dall'elenco e basta. Il punto
+    // dove mettere perno e foro lo trova da solo (dove i due pezzi si toccano),
+    // e la booleana e' esatta: il resto della mesh non viene toccato.
+    if (currentResult && currentResult.parts.length > 1) {
+      const connRow = document.createElement('div');
+      connRow.className = 'part-actions';
+      connRow.style.marginTop = '8px';
+      const connBtn = document.createElement('button');
+      connBtn.textContent = '🔩 Aggiungi perno e foro (automatico)';
+      connBtn.style.background = 'linear-gradient(90deg,#3fd08a,#2f9bd0)';
+      connBtn.style.color = '#fff';
+      connBtn.style.border = 'none';
+      connBtn.addEventListener('click', () => connettoreAutomatico(part));
+      connRow.appendChild(connBtn);
+      card.appendChild(connRow);
+    }
 
     const isMainPart = currentResult && currentResult.parts.length > 0 && currentResult.parts[0] === part;
     if (currentResult && currentResult.parts.length > 1 && !isMainPart) {
@@ -2152,6 +2241,14 @@
     if (hit && hit.partId === paintPartId) paintAt(hit);
   });
   function chiudiTratto() {
+    // fine del tratto a pennello: ripulisci i triangolini sfuggiti
+    if (painting && cutSelection && currentResult) {
+      const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
+      if (part && cutSelection.faces.size > 8) {
+        pulisciSelezione(part, cutSelection.faces);
+        refreshCutHighlight();
+      }
+    }
     if (attesaClic) {
       // era un clic secco: prendi tutta la zona
       applicaSelezioneIntelligente(attesaClic.hit);
@@ -2162,12 +2259,68 @@
   window.addEventListener('pointerup', chiudiTratto);
   window.addEventListener('pointercancel', chiudiTratto);
 
+  // Ripulisce una selezione dai buchi: i triangolini rimasti fuori in mezzo
+  // alla zona scelta vengono inglobati, e i frammenti isolati fuori vengono
+  // scartati. Sono quelli che lasciavano il bordo del taglio frastagliato.
+  function pulisciSelezione(part, sel) {
+    const topo = ensurePartTopology(part);
+    const nTris = part.indices.length / 3;
+    // 1) buchi DENTRO la selezione: un triangolo fuori, circondato da dentro
+    for (let giro = 0; giro < 3; giro++) {
+      const daAggiungere = [];
+      for (let f = 0; f < nTris; f++) {
+        if (sel.has(f)) continue;
+        const adj = topo.adjacency[f];
+        if (adj.length === 0) continue;
+        let dentro = 0;
+        for (let i = 0; i < adj.length; i++) if (sel.has(adj[i])) dentro++;
+        if (dentro >= adj.length - 0.5) daAggiungere.push(f);  // tutti i vicini dentro
+      }
+      if (daAggiungere.length === 0) break;
+      for (const f of daAggiungere) sel.add(f);
+    }
+    // 2) sporgenze: triangoli dentro ma con un solo vicino dentro (peli isolati)
+    for (let giro = 0; giro < 2; giro++) {
+      const daTogliere = [];
+      sel.forEach((f) => {
+        const adj = topo.adjacency[f];
+        if (adj.length < 3) return;
+        let dentro = 0;
+        for (let i = 0; i < adj.length; i++) if (sel.has(adj[i])) dentro++;
+        if (dentro <= 1) daTogliere.push(f);
+      });
+      if (daTogliere.length === 0) break;
+      for (const f of daTogliere) sel.delete(f);
+    }
+    // 3) frammenti staccati: tiene solo il gruppo piu' grande
+    const visti = new Set();
+    let migliore = null;
+    sel.forEach((s) => {
+      if (visti.has(s)) return;
+      const gruppo = [s]; const pila = [s]; visti.add(s);
+      while (pila.length) {
+        const f = pila.pop();
+        const adj = topo.adjacency[f];
+        for (let i = 0; i < adj.length; i++) {
+          const nb = adj[i];
+          if (sel.has(nb) && !visti.has(nb)) { visti.add(nb); pila.push(nb); gruppo.push(nb); }
+        }
+      }
+      if (!migliore || gruppo.length > migliore.length) migliore = gruppo;
+    });
+    if (migliore && migliore.length < sel.size) {
+      const tenuti = new Set(migliore);
+      sel.forEach((f) => { if (!tenuti.has(f)) sel.delete(f); });
+    }
+    return sel;
+  }
+
   function applicaSelezioneIntelligente(hit) {
     const part = currentResult && currentResult.parts.find((p) => p.id === hit.partId);
     if (!part) return;
     pushCutHistory();
     const gradi = parseInt(el.smartSelAngle.value, 10) || 22;
-    const zona = smartSelect(part, hit.faceIndex, gradi, 0.6);
+    const zona = pulisciSelezione(part, smartSelect(part, hit.faceIndex, gradi, 0.85));
     if (!cutSelection || cutSelection.partId !== part.id) {
       cutSelection = { partId: part.id, faces: new Set() };
     }

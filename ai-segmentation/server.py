@@ -45,6 +45,14 @@ except Exception as _e:
     print("Rilevamento dettagli non disponibile:", _e, file=sys.stderr)
 
 try:
+    import connettore_pro
+    CONN_AVAILABLE = True
+except Exception as _e:
+    connettore_pro = None
+    CONN_AVAILABLE = False
+    print("Connettore PRO non disponibile:", _e, file=sys.stderr)
+
+try:
     import taglia_pro
     TAGLIA_AVAILABLE = True
 except Exception as _e:
@@ -118,6 +126,7 @@ def health():
         "ripara_pro": RIPARA_AVAILABLE,
         "booleane_pro": TAGLIA_AVAILABLE,
         "dettagli_rilievo": RILIEVI_AVAILABLE,
+        "connettore_pro": CONN_AVAILABLE,
     })
 
 
@@ -182,6 +191,40 @@ def taglia():
     })
 
 
+@app.route("/connettore", methods=["POST", "OPTIONS"])
+def connettore():
+    """Perno + foro AUTOMATICI fra due pezzi, con booleane esatte.
+    Non ricostruisce nulla: il resto della mesh resta identico."""
+    if request.method == "OPTIONS":
+        return ("", 204)
+    if not CONN_AVAILABLE:
+        return jsonify({"error": "Connettore PRO non installato (serve install_pro.bat)"}), 501
+    data = request.get_json(force=True)
+    va = np.asarray(data["a"]["vertices"], dtype=np.float64)
+    fa = np.asarray(data["a"]["faces"], dtype=np.int64)
+    vb = np.asarray(data["b"]["vertices"], dtype=np.float64)
+    fb = np.asarray(data["b"]["faces"], dtype=np.int64)
+    if va.ndim == 1: va = va.reshape(-1, 3)
+    if fa.ndim == 1: fa = fa.reshape(-1, 3)
+    if vb.ndim == 1: vb = vb.reshape(-1, 3)
+    if fb.ndim == 1: fb = fb.reshape(-1, 3)
+    try:
+        r = connettore_pro.connetti(
+            va, fa, vb, fb,
+            gioco=float(data.get("gioco", 0.20)),
+            lato=data.get("lato"), profondita=data.get("profondita"))
+    except Exception as e:
+        print("connettore fallito:", e, file=sys.stderr)
+        return jsonify({"error": str(e)}), 500
+    return jsonify({
+        "a": {"vertices": r["a"]["vertices"].ravel().tolist(),
+              "faces": r["a"]["faces"].ravel().tolist()},
+        "b": {"vertices": r["b"]["vertices"].ravel().tolist(),
+              "faces": r["b"]["faces"].ravel().tolist()},
+        "log": r["log"], "connettore": r["connettore"],
+    })
+
+
 @app.route("/segment", methods=["POST", "OPTIONS"])
 def segment():
     if request.method == "OPTIONS":
@@ -238,5 +281,6 @@ if __name__ == "__main__":
     print("Motore AI:      ", "DISPONIBILE (GPU)" if AI_AVAILABLE else "non installato (uso geometria)")
     print("Riparazione PRO:", "DISPONIBILE (MeshLab)" if RIPARA_AVAILABLE else "non installata (install_pro.bat)")
     print("Booleane PRO:   ", "DISPONIBILI (manifold3d)" if TAGLIA_AVAILABLE else "non installate (install_pro.bat)")
+    print("Connettore auto:", "ATTIVO (perno+foro esatti)" if CONN_AVAILABLE else "non disponibile")
     print("Dettagli rilievo:", "ATTIVO (sopracciglia, occhi...)" if RILIEVI_AVAILABLE else "non disponibile")
     app.run(host="127.0.0.1", port=port, threaded=True)
