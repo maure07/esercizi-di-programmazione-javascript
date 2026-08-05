@@ -94,7 +94,7 @@ def _sezione(V, F, punto, normale, tolleranza):
 # ---------------------------------------------------------------------------
 def taglia_con_piano(vertices, faces, punto, normale,
                      connettore=True, gioco=0.20, lato=None, profondita=None,
-                     n_connettori=1):
+                     n_connettori=1, sel_min=None, sel_max=None):
     """Taglia il solido con un piano e mette perno quadrato + foro.
 
     punto, normale : piano di taglio
@@ -102,6 +102,12 @@ def taglia_con_piano(vertices, faces, punto, normale,
     lato           : lato del perno quadrato in mm (auto se None)
     profondita     : quanto sporge il perno in mm (auto se None)
     n_connettori   : 1 = uno centrale; 2 = due affiancati (contro la rotazione)
+    sel_min/sel_max: bounding box (world) della zona selezionata dall'utente.
+                     Se presente, il taglio viene LIMITATO a quella zona (piu'
+                     un margine), invece di tagliare col piano infinito tutto
+                     il pezzo: selezionare una mano non deve tranciare anche
+                     il busto solo perche' il piano, esteso all'infinito,
+                     passa pure di la'.
 
     Ritorna {"a": {...}, "b": {...}, "log": [...]}
       a = lato dalla parte della normale (ha il PERNO)
@@ -121,22 +127,82 @@ def taglia_con_piano(vertices, faces, punto, normale,
         )
     vol0 = solido.volume()
 
+    # --- prova a limitare il taglio alla zona selezionata ---
+    # Si racchiude la selezione in una scatola (bbox + margine) e si opera
+    # SOLO li' dentro: il resto del pezzo (resto = solido - scatola) non
+    # viene nemmeno toccato dal piano. Se qualcosa non torna (scatola
+    # degenere, taglio locale che non produce due pezzi...) si ripiega sul
+    # vecchio comportamento: piano infinito su tutto il pezzo.
+    resto = None
+    regione = None
+    if sel_min is not None and sel_max is not None:
+        try:
+            bmin = np.asarray(sel_min, dtype=np.float64)
+            bmax = np.asarray(sel_max, dtype=np.float64)
+            dim_sel = bmax - bmin
+            if np.all(dim_sel >= 0):
+                margine = np.maximum(0.2 * dim_sel, 2.0)
+                centro_box = (bmin + bmax) / 2.0
+                dim_box = dim_sel + 2 * margine
+                scatola = _cubo(dim_box, centro_box, [1.0, 0, 0], [0, 1.0, 0], [0, 0, 1.0])
+                candidato_regione = solido ^ scatola   # intersezione
+                candidato_resto = solido - scatola     # differenza
+                vol_reg = candidato_regione.volume()
+                vol_resto = candidato_resto.volume()
+                # la scatola deve contenere davvero solo una parte del pezzo,
+                # altrimenti tanto vale il taglio globale
+                if vol_reg > vol0 * 1e-4 and vol_resto > vol0 * 1e-4:
+                    regione = candidato_regione
+                    resto = candidato_resto
+        except Exception as e:
+            log.append(f"(taglio locale non riuscito, uso il piano su tutto: {e})")
+            resto = None
+            regione = None
+
+    solido_da_tagliare = regione if regione is not None else solido
+
     # --- taglio esatto ---
-    A = solido.trim_by_plane(list(n), offset)        # lato +normale
-    B = solido.trim_by_plane(list(-n), -offset)      # lato -normale
-    log.append(f"Taglio esatto: volume {vol0:.1f} -> A {A.volume():.1f} + B {B.volume():.1f}")
+    A = solido_da_tagliare.trim_by_plane(list(n), offset)        # lato +normale
+    B = solido_da_tagliare.trim_by_plane(list(-n), -offset)      # lato -normale
+
+    if (A.volume() <= 0 or B.volume() <= 0) and resto is not None:
+        # la scatola locale non stava a cavallo del piano: niente taglio
+        # locale valido, si ripiega sul piano infinito su tutto il pezzo
+        log.append("Taglio locale non a cavallo del piano, ripiego sul piano su tutto il pezzo")
+        resto = None
+        regione = None
+        solido_da_tagliare = solido
+        A = solido_da_tagliare.trim_by_plane(list(n), offset)
+        B = solido_da_tagliare.trim_by_plane(list(-n), -offset)
 
     if A.volume() <= 0 or B.volume() <= 0:
         raise ValueError("Il piano non taglia il modello in due parti.")
 
+    if resto is not None:
+        log.append(
+            f"Taglio LOCALE (solo zona selezionata): volume {vol0:.1f} -> "
+            f"resto {resto.volume():.1f} + regione {A.volume() + B.volume():.1f}"
+        )
+    else:
+        log.append(f"Taglio esatto su tutto il pezzo: volume {vol0:.1f} -> A {A.volume():.1f} + B {B.volume():.1f}")
+
     if not connettore:
+        if resto is not None:
+            B = resto + B
         va, fa = _to_arrays(A)
         vb, fb = _to_arrays(B)
         return {"a": _pack(va, fa), "b": _pack(vb, fb), "log": log}
 
     # --- misura della faccia di taglio ---
-    diag = float(np.linalg.norm(V.max(axis=0) - V.min(axis=0))) or 1.0
-    centro, est_u, est_v, (u, v, nn) = _sezione(V, F, punto, n, tolleranza=diag * 0.01)
+    # se il taglio e' locale, si usano solo i vertici della regione: cosi' la
+    # dimensione del connettore riflette lo spessore vero del punto tagliato
+    # (il polso), non l'ingombro di tutto il pezzo (il busto)
+    if resto is not None:
+        V_sez, F_sez = _to_arrays(solido_da_tagliare)
+    else:
+        V_sez, F_sez = V, F
+    diag = float(np.linalg.norm(V_sez.max(axis=0) - V_sez.min(axis=0))) or 1.0
+    centro, est_u, est_v, (u, v, nn) = _sezione(V_sez, F_sez, punto, n, tolleranza=diag * 0.01)
     minore = 2.0 * min(est_u, est_v)
 
     if lato is None:
@@ -181,6 +247,13 @@ def taglia_con_piano(vertices, faces, punto, normale,
 
     if A.status().name != "NoError" or B.status().name != "NoError":
         raise ValueError("La booleana del connettore non e' riuscita.")
+
+    # se il taglio era locale, si ricuce B (la parte col foro, lato -normale)
+    # col resto del pezzo che non era mai stato toccato
+    if resto is not None:
+        B = resto + B
+        if B.status().name != "NoError":
+            raise ValueError("La ricucitura col resto del pezzo non e' riuscita.")
 
     log.append(f"Con connettore: A {A.volume():.1f} (perno), B {B.volume():.1f} (foro)")
     va, fa = _to_arrays(A)

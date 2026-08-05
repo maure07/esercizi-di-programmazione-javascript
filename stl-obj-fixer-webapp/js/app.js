@@ -1219,18 +1219,26 @@
       if (varianza < minVar) { minVar = varianza; migliore = d; }
     }
     if (!migliore) return null;
-    // la normale deve puntare VERSO la selezione
+    // la normale deve puntare VERSO la selezione, e nello stesso giro si
+    // ricava anche il bounding box di TUTTA la selezione (non solo il
+    // bordo): serve dopo per limitare il taglio alla zona scelta, invece
+    // di tagliare l'intero pezzo con un piano infinito.
     let sx = 0, sy = 0, sz = 0, ns = 0;
+    const selMin = [Infinity, Infinity, Infinity];
+    const selMax = [-Infinity, -Infinity, -Infinity];
     sel.forEach((f) => {
       for (let k = 0; k < 3; k++) {
         const v = part.indices[f * 3 + k];
-        sx += part.positions[v * 3]; sy += part.positions[v * 3 + 1]; sz += part.positions[v * 3 + 2]; ns++;
+        const px = part.positions[v * 3], py = part.positions[v * 3 + 1], pz = part.positions[v * 3 + 2];
+        sx += px; sy += py; sz += pz; ns++;
+        if (px < selMin[0]) selMin[0] = px; if (py < selMin[1]) selMin[1] = py; if (pz < selMin[2]) selMin[2] = pz;
+        if (px > selMax[0]) selMax[0] = px; if (py > selMax[1]) selMax[1] = py; if (pz > selMax[2]) selMax[2] = pz;
       }
     });
     sx /= ns; sy /= ns; sz /= ns;
     const verso = (sx - cx) * migliore[0] + (sy - cy) * migliore[1] + (sz - cz) * migliore[2];
     if (verso < 0) migliore = [-migliore[0], -migliore[1], -migliore[2]];
-    return { punto: [cx, cy, cz], normale: migliore, nBordo: n };
+    return { punto: [cx, cy, cz], normale: migliore, nBordo: n, selMin, selMax };
   }
 
   // Taglio PIATTO sulla selezione, con booleane esatte sul companion.
@@ -1259,6 +1267,7 @@
     try {
       const body = meshToPayload(part.positions, part.indices);
       body.punto = piano.punto; body.normale = piano.normale;
+      body.selMin = piano.selMin; body.selMax = piano.selMax;
       body.connettore = conn; body.gioco = gioco;
       const resp = await fetch(AI_URL + '/taglia', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -2730,7 +2739,7 @@
     });
   };
   window.__lassoCount = () => lassoPoints.length;
-  window.__partsInfo = () => currentResult ? currentResult.parts.map((p) => ({ name: p.name, tris: p.indices.length / 3, wt: !!p.watertight })) : null;
+  window.__partsInfo = () => currentResult ? currentResult.parts.map((p) => ({ name: p.name, tris: p.indices.length / 3, wt: !!p.watertight, log: p.log })) : null;
   window.__partsBBox = () => currentResult ? currentResult.parts.map((p) => ({ name: p.name, bboxMin: p.stats.bboxMin, bboxMax: p.stats.bboxMax, vol: p.stats.volume })) : null;
   window.__sceneInfo = () => {
     const out = [];
@@ -2760,6 +2769,17 @@
       const st = [s]; seen.add(s);
       while (st.length) { const f = st.pop(); for (const nb of topo.adjacency[f]) if (sel.has(nb) && !seen.has(nb)) { seen.add(nb); st.push(nb); } }
     });
-    return { count: sel.size, components: comps };
+    const bboxMin = [Infinity, Infinity, Infinity], bboxMax = [-Infinity, -Infinity, -Infinity];
+    sel.forEach((f) => {
+      for (let k = 0; k < 3; k++) {
+        const v = part.indices[f * 3 + k];
+        for (let a = 0; a < 3; a++) {
+          const c = part.positions[v * 3 + a];
+          if (c < bboxMin[a]) bboxMin[a] = c;
+          if (c > bboxMax[a]) bboxMax[a] = c;
+        }
+      }
+    });
+    return { count: sel.size, components: comps, bboxMin, bboxMax };
   };
 })();

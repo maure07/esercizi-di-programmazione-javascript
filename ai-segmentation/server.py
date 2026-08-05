@@ -172,6 +172,8 @@ def taglia():
             lato=data.get("lato"),
             profondita=data.get("profondita"),
             n_connettori=int(data.get("n_connettori", 1)),
+            sel_min=data.get("selMin"),
+            sel_max=data.get("selMax"),
         )
     except Exception as e:
         print("taglio fallito:", e, file=sys.stderr)
