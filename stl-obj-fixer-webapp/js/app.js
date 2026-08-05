@@ -1193,36 +1193,18 @@
     if (bordo.size < 3) return null;
     let cx = 0, cy = 0, cz = 0;
     bordo.forEach((v) => { cx += part.positions[v * 3]; cy += part.positions[v * 3 + 1]; cz += part.positions[v * 3 + 2]; });
-    const n = bordo.size; cx /= n; cy /= n; cz /= n;
-    // matrice di dispersione: la direzione con meno dispersione e' la
-    // perpendicolare al piano che meglio approssima il bordo
-    let xx = 0, xy = 0, xz = 0, yy = 0, yz = 0, zz = 0;
-    bordo.forEach((v) => {
-      const dx = part.positions[v * 3] - cx, dy = part.positions[v * 3 + 1] - cy, dz = part.positions[v * 3 + 2] - cz;
-      xx += dx * dx; xy += dx * dy; xz += dx * dz; yy += dy * dy; yz += dy * dz; zz += dz * dz;
-    });
-    // trova l'autovettore piu' piccolo per iterazione inversa semplificata:
-    // si prova con le tre direzioni base e si tiene quella con dispersione minima
-    let migliore = null, minVar = Infinity;
-    const prova = [];
-    for (let a = 0; a < 12; a++) {
-      const th = Math.PI * a / 12;
-      for (let b = 0; b < 12; b++) {
-        const ph = Math.PI * b / 12;
-        prova.push([Math.sin(ph) * Math.cos(th), Math.sin(ph) * Math.sin(th), Math.cos(ph)]);
-      }
-    }
-    for (const d of prova) {
-      const varianza = d[0] * (xx * d[0] + xy * d[1] + xz * d[2])
-                     + d[1] * (xy * d[0] + yy * d[1] + yz * d[2])
-                     + d[2] * (xz * d[0] + yz * d[1] + zz * d[2]);
-      if (varianza < minVar) { minVar = varianza; migliore = d; }
-    }
-    if (!migliore) return null;
-    // la normale deve puntare VERSO la selezione, e nello stesso giro si
-    // ricava anche il bounding box di TUTTA la selezione (non solo il
-    // bordo): serve dopo per limitare il taglio alla zona scelta, invece
-    // di tagliare l'intero pezzo con un piano infinito.
+    const nBordo = bordo.size; cx /= nBordo; cy /= nBordo; cz /= nBordo;
+
+    // Centroide della selezione e, separatamente, del RESTO del pezzo: la
+    // normale del piano e' la direzione fra i due, non l'autovettore a
+    // minor dispersione del bordo. Quel bordo, su una zona organica
+    // (es. una mano, con dita/nocche), non e' affatto un anello piatto:
+    // e' un contorno frastagliato che gira in 3D, e la sua direzione a
+    // minor varianza puo' finire quasi a caso — spesso LUNGO il braccio
+    // invece che ATTRAVERSO il polso, tagliando "in lungo" invece che
+    // staccare la mano. Il centroide selezione->resto invece punta sempre
+    // in modo affidabile "fuori" dall'appendice selezionata, verso il
+    // corpo a cui e' attaccata.
     let sx = 0, sy = 0, sz = 0, ns = 0;
     const selMin = [Infinity, Infinity, Infinity];
     const selMax = [-Infinity, -Infinity, -Infinity];
@@ -1236,9 +1218,55 @@
       }
     });
     sx /= ns; sy /= ns; sz /= ns;
-    const verso = (sx - cx) * migliore[0] + (sy - cy) * migliore[1] + (sz - cz) * migliore[2];
-    if (verso < 0) migliore = [-migliore[0], -migliore[1], -migliore[2]];
-    return { punto: [cx, cy, cz], normale: migliore, nBordo: n, selMin, selMax };
+
+    const nTri = part.indices.length / 3;
+    let rx = 0, ry = 0, rz = 0, nr = 0;
+    for (let f = 0; f < nTri; f++) {
+      if (sel.has(f)) continue;
+      for (let k = 0; k < 3; k++) {
+        const v = part.indices[f * 3 + k];
+        rx += part.positions[v * 3]; ry += part.positions[v * 3 + 1]; rz += part.positions[v * 3 + 2]; nr++;
+      }
+    }
+
+    let normale;
+    if (nr > 0) {
+      rx /= nr; ry /= nr; rz /= nr;
+      let dx = sx - rx, dy = sy - ry, dz = sz - rz;
+      const len = Math.hypot(dx, dy, dz);
+      normale = len > 1e-9 ? [dx / len, dy / len, dz / len] : null;
+    } else {
+      normale = null;
+    }
+
+    if (!normale) {
+      // ripiego (selezione = tutto il pezzo, o degenere): torna al vecchio
+      // fit ai minimi quadrati sul bordo, meglio di niente
+      let xx = 0, xy = 0, xz = 0, yy = 0, yz = 0, zz = 0;
+      bordo.forEach((v) => {
+        const dx = part.positions[v * 3] - cx, dy = part.positions[v * 3 + 1] - cy, dz = part.positions[v * 3 + 2] - cz;
+        xx += dx * dx; xy += dx * dy; xz += dx * dz; yy += dy * dy; yz += dy * dz; zz += dz * dz;
+      });
+      let migliore = null, minVar = Infinity;
+      for (let a = 0; a < 12; a++) {
+        const th = Math.PI * a / 12;
+        for (let b = 0; b < 12; b++) {
+          const ph = Math.PI * b / 12;
+          const d = [Math.sin(ph) * Math.cos(th), Math.sin(ph) * Math.sin(th), Math.cos(ph)];
+          const varianza = d[0] * (xx * d[0] + xy * d[1] + xz * d[2])
+                         + d[1] * (xy * d[0] + yy * d[1] + yz * d[2])
+                         + d[2] * (xz * d[0] + yz * d[1] + zz * d[2]);
+          if (varianza < minVar) { minVar = varianza; migliore = d; }
+        }
+      }
+      if (!migliore) return null;
+      normale = migliore;
+    }
+
+    // la normale deve puntare VERSO la selezione
+    const verso = (sx - cx) * normale[0] + (sy - cy) * normale[1] + (sz - cz) * normale[2];
+    if (verso < 0) normale = [-normale[0], -normale[1], -normale[2]];
+    return { punto: [cx, cy, cz], normale, nBordo, selMin, selMax };
   }
 
   // Taglio PIATTO sulla selezione, con booleane esatte sul companion.
@@ -2753,6 +2781,12 @@
       }
     });
     return out;
+  };
+  window.__pianoTest = () => {
+    if (!cutSelection || !currentResult) return null;
+    const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
+    if (!part) return null;
+    return pianoDelBordo(part, cutSelection.faces);
   };
   window.__cutInfo = () => {
     if (!cutSelection || !currentResult) return null;
