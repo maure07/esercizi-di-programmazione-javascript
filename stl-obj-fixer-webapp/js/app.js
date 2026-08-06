@@ -1289,13 +1289,27 @@
     // piega netta vicino al punto toccato) puo' allargarsi molto oltre
     // l'intenzione, anche col cursore Estensione al minimo: il risultato e'
     // un pezzo enorme staccato "senza senso", scoperto solo a taglio fatto.
-    // Meglio avvisare PRIMA, quando si vede ancora quanti triangoli sono
-    // stati presi rispetto al pezzo intero.
+    // Il conteggio triangoli da solo NON basta: su un pezzo grande e denso
+    // (es. un busto pieno di dettagli) una selezione puo' restare sotto il
+    // 35% dei triangoli pur estendendosi per meta' dell'altezza del pezzo,
+    // perche' i triangoli non sono distribuiti uniformemente nello spazio.
+    // Quello che conta davvero e' quanto e' grande, in MISURE REALI, la
+    // scatola della selezione rispetto al pezzo intero: e' proprio quella
+    // scatola (bbox + margine) a decidere cosa tocca il taglio locale.
     const nTriParte = part.indices.length / 3;
     const fracSelezione = cutSelection.faces.size / nTriParte;
-    if (fracSelezione > 0.35) {
+    const dimSel = [piano.selMax[0] - piano.selMin[0], piano.selMax[1] - piano.selMin[1], piano.selMax[2] - piano.selMin[2]];
+    const dimParte = [
+      part.stats.bboxMax[0] - part.stats.bboxMin[0],
+      part.stats.bboxMax[1] - part.stats.bboxMin[1],
+      part.stats.bboxMax[2] - part.stats.bboxMin[2],
+    ];
+    const diagSel = Math.hypot(dimSel[0], dimSel[1], dimSel[2]);
+    const diagParte = Math.hypot(dimParte[0], dimParte[1], dimParte[2]) || 1;
+    const fracSpaziale = diagSel / diagParte;
+    if (fracSelezione > 0.35 || fracSpaziale > 0.3) {
       const continua = confirm(
-        `La selezione occupa circa il ${Math.round(fracSelezione * 100)}% del pezzo (${cutSelection.faces.size} triangoli su ${nTriParte}): sembra molto piu' grande di una singola zona come una mano o un dito.\n\n` +
+        `La selezione occupa circa il ${Math.round(fracSelezione * 100)}% dei triangoli del pezzo e si estende per circa il ${Math.round(fracSpaziale * 100)}% delle sue dimensioni: sembra molto piu' grande di una singola zona come una mano o un dito.\n\n` +
         'Se il pennello/"un clic" si e\' allargato troppo, prova ad abbassare "Estensione" oppure usa il Lazo per disegnare a mano il contorno esatto.\n\n' +
         'Vuoi tagliare comunque questa selezione?'
       );
@@ -2343,6 +2357,7 @@
   function smartSelect(part, seedFace, estensione, maxFrazione) {
     const topo = ensurePartTopology(part);
     const conc = ensureConcavita(part);
+    const C = topo.centroids;
     const nTris = part.indices.length / 3;
     const maxFacce = Math.max(20, Math.floor(nTris * (maxFrazione || 0.85)));
 
@@ -2359,6 +2374,59 @@
     const tipica = campione.length ? campione[Math.floor(campione.length / 2)] : 0.5;
     const soglia = Math.max(1e-4, tipica * (0.6 + estensione / 22));
 
+    // RAGGIO MORBIDO dal punto cliccato, in millimetri reali (relativo alla
+    // dimensione del PEZZO). Misurato su un modello reale (Meshy): su una
+    // zona liscia senza pieghe nette vicino al punto toccato, la sola soglia
+    // di valle sopra NON basta a fermare la crescita — anche a Estensione
+    // minima la selezione arrivava a mezzo metro di altezza, perche' non
+    // c'e' nessuna valle abbastanza profonda da incontrare.
+    // Non e' un muro rigido (romperebbe casi legittimi come "prendi tutta
+    // la scarpa", che e' grande rispetto alla gamba ma e' UNA zona sola):
+    // oltre il raggio si somma un costo che cresce col quadrato della
+    // distanza in eccesso. Vicino al raggio non cambia quasi nulla (la
+    // scarpa la si prende comunque, la valle della caviglia la ferma
+    // comunque), ma su un terreno piatto senza valli il costo aggiuntivo
+    // supera la soglia da solo, anche se non c'e' nessuna vera piega.
+    // Il pezzo puo' essere gia' isolato e piccolo (es. la sola scarpa, dopo
+    // che la segmentazione automatica l'ha gia' separata dalla gamba — li'
+    // "tutto il pezzo" e' la zona giusta e non conviene limitarlo), oppure
+    // enorme perche' la segmentazione non e' riuscita a separare nulla (es.
+    // busto+braccia+testa tutti insieme) — li' serve invece un raggio
+    // stretto. Si confronta la dimensione del PEZZO con quella di TUTTO IL
+    // MODELLO per capire in quale dei due casi si e': un pezzo che da solo
+    // e' gia' una piccola frazione del modello e' probabilmente una zona
+    // isolata (si lascia crescere quasi libero); un pezzo grande quanto il
+    // modello stesso e' probabilmente un blocco composito non separato (si
+    // stringe il raggio).
+    const bb0 = part.stats && part.stats.bboxMin, bb1 = part.stats && part.stats.bboxMax;
+    const maxDimParte = bb0 && bb1
+      ? Math.max(bb1[0] - bb0[0], bb1[1] - bb0[1], bb1[2] - bb0[2], 1e-6)
+      : Infinity;
+    const maxDimModello = currentResult && currentResult.parts && currentResult.parts.length
+      ? computeOverallMaxDimension(currentResult.parts)
+      : maxDimParte;
+    const fracParteModello = maxDimParte / (maxDimModello || 1e-6);
+    let raggioMorbido = fracParteModello < 0.4
+      ? maxDimParte * 1.3                          // pezzo gia' una zona isolata piccola: quasi libero
+      : maxDimParte * (0.07 + estensione / 300);   // pezzo grande/composito: raggio stretto
+    // PAVIMENTO legato alla risoluzione della mesh: su una mesh rada (poche
+    // facce grandi, tipico di un modello di prova o di un pezzo poco
+    // dettagliato) il raggio calcolato sopra puo' finire piu' piccolo di un
+    // singolo triangolo — la selezione sparirebbe del tutto. Si assicura
+    // sempre spazio per un po' di triangoli vicini al punto cliccato,
+    // misurando la distanza media dai vicini diretti del seme.
+    const adjSeed = topo.adjacency[seedFace];
+    if (adjSeed && adjSeed.length) {
+      let sommaDist = 0;
+      for (let i = 0; i < adjSeed.length; i++) {
+        const nb = adjSeed[i];
+        sommaDist += Math.hypot(C[nb * 3] - C[seedFace * 3], C[nb * 3 + 1] - C[seedFace * 3 + 1], C[nb * 3 + 2] - C[seedFace * 3 + 2]);
+      }
+      const distMediaVicini = sommaDist / adjSeed.length;
+      raggioMorbido = Math.max(raggioMorbido, distMediaVicini * 8);
+    }
+    const sx = C[seedFace * 3], sy = C[seedFace * 3 + 1], sz = C[seedFace * 3 + 2];
+
     const arrivo = new Float64Array(nTris).fill(Infinity);
     arrivo[seedFace] = conc[seedFace];
     const coda = [[arrivo[seedFace], seedFace]];
@@ -2369,6 +2437,10 @@
       const [c, f] = coda.splice(bi, 1)[0];
       if (c > arrivo[f]) continue;
       if (c > soglia) break;              // oltre questa valle non si passa
+      const dx = C[f * 3] - sx, dy = C[f * 3 + 1] - sy, dz = C[f * 3 + 2] - sz;
+      const distanza = Math.hypot(dx, dy, dz);
+      const extra = distanza > raggioMorbido ? soglia * Math.pow(distanza / raggioMorbido - 1, 2) : 0;
+      if (c + extra > soglia) continue;   // troppo lontano E senza una valle vera che lo giustifichi
       sel.add(f);
       const adj = topo.adjacency[f];
       for (let i = 0; i < adj.length; i++) {
