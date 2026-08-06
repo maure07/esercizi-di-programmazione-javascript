@@ -1285,6 +1285,22 @@
     if (!part) return;
     const piano = pianoDelBordo(part, cutSelection.faces);
     if (!piano) { alert('Non riesco a ricavare un piano dal bordo della selezione.'); return; }
+    // La selezione "un clic = tutta la zona" su superfici morbide (senza una
+    // piega netta vicino al punto toccato) puo' allargarsi molto oltre
+    // l'intenzione, anche col cursore Estensione al minimo: il risultato e'
+    // un pezzo enorme staccato "senza senso", scoperto solo a taglio fatto.
+    // Meglio avvisare PRIMA, quando si vede ancora quanti triangoli sono
+    // stati presi rispetto al pezzo intero.
+    const nTriParte = part.indices.length / 3;
+    const fracSelezione = cutSelection.faces.size / nTriParte;
+    if (fracSelezione > 0.35) {
+      const continua = confirm(
+        `La selezione occupa circa il ${Math.round(fracSelezione * 100)}% del pezzo (${cutSelection.faces.size} triangoli su ${nTriParte}): sembra molto piu' grande di una singola zona come una mano o un dito.\n\n` +
+        'Se il pennello/"un clic" si e\' allargato troppo, prova ad abbassare "Estensione" oppure usa il Lazo per disegnare a mano il contorno esatto.\n\n' +
+        'Vuoi tagliare comunque questa selezione?'
+      );
+      if (!continua) return;
+    }
     const health = await companionHealth();
     if (!health) return;
     if (!health.booleane_pro) {
