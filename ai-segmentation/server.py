@@ -127,6 +127,7 @@ def health():
         "booleane_pro": TAGLIA_AVAILABLE,
         "dettagli_rilievo": RILIEVI_AVAILABLE,
         "connettore_pro": CONN_AVAILABLE,
+        "taglia_pro_versione": getattr(taglia_pro, "VERSIONE", None) if TAGLIA_AVAILABLE else None,
     })
 
 

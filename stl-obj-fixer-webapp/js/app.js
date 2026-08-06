@@ -666,6 +666,9 @@
   // Manda la mesh saldata a http://127.0.0.1:8760 e riceve un'etichetta per
   // triangolo, poi costruisce le parti come al solito.
   const AI_URL = 'http://127.0.0.1:8760';
+  // deve corrispondere a VERSIONE in ai-segmentation/taglia_pro.py: serve a
+  // capire se sul PC gira ancora un companion vecchio (senza taglio locale)
+  const TAGLIA_PRO_VERSIONE_ATTESA = 'taglio-locale-2';
   async function runAiSegmentation() {
     if (!currentParsed) {
       alert('Carica prima un modello.');
@@ -1287,6 +1290,19 @@
     if (!health.booleane_pro) {
       alert('Le booleane PRO non sono installate sul companion.\n\nApri "ai-segmentation" e fai doppio clic su "install_pro.bat", poi riavvia "avvia.bat".');
       return;
+    }
+    // Il taglio "solo zona selezionata" vive nel companion (taglia_pro.py),
+    // non nel browser: se sul PC gira ancora una copia vecchia del
+    // companion (finestra nera non chiusa/riavviata) il taglio torna a
+    // tranciare tutto il pezzo, ma senza errori — e' silenzioso. Meglio
+    // avvisare subito invece di far scoprire il problema dal risultato.
+    if (health.taglia_pro_versione !== TAGLIA_PRO_VERSIONE_ATTESA) {
+      const continua = confirm(
+        'Il companion sul PC sembra una versione VECCHIA di "taglia_pro" (il taglio potrebbe tagliare tutto il pezzo invece che solo la zona selezionata).\n\n' +
+        'Chiudi la finestra nera del companion, sostituisci la cartella "ai-segmentation" con quella nuova e riavvia "avvia.bat" prima di continuare.\n\n' +
+        'Vuoi provare comunque il taglio adesso?'
+      );
+      if (!continua) return;
     }
     const conn = el.connAutoChk ? el.connAutoChk.checked : true;
     const gioco = el.connGioco ? parseInt(el.connGioco.value, 10) / 100 : 0.2;

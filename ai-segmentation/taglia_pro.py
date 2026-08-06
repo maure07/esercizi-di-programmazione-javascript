@@ -14,6 +14,11 @@ Funzione principale:
 """
 import numpy as np
 
+# Marcatore di versione: serve SOLO a capire, guardando il log del taglio
+# o /health, se il companion in esecuzione e' quello aggiornato (taglio
+# LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
+VERSIONE = "taglio-locale-2"
+
 
 # ---------------------------------------------------------------------------
 # utilita' geometriche
@@ -113,7 +118,7 @@ def taglia_con_piano(vertices, faces, punto, normale,
       a = lato dalla parte della normale (ha il PERNO)
       b = lato opposto (ha il FORO)
     """
-    log = []
+    log = [f"[{VERSIONE}]"]
     V = np.asarray(vertices, dtype=np.float64)
     F = np.asarray(faces, dtype=np.int64)
     n = _normalizza(normale)
