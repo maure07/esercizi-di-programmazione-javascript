@@ -405,6 +405,21 @@
       // maniglie
       copertaManiglie = [];
       const sfera = new THREE.SphereGeometry(raggioManiglia, 12, 10);
+      // MANIGLIA CENTRALE: sposta tutto il telo insieme. Senza di questa, per
+      // portare la coperta dal centro del pezzo fino al polso bisognava
+      // trascinare i pallini uno per uno.
+      let cx = 0, cy = 0, cz = 0;
+      for (let k = 0; k < N * N; k++) { cx += punti[k * 3]; cy += punti[k * 3 + 1]; cz += punti[k * 3 + 2]; }
+      cx /= N * N; cy /= N * N; cz /= N * N;
+      const centrale = new THREE.Mesh(
+        new THREE.SphereGeometry(raggioManiglia * 1.9, 16, 12),
+        new THREE.MeshBasicMaterial({ color: 0x5b8cff, depthTest: false })
+      );
+      centrale.position.set(cx, cy, cz);
+      centrale.renderOrder = 1001;
+      centrale.userData.maniglia = N * N;   // indice speciale = "sposta tutto"
+      copertaManiglie.push(centrale);
+      copertaGruppo.add(centrale);
       for (let k = 0; k < N * N; k++) {
         const bordo = (k < N) || (k >= N * (N - 1)) || (k % N === 0) || (k % N === N - 1);
         const m = new THREE.Mesh(sfera, new THREE.MeshBasicMaterial({

@@ -63,6 +63,7 @@
     copertaAxisY: document.getElementById('copertaAxisY'),
     copertaAxisZ: document.getElementById('copertaAxisZ'),
     copertaResetBtn: document.getElementById('copertaResetBtn'),
+    copertaPosizionaBtn: document.getElementById('copertaPosizionaBtn'),
     copertaScala: document.getElementById('copertaScala'),
     copertaScalaValue: document.getElementById('copertaScalaValue'),
     copertaCutBtn: document.getElementById('copertaCutBtn'),
@@ -1968,6 +1969,11 @@
     // col telo e col piano non si dipinge: via i comandi del pennello
     if (el.brushRadiusRow) el.brushRadiusRow.style.display = senzaSelezione ? 'none' : 'flex';
     if (el.smartSelBox) el.smartSelBox.style.display = senzaSelezione ? 'none' : 'block';
+    copertaPosiziona = false;
+    if (el.copertaPosizionaBtn) {
+      el.copertaPosizionaBtn.classList.remove('active');
+      el.copertaPosizionaBtn.textContent = '📍 Metti dove clicco';
+    }
     if (isCoperta) { popolaCopertaParti(); creaCoperta(); }
     else viewer.nascondiCoperta();
     document.getElementById('cutHint').textContent =
@@ -1989,6 +1995,20 @@
   let coperta = null;                  // { partId, punti: Float64Array(N*N*3) }
   let copertaAsse = 'z';
   let copertaTrascina = null;          // { indice, partenza }
+  let copertaPosiziona = false;        // "metti il telo dove clicco"
+
+  // porta il telo (senza deformarlo) col centro su un punto scelto
+  function spostaCopertaSu(punto) {
+    if (!coperta) return;
+    const n = COPERTA_N * COPERTA_N;
+    let cx = 0, cy = 0, cz = 0;
+    for (let i = 0; i < n; i++) { cx += coperta.punti[i * 3]; cy += coperta.punti[i * 3 + 1]; cz += coperta.punti[i * 3 + 2]; }
+    const dx = punto[0] - cx / n, dy = punto[1] - cy / n, dz = punto[2] - cz / n;
+    for (let i = 0; i < coperta.punti.length; i += 3) {
+      coperta.punti[i] += dx; coperta.punti[i + 1] += dy; coperta.punti[i + 2] += dz;
+    }
+    disegnaCoperta();
+  }
 
   function copertaParte() {
     if (!currentResult) return null;
@@ -2052,6 +2072,12 @@
   el.copertaAxisY.addEventListener('click', () => setCopertaAsse('y'));
   el.copertaAxisZ.addEventListener('click', () => setCopertaAsse('z'));
   el.copertaResetBtn.addEventListener('click', () => creaCoperta());
+  el.copertaPosizionaBtn.addEventListener('click', () => {
+    copertaPosiziona = !copertaPosiziona;
+    el.copertaPosizionaBtn.classList.toggle('active', copertaPosiziona);
+    el.copertaPosizionaBtn.textContent = copertaPosiziona
+      ? '📍 Clicca sul modello…' : '📍 Metti dove clicco';
+  });
   el.copertaPart.addEventListener('change', () => creaCoperta());
   el.copertaScala.addEventListener('input', () => {
     el.copertaScalaValue.textContent = el.copertaScala.value + '%';
@@ -2114,6 +2140,7 @@
   // accessori per i test
   window.__copertaPunti = () => (coperta ? Array.from(coperta.punti) : null);
   window.__maniglieSotto = (x, y) => viewer.maniglieSotto(x, y);
+  window.__copertaIndiceCentro = () => COPERTA_N * COPERTA_N;
   window.__copertaMuovi = (indice, delta) => {
     if (!coperta) return false;
     const o = indice * 3;
@@ -2761,10 +2788,32 @@
     // Se e' altrove, si lascia ruotare la vista come sempre.
     if (cutMode && cutTool === 'coperta' && coperta) {
       const k = viewer.maniglieSotto(x, y);
+      if (k === COPERTA_N * COPERTA_N) {
+        // pallino blu al centro: si trascina TUTTO il telo insieme
+        let cx = 0, cy = 0, cz = 0;
+        const n = COPERTA_N * COPERTA_N;
+        for (let i = 0; i < n; i++) { cx += coperta.punti[i * 3]; cy += coperta.punti[i * 3 + 1]; cz += coperta.punti[i * 3 + 2]; }
+        copertaTrascina = {
+          indice: -1, partenza: [cx / n, cy / n, cz / n],
+          tutti: Float64Array.from(coperta.punti),
+        };
+        return true;
+      }
       if (k >= 0) {
         copertaTrascina = { indice: k, partenza: [
           coperta.punti[k * 3], coperta.punti[k * 3 + 1], coperta.punti[k * 3 + 2]] };
         return true;
+      }
+      // "metti il telo dove clicco": un clic sul modello lo porta li'
+      if (copertaPosiziona) {
+        const hit = viewer.raycastAt(x, y);
+        if (hit) {
+          spostaCopertaSu(hit.point);
+          copertaPosiziona = false;
+          el.copertaPosizionaBtn.classList.remove('active');
+          el.copertaPosizionaBtn.textContent = '📍 Metti dove clicco';
+          return true;
+        }
       }
       return false;
     }
@@ -2789,8 +2838,21 @@
       // sposta davvero in 3D, nella direzione in cui si sta guardando
       const p = viewer.puntoSulPianoVista(e.clientX, e.clientY, copertaTrascina.partenza);
       if (p) {
-        const o = copertaTrascina.indice * 3;
-        coperta.punti[o] = p[0]; coperta.punti[o + 1] = p[1]; coperta.punti[o + 2] = p[2];
+        if (copertaTrascina.indice < 0) {
+          // maniglia centrale: sposta tutto il telo, senza deformarlo
+          const dx = p[0] - copertaTrascina.partenza[0];
+          const dy = p[1] - copertaTrascina.partenza[1];
+          const dz = p[2] - copertaTrascina.partenza[2];
+          const base = copertaTrascina.tutti;
+          for (let i = 0; i < coperta.punti.length; i += 3) {
+            coperta.punti[i] = base[i] + dx;
+            coperta.punti[i + 1] = base[i + 1] + dy;
+            coperta.punti[i + 2] = base[i + 2] + dz;
+          }
+        } else {
+          const o = copertaTrascina.indice * 3;
+          coperta.punti[o] = p[0]; coperta.punti[o + 1] = p[1]; coperta.punti[o + 2] = p[2];
+        }
         disegnaCoperta();
       }
       return;
