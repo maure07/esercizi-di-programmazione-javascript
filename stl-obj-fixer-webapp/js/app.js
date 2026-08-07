@@ -69,6 +69,11 @@
     planePos: document.getElementById('planePos'),
     planePosValue: document.getElementById('planePosValue'),
     planeCutBtn: document.getElementById('planeCutBtn'),
+    planeIncl: document.getElementById('planeIncl'),
+    planeInclValue: document.getElementById('planeInclValue'),
+    planeGira: document.getElementById('planeGira'),
+    planeGiraValue: document.getElementById('planeGiraValue'),
+    planeResetBtn: document.getElementById('planeResetBtn'),
     cutFlatProBtn: document.getElementById('cutFlatProBtn'),
     smartSelChk: document.getElementById('smartSelChk'),
     smartSelAngle: document.getElementById('smartSelAngle'),
@@ -668,7 +673,7 @@
   const AI_URL = 'http://127.0.0.1:8760';
   // deve corrispondere a VERSIONE in ai-segmentation/taglia_pro.py: serve a
   // capire se sul PC gira ancora un companion vecchio (senza taglio locale)
-  const TAGLIA_PRO_VERSIONE_ATTESA = 'taglio-locale-2';
+  const TAGLIA_PRO_VERSIONE_ATTESA = 'taglio-locale-3';
   async function runAiSegmentation() {
     if (!currentParsed) {
       alert('Carica prima un modello.');
@@ -1179,6 +1184,44 @@
     return Math.sqrt(best);
   }
 
+  // Autovalori/autovettori di una matrice 3x3 SIMMETRICA (metodo di Jacobi).
+  // Serve per trovare il piano che meglio approssima un insieme di punti:
+  // l'autovettore dell'autovalore piu' piccolo e' la perpendicolare a quel
+  // piano. Prima qui si provavano 144 direzioni "a tentativi" (una griglia
+  // ogni ~15 gradi): su un anello stretto come un polso quell'errore bastava
+  // a far uscire il taglio storto. Con Jacobi la direzione e' esatta.
+  function autovettoriSimmetrica3x3(xx, xy, xz, yy, yz, zz) {
+    const a = [[xx, xy, xz], [xy, yy, yz], [xz, yz, zz]];
+    const v = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+    for (let giro = 0; giro < 60; giro++) {
+      // azzera, uno alla volta, il termine fuori diagonale piu' grande
+      let p = 0, q = 1, max = Math.abs(a[0][1]);
+      if (Math.abs(a[0][2]) > max) { max = Math.abs(a[0][2]); p = 0; q = 2; }
+      if (Math.abs(a[1][2]) > max) { max = Math.abs(a[1][2]); p = 1; q = 2; }
+      if (max < 1e-14) break;
+      const theta = (a[q][q] - a[p][p]) / (2 * a[p][q]);
+      const segno = theta >= 0 ? 1 : -1;
+      const t = segno / (Math.abs(theta) + Math.sqrt(theta * theta + 1));
+      const c = 1 / Math.sqrt(t * t + 1), s = t * c;
+      for (let k = 0; k < 3; k++) {
+        const akp = a[k][p], akq = a[k][q];
+        a[k][p] = c * akp - s * akq; a[k][q] = s * akp + c * akq;
+      }
+      for (let k = 0; k < 3; k++) {
+        const apk = a[p][k], aqk = a[q][k];
+        a[p][k] = c * apk - s * aqk; a[q][k] = s * apk + c * aqk;
+      }
+      for (let k = 0; k < 3; k++) {
+        const vkp = v[k][p], vkq = v[k][q];
+        v[k][p] = c * vkp - s * vkq; v[k][q] = s * vkp + c * vkq;
+      }
+    }
+    const val = [a[0][0], a[1][1], a[2][2]];
+    const vec = [[v[0][0], v[1][0], v[2][0]], [v[0][1], v[1][1], v[2][1]], [v[0][2], v[1][2], v[2][2]]];
+    const ordine = [0, 1, 2].sort((i, j) => val[i] - val[j]);
+    return { valori: ordine.map((i) => val[i]), vettori: ordine.map((i) => vec[i]) };
+  }
+
   // Piano medio del BORDO della selezione: i vertici che stanno sulla linea
   // fra i triangoli scelti e quelli lasciati fuori. E' il piano su cui i due
   // pezzi si separeranno.
@@ -1198,16 +1241,16 @@
     bordo.forEach((v) => { cx += part.positions[v * 3]; cy += part.positions[v * 3 + 1]; cz += part.positions[v * 3 + 2]; });
     const nBordo = bordo.size; cx /= nBordo; cy /= nBordo; cz /= nBordo;
 
-    // Centroide della selezione e, separatamente, del RESTO del pezzo: la
-    // normale del piano e' la direzione fra i due, non l'autovettore a
-    // minor dispersione del bordo. Quel bordo, su una zona organica
-    // (es. una mano, con dita/nocche), non e' affatto un anello piatto:
-    // e' un contorno frastagliato che gira in 3D, e la sua direzione a
-    // minor varianza puo' finire quasi a caso — spesso LUNGO il braccio
-    // invece che ATTRAVERSO il polso, tagliando "in lungo" invece che
-    // staccare la mano. Il centroide selezione->resto invece punta sempre
-    // in modo affidabile "fuori" dall'appendice selezionata, verso il
-    // corpo a cui e' attaccata.
+    // La normale del piano si ricava dall'ANELLO DEL BORDO (es. l'anello del
+    // polso, se hai selezionato la mano): e' quello, e solo quello, a dire
+    // dove e con che inclinazione i due pezzi si devono separare.
+    //
+    // Prima qui si usava la direzione "centro della selezione meno centro di
+    // tutto il resto del pezzo". Sbagliato: su una mano attaccata a un
+    // braccio, il "centro del resto" e' il baricentro di TUTTO il corpo, e
+    // quella direzione punta in diagonale verso il centro del busto — non
+    // lungo l'avambraccio. Risultato: taglio storto, in diagonale a meta'
+    // della mano invece che dritto al polso.
     let sx = 0, sy = 0, sz = 0, ns = 0;
     const selMin = [Infinity, Infinity, Infinity];
     const selMax = [-Infinity, -Infinity, -Infinity];
@@ -1222,48 +1265,41 @@
     });
     sx /= ns; sy /= ns; sz /= ns;
 
-    const nTri = part.indices.length / 3;
-    let rx = 0, ry = 0, rz = 0, nr = 0;
-    for (let f = 0; f < nTri; f++) {
-      if (sel.has(f)) continue;
-      for (let k = 0; k < 3; k++) {
-        const v = part.indices[f * 3 + k];
-        rx += part.positions[v * 3]; ry += part.positions[v * 3 + 1]; rz += part.positions[v * 3 + 2]; nr++;
-      }
-    }
+    // matrice di dispersione dei soli punti del bordo
+    let xx = 0, xy = 0, xz = 0, yy = 0, yz = 0, zz = 0;
+    bordo.forEach((v) => {
+      const dx = part.positions[v * 3] - cx, dy = part.positions[v * 3 + 1] - cy, dz = part.positions[v * 3 + 2] - cz;
+      xx += dx * dx; xy += dx * dy; xz += dx * dz; yy += dy * dy; yz += dy * dz; zz += dz * dz;
+    });
+    const auto = autovettoriSimmetrica3x3(xx, xy, xz, yy, yz, zz);
+    // l'anello si sviluppa nelle due direzioni con PIU' dispersione; la terza,
+    // quella con meno, e' la perpendicolare al piano dell'anello
+    let normale = auto.vettori[0];
+    const lung = Math.hypot(normale[0], normale[1], normale[2]);
+    if (!(lung > 1e-9)) return null;
+    normale = [normale[0] / lung, normale[1] / lung, normale[2] / lung];
 
-    let normale;
-    if (nr > 0) {
-      rx /= nr; ry /= nr; rz /= nr;
-      let dx = sx - rx, dy = sy - ry, dz = sz - rz;
-      const len = Math.hypot(dx, dy, dz);
-      normale = len > 1e-9 ? [dx / len, dy / len, dz / len] : null;
-    } else {
-      normale = null;
-    }
-
-    if (!normale) {
-      // ripiego (selezione = tutto il pezzo, o degenere): torna al vecchio
-      // fit ai minimi quadrati sul bordo, meglio di niente
-      let xx = 0, xy = 0, xz = 0, yy = 0, yz = 0, zz = 0;
-      bordo.forEach((v) => {
-        const dx = part.positions[v * 3] - cx, dy = part.positions[v * 3 + 1] - cy, dz = part.positions[v * 3 + 2] - cz;
-        xx += dx * dx; xy += dx * dy; xz += dx * dz; yy += dy * dy; yz += dy * dz; zz += dz * dz;
-      });
-      let migliore = null, minVar = Infinity;
-      for (let a = 0; a < 12; a++) {
-        const th = Math.PI * a / 12;
-        for (let b = 0; b < 12; b++) {
-          const ph = Math.PI * b / 12;
-          const d = [Math.sin(ph) * Math.cos(th), Math.sin(ph) * Math.sin(th), Math.cos(ph)];
-          const varianza = d[0] * (xx * d[0] + xy * d[1] + xz * d[2])
-                         + d[1] * (xy * d[0] + yy * d[1] + yz * d[2])
-                         + d[2] * (xz * d[0] + yz * d[1] + zz * d[2]);
-          if (varianza < minVar) { minVar = varianza; migliore = d; }
+    // Quanto e' affidabile? Se l'anello e' quasi una retta (punti in fila) le
+    // due direzioni piu' piccole si equivalgono e la perpendicolare non e'
+    // definita: in quel caso si ripiega sulla direzione selezione->resto,
+    // grossolana ma sempre definita.
+    const l0 = Math.abs(auto.valori[0]), l1 = Math.abs(auto.valori[1]);
+    if (l1 < 1e-12 || l0 / l1 > 0.6) {
+      const nTri = part.indices.length / 3;
+      let rx = 0, ry = 0, rz = 0, nr = 0;
+      for (let f = 0; f < nTri; f++) {
+        if (sel.has(f)) continue;
+        for (let k = 0; k < 3; k++) {
+          const v = part.indices[f * 3 + k];
+          rx += part.positions[v * 3]; ry += part.positions[v * 3 + 1]; rz += part.positions[v * 3 + 2]; nr++;
         }
       }
-      if (!migliore) return null;
-      normale = migliore;
+      if (nr > 0) {
+        rx /= nr; ry /= nr; rz /= nr;
+        const dx = sx - rx, dy = sy - ry, dz = sz - rz;
+        const len = Math.hypot(dx, dy, dz);
+        if (len > 1e-9) normale = [dx / len, dy / len, dz / len];
+      }
     }
 
     // la normale deve puntare VERSO la selezione
@@ -1936,16 +1972,54 @@
     el.planeAxisZ.classList.toggle('active', ax === 'z');
     updatePlanePreview();
   }
+  // Piano manuale con inclinazione LIBERA. L'asse X/Y/Z e' solo la direzione
+  // di partenza: "Inclina" la piega di tot gradi e "Gira" sceglie in che
+  // verso pende. Le due manopole insieme raggiungono qualsiasi orientamento,
+  // come il piano di taglio di uno slicer.
   function planeFromControls(part) {
     const ai = planeAxis === 'x' ? 0 : (planeAxis === 'y' ? 1 : 2);
-    const lo = part.stats.bboxMin[ai], hi = part.stats.bboxMax[ai];
+    const e = [0, 0, 0]; e[ai] = 1;
+    // due direzioni perpendicolari all'asse: sono il "piano" in cui inclinare
+    const tmp = ai === 2 ? [1, 0, 0] : [0, 0, 1];
+    let u = [tmp[1] * e[2] - tmp[2] * e[1], tmp[2] * e[0] - tmp[0] * e[2], tmp[0] * e[1] - tmp[1] * e[0]];
+    const lu = Math.hypot(u[0], u[1], u[2]) || 1;
+    u = [u[0] / lu, u[1] / lu, u[2] / lu];
+    const v = [e[1] * u[2] - e[2] * u[1], e[2] * u[0] - e[0] * u[2], e[0] * u[1] - e[1] * u[0]];
+
+    const incl = (parseInt(el.planeIncl.value, 10) || 0) * Math.PI / 180;
+    const gira = (parseInt(el.planeGira.value, 10) || 0) * Math.PI / 180;
+    const si = Math.sin(incl), co = Math.cos(incl);
+    const cg = Math.cos(gira), sg = Math.sin(gira);
+    const normal = [
+      si * (cg * u[0] + sg * v[0]) + co * e[0],
+      si * (cg * u[1] + sg * v[1]) + co * e[1],
+      si * (cg * u[2] + sg * v[2]) + co * e[2],
+    ];
+    const ln = Math.hypot(normal[0], normal[1], normal[2]) || 1;
+    normal[0] /= ln; normal[1] /= ln; normal[2] /= ln;
+
+    // La posizione scorre lungo la NORMALE (non lungo l'asse di partenza),
+    // cosi' il cursore "Posizione" copre sempre tutto il pezzo, anche con il
+    // piano inclinato: si proietta l'ingombro del pezzo sulla normale.
+    const mn = part.stats.bboxMin, mx = part.stats.bboxMax;
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < 8; i++) {
+      const px = (i & 1) ? mx[0] : mn[0];
+      const py = (i & 2) ? mx[1] : mn[1];
+      const pz = (i & 4) ? mx[2] : mn[2];
+      const d = px * normal[0] + py * normal[1] + pz * normal[2];
+      if (d < lo) lo = d;
+      if (d > hi) hi = d;
+    }
     const f = parseInt(el.planePos.value, 10) / 100;
     const at = lo + (hi - lo) * f;
-    const cx = (part.stats.bboxMin[0] + part.stats.bboxMax[0]) / 2;
-    const cy = (part.stats.bboxMin[1] + part.stats.bboxMax[1]) / 2;
-    const cz = (part.stats.bboxMin[2] + part.stats.bboxMax[2]) / 2;
-    const point = [cx, cy, cz]; point[ai] = at;
-    const normal = [0, 0, 0]; normal[ai] = 1;
+    const c = [(mn[0] + mx[0]) / 2, (mn[1] + mx[1]) / 2, (mn[2] + mx[2]) / 2];
+    const dc = c[0] * normal[0] + c[1] * normal[1] + c[2] * normal[2];
+    const point = [
+      c[0] + normal[0] * (at - dc),
+      c[1] + normal[1] * (at - dc),
+      c[2] + normal[2] * (at - dc),
+    ];
     return { point, normal, ai };
   }
   function updatePlanePreview() {
@@ -1953,6 +2027,8 @@
     const part = planePartObj();
     if (!part) { viewer.hideCutPlane(); return; }
     el.planePosValue.textContent = el.planePos.value + '%';
+    el.planeInclValue.textContent = el.planeIncl.value + '°';
+    el.planeGiraValue.textContent = el.planeGira.value + '°';
     const { point, normal } = planeFromControls(part);
     const s = part.stats.bboxMax, m = part.stats.bboxMin;
     const size = 1.4 * Math.max(s[0] - m[0], s[1] - m[1], s[2] - m[2], 1);
@@ -1960,6 +2036,11 @@
   }
   el.planePart.addEventListener('change', updatePlanePreview);
   el.planePos.addEventListener('input', updatePlanePreview);
+  el.planeIncl.addEventListener('input', updatePlanePreview);
+  el.planeGira.addEventListener('input', updatePlanePreview);
+  el.planeResetBtn.addEventListener('click', () => {
+    el.planeIncl.value = 0; el.planeGira.value = 0; updatePlanePreview();
+  });
   el.planeAxisX.addEventListener('click', () => setPlaneAxis('x'));
   el.planeAxisY.addEventListener('click', () => setPlaneAxis('y'));
   el.planeAxisZ.addEventListener('click', () => setPlaneAxis('z'));
@@ -2886,11 +2967,54 @@
     });
     return out;
   };
+  // seleziona i triangoli il cui baricentro cade in una scatola: serve ai
+  // test per isolare il calcolo del PIANO dalla selezione automatica
+  window.__selBox = (min, max) => {
+    if (!currentResult) return 0;
+    let scelta = null, meglio = -1;
+    for (const p of currentResult.parts) {
+      const nT = p.indices.length / 3;
+      const dentro = new Set();
+      for (let f = 0; f < nT; f++) {
+        let bx = 0, by = 0, bz = 0;
+        for (let k = 0; k < 3; k++) {
+          const v = p.indices[f * 3 + k];
+          bx += p.positions[v * 3]; by += p.positions[v * 3 + 1]; bz += p.positions[v * 3 + 2];
+        }
+        bx /= 3; by /= 3; bz /= 3;
+        if (bx >= min[0] && bx <= max[0] && by >= min[1] && by <= max[1] && bz >= min[2] && bz <= max[2]) dentro.add(f);
+      }
+      if (dentro.size > meglio) { meglio = dentro.size; scelta = { partId: p.id, faces: dentro }; }
+    }
+    if (!scelta || scelta.faces.size === 0) return 0;
+    cutSelection = scelta;
+    refreshCutHighlight();
+    return scelta.faces.size;
+  };
   window.__pianoTest = () => {
     if (!cutSelection || !currentResult) return null;
     const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
     if (!part) return null;
-    return pianoDelBordo(part, cutSelection.faces);
+    const piano = pianoDelBordo(part, cutSelection.faces);
+    if (!piano) return null;
+    // per confronto nei test: la vecchia normale "centro selezione meno
+    // centro del resto", quella che faceva uscire il taglio in diagonale
+    const sel = cutSelection.faces;
+    const nTri = part.indices.length / 3;
+    let sx = 0, sy = 0, sz = 0, ns = 0, rx = 0, ry = 0, rz = 0, nr = 0;
+    for (let f = 0; f < nTri; f++) {
+      for (let k = 0; k < 3; k++) {
+        const v = part.indices[f * 3 + k];
+        const px = part.positions[v * 3], py = part.positions[v * 3 + 1], pz = part.positions[v * 3 + 2];
+        if (sel.has(f)) { sx += px; sy += py; sz += pz; ns++; } else { rx += px; ry += py; rz += pz; nr++; }
+      }
+    }
+    if (ns && nr) {
+      const dx = sx / ns - rx / nr, dy = sy / ns - ry / nr, dz = sz / ns - rz / nr;
+      const L = Math.hypot(dx, dy, dz) || 1;
+      piano.normaleVecchia = [dx / L, dy / L, dz / L];
+    }
+    return piano;
   };
   window.__cutInfo = () => {
     if (!cutSelection || !currentResult) return null;

@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "taglio-locale-2"
+VERSIONE = "taglio-locale-3"
 
 
 # ---------------------------------------------------------------------------
@@ -82,13 +82,22 @@ def _sezione(V, F, punto, normale, tolleranza):
         vicini = P
     cu = vicini @ u
     cv = vicini @ v
+    # (u, v, n) e' una terna ortonormale, quindi un punto si ricostruisce come
+    # u*(p@u) + v*(p@v) + n*(p@n). Il centro del connettore deve stare NEL
+    # MEZZO della faccia di taglio (componenti u,v al centro della sezione) e
+    # SUL piano di taglio (componente n uguale a quella del punto del piano).
+    #
+    # Prima qui si scriveva "punto + u*mezzo_u + v*mezzo_v": si SOMMAVANO le
+    # componenti u,v invece di sostituirle, e `punto` le sue componenti u,v
+    # ce le ha gia'. Su un modello lontano dall'origine (le coordinate di un
+    # STL sono spesso centinaia di mm) il perno finiva spostato di altrettanti
+    # millimetri fuori dal pezzo: il "cubo sospeso per aria".
+    p_arr = np.asarray(punto, dtype=float)
     centro = (
-        np.asarray(punto, dtype=float)
-        + u * (0.5 * (cu.min() + cu.max()))
+        u * (0.5 * (cu.min() + cu.max()))
         + v * (0.5 * (cv.min() + cv.max()))
+        + n * float(p_arr @ n)
     )
-    # riporta il centro esattamente sul piano di taglio
-    centro = centro - n * float((centro - np.asarray(punto, dtype=float)) @ n)
     est_u = 0.5 * float(cu.max() - cu.min())
     est_v = 0.5 * float(cv.max() - cv.min())
     return centro, est_u, est_v, (u, v, n)

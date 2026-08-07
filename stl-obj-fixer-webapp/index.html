@@ -615,6 +615,21 @@
         <input type="range" id="planePos" min="2" max="98" step="1" value="50" />
         <span id="planePosValue">50%</span>
       </div>
+      <div class="cut-slider-row">
+        <label for="planeIncl">Inclina</label>
+        <input type="range" id="planeIncl" min="0" max="90" step="1" value="0" />
+        <span id="planeInclValue">0°</span>
+      </div>
+      <div class="cut-slider-row">
+        <label for="planeGira">Gira</label>
+        <input type="range" id="planeGira" min="0" max="359" step="1" value="0" />
+        <span id="planeGiraValue">0°</span>
+      </div>
+      <div style="font-size:11.5px;color:var(--muted);margin:-2px 0 8px">
+        Gli assi X/Y/Z sono solo il punto di partenza: con <b>Inclina</b> pieghi il piano
+        e con <b>Gira</b> scegli in che verso pende. Insieme danno qualsiasi inclinazione.
+        <button id="planeResetBtn" style="margin-left:6px;padding:2px 8px;font-size:11px">azzera</button>
+      </div>
       <div class="cut-actions">
         <button id="planeCutBtn">✂️ Taglia qui (facce piatte)</button>
       </div>
