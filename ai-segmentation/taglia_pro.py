@@ -345,3 +345,164 @@ def booleana(v1, f1, v2, f2, operazione="unione"):
         raise ValueError("booleana fallita: " + r.status().name)
     V, F = _to_arrays(r)
     return _pack(V, F)
+
+
+# ---------------------------------------------------------------------------
+# TAGLIO CON LA "COPERTA": superficie di taglio FINITA e deformabile
+# ---------------------------------------------------------------------------
+# Un piano di taglio e' infinito: per staccare un polso taglia anche tutto
+# quello che incontra per strada. La coperta invece e' un telo con un
+# perimetro: taglia solo dove il telo passa davvero. L'utente ne sposta le
+# maniglie per piegarlo e per stringerne il contorno.
+#
+# Il telo da solo non puo' tagliare (non e' un solido): lo si trasforma in un
+# solido chiuso spingendone una copia lontano lungo la normale media e
+# cucendo i bordi. Quel solido e' il "sotto"; il resto e' il "sopra".
+def _catmull(p0, p1, p2, p3, t):
+    t2 = t * t
+    t3 = t2 * t
+    return 0.5 * ((2 * p1) + (-p0 + p2) * t
+                  + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2
+                  + (-p0 + 3 * p1 - 3 * p2 + p3) * t3)
+
+
+def _infittisci(griglia, passo):
+    """Da una griglia di maniglie NxN a una superficie liscia che passa
+    ESATTAMENTE per tutte le maniglie (Catmull-Rom nelle due direzioni)."""
+    G = np.asarray(griglia, dtype=np.float64)
+    N = G.shape[0]
+    # bordi ripetuti: servono i due punti "fuori" per la curva agli estremi
+    E = np.empty((N + 2, N + 2, 3), dtype=np.float64)
+    E[1:-1, 1:-1] = G
+    E[0, 1:-1] = G[0] + (G[0] - G[1])
+    E[-1, 1:-1] = G[-1] + (G[-1] - G[-2])
+    E[:, 0] = E[:, 1] + (E[:, 1] - E[:, 2])
+    E[:, -1] = E[:, -2] + (E[:, -2] - E[:, -3])
+
+    M = (N - 1) * passo + 1
+    fitta = np.empty((M, M, 3), dtype=np.float64)
+    for a in range(M):
+        i = min(a // passo, N - 2)
+        tu = (a - i * passo) / passo
+        for b in range(M):
+            j = min(b // passo, N - 2)
+            tv = (b - j * passo) / passo
+            colonne = [_catmull(E[i + k, j], E[i + k, j + 1], E[i + k, j + 2], E[i + k, j + 3], tv)
+                       for k in range(4)]
+            fitta[a, b] = _catmull(colonne[0], colonne[1], colonne[2], colonne[3], tu)
+    return fitta
+
+
+def _solido_da_coperta(fitta, normale, profondita):
+    """Chiude il telo in un solido: telo + copia spinta lontano + bordi cuciti."""
+    M = fitta.shape[0]
+    sotto = fitta - np.asarray(normale, dtype=np.float64) * profondita
+    V = np.concatenate([fitta.reshape(-1, 3), sotto.reshape(-1, 3)], axis=0)
+    top = M * M
+
+    def idx(i, j):
+        return i * M + j
+
+    T = []
+    for i in range(M - 1):
+        for j in range(M - 1):
+            a, b, c, d = idx(i, j), idx(i + 1, j), idx(i + 1, j + 1), idx(i, j + 1)
+            T.append([a, b, c]); T.append([a, c, d])                       # faccia del telo
+            T.append([a + top, c + top, b + top])                          # faccia opposta
+            T.append([a + top, d + top, c + top])
+    bordo = ([(i, 0) for i in range(M - 1)]
+             + [(M - 1, j) for j in range(M - 1)]
+             + [(M - 1 - i, M - 1) for i in range(M - 1)]
+             + [(0, M - 1 - j) for j in range(M - 1)])
+    for k in range(len(bordo)):
+        i1, j1 = bordo[k]
+        i2, j2 = bordo[(k + 1) % len(bordo)]
+        a, b = idx(i1, j1), idx(i2, j2)
+        T.append([a, b + top, b]); T.append([a, a + top, b + top])
+    return _manifold(V, np.asarray(T, dtype=np.int64))
+
+
+def taglia_con_coperta(vertices, faces, griglia, connettore=True, gioco=0.20,
+                       lato=None, profondita=None, scala_connettore=1.0, passo=6):
+    """Taglia il solido con una superficie finita e deformabile (la coperta).
+
+    griglia : NxNx3, le maniglie spostate dall'utente
+    Ritorna {"a": sopra (col PERNO), "b": sotto (col FORO), "log": [...]}
+    """
+    log = [f"[{VERSIONE}] taglio con la coperta"]
+    V = np.asarray(vertices, dtype=np.float64)
+    F = np.asarray(faces, dtype=np.int64)
+    G = np.asarray(griglia, dtype=np.float64)
+    if G.ndim != 3 or G.shape[0] != G.shape[1] or G.shape[2] != 3:
+        raise ValueError("La coperta deve essere una griglia NxNx3.")
+
+    solido = _manifold(V, F)
+    if solido.status().name != "NoError":
+        raise ValueError("Il modello non e' un solido valido: passalo prima dalla riparazione.")
+    vol0 = solido.volume()
+    diag = float(np.linalg.norm(V.max(axis=0) - V.min(axis=0))) or 1.0
+
+    fitta = _infittisci(G, passo)
+    # normale media del telo, dalle diagonali dei suoi quadretti
+    du = fitta[-1, :, :].mean(axis=0) - fitta[0, :, :].mean(axis=0)
+    dv = fitta[:, -1, :].mean(axis=0) - fitta[:, 0, :].mean(axis=0)
+    n = _normalizza(np.cross(du, dv))
+
+    coperta = _solido_da_coperta(fitta, n, diag * 2.0)
+    if coperta.status().name != "NoError":
+        raise ValueError("La coperta e' piegata troppo su se stessa: raddrizza qualche maniglia.")
+
+    A = solido - coperta      # sopra il telo (dalla parte della normale)
+    B = solido ^ coperta      # sotto il telo
+    if A.volume() <= 0 or B.volume() <= 0:
+        raise ValueError("La coperta non separa il pezzo: allargala o spostala perche' lo attraversi tutto.")
+    log.append(f"Taglio con la coperta: volume {vol0:.1f} -> sopra {A.volume():.1f} + sotto {B.volume():.1f}")
+
+    # frammenti staccati per sbaglio: tornano al pezzo grande
+    try:
+        blocchi = B.decompose()
+        if len(blocchi) > 1:
+            blocchi = sorted(blocchi, key=lambda m: m.volume(), reverse=True)
+            for s in blocchi[1:]:
+                A = A + s
+            B = blocchi[0]
+            log.append(f"Scartati {len(blocchi) - 1} frammenti estranei dal pezzo staccato")
+    except Exception as e:
+        log.append(f"(controllo frammenti non riuscito: {e})")
+
+    if not connettore:
+        va, fa = _to_arrays(A)
+        vb, fb = _to_arrays(B)
+        return {"a": _pack(va, fa), "b": _pack(vb, fb), "log": log}
+
+    # connettore al centro del telo, lungo la sua normale media
+    centro = fitta.reshape(-1, 3).mean(axis=0)
+    u, v, nn = _base_da_normale(n)
+    piatto = fitta.reshape(-1, 3)
+    est_u = 0.5 * float((piatto @ u).max() - (piatto @ u).min())
+    est_v = 0.5 * float((piatto @ v).max() - (piatto @ v).min())
+    minore = 2.0 * min(est_u, est_v)
+    if lato is None:
+        lato = float(np.clip(0.28 * minore, 2.0, max(10.0, 0.45 * minore)))
+    if profondita is None:
+        profondita = float(np.clip(0.9 * lato, 1.5, max(8.0, 0.9 * lato)))
+    if scala_connettore and scala_connettore != 1.0:
+        lato *= scala_connettore
+        profondita *= scala_connettore
+
+    incastro = 0.15 * profondita
+    h = profondita + incastro
+    c_perno = centro - nn * (profondita * 0.5) + nn * (incastro * 0.5)
+    perno = _cubo([lato, lato, h], c_perno, u, v, nn)
+    c_foro = c_perno - nn * (gioco * 0.5)
+    foro = _cubo([lato + 2 * gioco, lato + 2 * gioco, h + gioco], c_foro, u, v, nn)
+    A = A + perno
+    B = B - foro
+    if A.status().name != "NoError" or B.status().name != "NoError":
+        raise ValueError("La booleana del connettore non e' riuscita.")
+    log.append(f"Connettore: lato {lato:.2f} mm, profondita' {profondita:.2f} mm, gioco {gioco:.2f} mm")
+
+    va, fa = _to_arrays(A)
+    vb, fb = _to_arrays(B)
+    return {"a": _pack(va, fa), "b": _pack(vb, fb), "log": log,
+            "connettore": {"lato": lato, "profondita": profondita, "gioco": gioco, "n": 1}}

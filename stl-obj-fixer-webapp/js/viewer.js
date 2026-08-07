@@ -320,6 +320,148 @@
       cutPlaneMesh.renderOrder = 999;
       scene.add(cutPlaneMesh);
     }
+    // ------------------- LA COPERTA (superficie di taglio finita) -------------
+    // Un telo NxN di maniglie che l'utente piega e stringe a piacere. A
+    // differenza del piano rosso, che e' infinito e taglia tutto quello che
+    // incontra, la coperta ha un perimetro: taglia solo dove la si mette.
+    let copertaGruppo = null;
+    let copertaManiglie = [];
+
+    // superficie liscia che passa per tutte le maniglie (Catmull-Rom), la
+    // stessa curva che poi usa il companion per tagliare davvero
+    function catmull(a, b, c, d, t, out) {
+      const t2 = t * t, t3 = t2 * t;
+      for (let k = 0; k < 3; k++) {
+        out[k] = 0.5 * (2 * b[k] + (-a[k] + c[k]) * t
+          + (2 * a[k] - 5 * b[k] + 4 * c[k] - d[k]) * t2
+          + (-a[k] + 3 * b[k] - 3 * c[k] + d[k]) * t3);
+      }
+      return out;
+    }
+
+    function infittisciCoperta(punti, N, passo) {
+      const get = (i, j) => {
+        const ii = Math.max(0, Math.min(N - 1, i)), jj = Math.max(0, Math.min(N - 1, j));
+        const o = (ii * N + jj) * 3;
+        const p = [punti[o], punti[o + 1], punti[o + 2]];
+        // bordi: si prolunga la superficie invece di appiattirla
+        if (i < 0 || i > N - 1 || j < 0 || j > N - 1) {
+          const i2 = Math.max(0, Math.min(N - 1, i < 0 ? 1 : (i > N - 1 ? N - 2 : i)));
+          const j2 = Math.max(0, Math.min(N - 1, j < 0 ? 1 : (j > N - 1 ? N - 2 : j)));
+          const o2 = (i2 * N + j2) * 3;
+          return [2 * p[0] - punti[o2], 2 * p[1] - punti[o2 + 1], 2 * p[2] - punti[o2 + 2]];
+        }
+        return p;
+      };
+      const M = (N - 1) * passo + 1;
+      const out = new Float32Array(M * M * 3);
+      const tmp = [0, 0, 0], col = [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]];
+      for (let a = 0; a < M; a++) {
+        const i = Math.min(Math.floor(a / passo), N - 2), tu = (a - i * passo) / passo;
+        for (let b = 0; b < M; b++) {
+          const j = Math.min(Math.floor(b / passo), N - 2), tv = (b - j * passo) / passo;
+          for (let k = 0; k < 4; k++) {
+            catmull(get(i - 1 + k, j - 1), get(i - 1 + k, j), get(i - 1 + k, j + 1), get(i - 1 + k, j + 2), tv, col[k]);
+          }
+          catmull(col[0], col[1], col[2], col[3], tu, tmp);
+          const o = (a * M + b) * 3;
+          out[o] = tmp[0]; out[o + 1] = tmp[1]; out[o + 2] = tmp[2];
+        }
+      }
+      return { punti: out, M };
+    }
+
+    function mostraCoperta(punti, N, raggioManiglia) {
+      nascondiCoperta();
+      copertaGruppo = new THREE.Group();
+      const { punti: fitta, M } = infittisciCoperta(punti, N, 4);
+      const idx = [];
+      for (let i = 0; i < M - 1; i++) {
+        for (let j = 0; j < M - 1; j++) {
+          const a = i * M + j, b = (i + 1) * M + j, c = (i + 1) * M + j + 1, d = i * M + j + 1;
+          idx.push(a, b, c, a, c, d);
+        }
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(fitta, 3));
+      geo.setIndex(idx);
+      geo.computeVertexNormals();
+      // depthTest disattivato di proposito: il telo lavora QUASI SEMPRE dentro
+      // al modello (e' li' che deve tagliare), e col test di profondita' sparirebbe
+      // sotto la superficie proprio quando serve vederlo per posizionarlo.
+      const telo = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+        color: 0xff5b6b, transparent: true, opacity: 0.30, side: THREE.DoubleSide,
+        depthWrite: false, depthTest: false,
+      }));
+      telo.renderOrder = 998;
+      copertaGruppo.add(telo);
+      // reticolo, per vedere come e' piegata
+      const wire = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+        color: 0xffb3ba, wireframe: true, transparent: true, opacity: 0.35,
+        depthWrite: false, depthTest: false,
+      }));
+      wire.renderOrder = 998;
+      copertaGruppo.add(wire);
+      // maniglie
+      copertaManiglie = [];
+      const sfera = new THREE.SphereGeometry(raggioManiglia, 12, 10);
+      for (let k = 0; k < N * N; k++) {
+        const bordo = (k < N) || (k >= N * (N - 1)) || (k % N === 0) || (k % N === N - 1);
+        const m = new THREE.Mesh(sfera, new THREE.MeshBasicMaterial({
+          color: bordo ? 0x36d1a0 : 0xffd23f, depthTest: false,
+        }));
+        m.position.set(punti[k * 3], punti[k * 3 + 1], punti[k * 3 + 2]);
+        m.renderOrder = 1000;
+        m.userData.maniglia = k;
+        copertaManiglie.push(m);
+        copertaGruppo.add(m);
+      }
+      scene.add(copertaGruppo);
+    }
+
+    function nascondiCoperta() {
+      if (!copertaGruppo) return;
+      copertaGruppo.traverse((o) => {
+        if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); }
+      });
+      scene.remove(copertaGruppo);
+      copertaGruppo = null;
+      copertaManiglie = [];
+    }
+
+    // quale maniglia sta sotto il cursore (-1 se nessuna)
+    const rayManiglia = new THREE.Raycaster();
+    function maniglieSotto(clientX, clientY) {
+      if (!copertaManiglie.length) return -1;
+      const rect = canvas.getBoundingClientRect();
+      const ndc = new THREE.Vector2(
+        ((clientX - rect.left) / rect.width) * 2 - 1,
+        -((clientY - rect.top) / rect.height) * 2 + 1
+      );
+      rayManiglia.setFromCamera(ndc, camera);
+      const hits = rayManiglia.intersectObjects(copertaManiglie, false);
+      return hits.length ? hits[0].object.userData.maniglia : -1;
+    }
+
+    // dove finisce il cursore, su un piano che passa per `rif` e guarda la
+    // camera: e' cosi' che si trascina un punto in 3D con un mouse 2D
+    const dirVista = new THREE.Vector3();
+    const pianoTrascina = new THREE.Plane();
+    const rayTrascina = new THREE.Raycaster();
+    const puntoTrascina = new THREE.Vector3();
+    function puntoSulPianoVista(clientX, clientY, rif) {
+      const rect = canvas.getBoundingClientRect();
+      const ndc = new THREE.Vector2(
+        ((clientX - rect.left) / rect.width) * 2 - 1,
+        -((clientY - rect.top) / rect.height) * 2 + 1
+      );
+      camera.getWorldDirection(dirVista);
+      pianoTrascina.setFromNormalAndCoplanarPoint(dirVista, new THREE.Vector3(rif[0], rif[1], rif[2]));
+      rayTrascina.setFromCamera(ndc, camera);
+      const p = rayTrascina.ray.intersectPlane(pianoTrascina, puntoTrascina);
+      return p ? [p.x, p.y, p.z] : null;
+    }
+
     function hideCutPlane() {
       if (cutPlaneMesh) { scene.remove(cutPlaneMesh); cutPlaneMesh.geometry.dispose(); cutPlaneMesh.material.dispose(); cutPlaneMesh = null; }
     }
@@ -518,7 +660,8 @@
 
     function getTarget() { return [target.x, target.y, target.z]; }
 
-    return { scene, camera, renderer, clearParts, addPart, setPartVisible, setPartOffset, frameAll, resize, raycastAt, setHighlight, projectToScreen, getCameraPosition, getTarget, setPointerDownHook, showCutPlane, hideCutPlane, impostaVista, animaVerso };
+    return { scene, camera, renderer, clearParts, addPart, setPartVisible, setPartOffset, frameAll, resize, raycastAt, setHighlight, projectToScreen, getCameraPosition, getTarget, setPointerDownHook, showCutPlane, hideCutPlane, impostaVista, animaVerso,
+      mostraCoperta, nascondiCoperta, maniglieSotto, puntoSulPianoVista };
   }
 
   root.createViewer = createViewer;

@@ -127,6 +127,7 @@ def health():
         "booleane_pro": TAGLIA_AVAILABLE,
         "dettagli_rilievo": RILIEVI_AVAILABLE,
         "connettore_pro": CONN_AVAILABLE,
+        "coperta": TAGLIA_AVAILABLE and hasattr(taglia_pro, "taglia_con_coperta"),
         "taglia_pro_versione": getattr(taglia_pro, "VERSIONE", None) if TAGLIA_AVAILABLE else None,
     })
 
@@ -193,6 +194,43 @@ def taglia():
         "a": pack(r["a"]), "b": pack(r["b"]),
         "log": r["log"], "connettore": r.get("connettore"),
     })
+
+
+@app.route("/taglia_coperta", methods=["POST", "OPTIONS"])
+def taglia_coperta():
+    """Taglio con la COPERTA: superficie finita e deformabile invece del piano
+    infinito. Taglia solo dove il telo passa davvero."""
+    if request.method == "OPTIONS":
+        return ("", 204)
+    if not TAGLIA_AVAILABLE:
+        return jsonify({"error": "Booleane PRO non installate (serve install_pro.bat)"}), 501
+    data = request.get_json(force=True)
+    vertices, faces = _leggi_mesh(data)
+    griglia = np.asarray(data["griglia"], dtype=np.float64)
+    if griglia.ndim == 1:
+        lato_n = int(round((len(griglia) / 3) ** 0.5))
+        griglia = griglia.reshape(lato_n, lato_n, 3)
+    try:
+        r = taglia_pro.taglia_con_coperta(
+            vertices, faces, griglia,
+            connettore=bool(data.get("connettore", True)),
+            gioco=float(data.get("gioco", 0.20)),
+            scala_connettore=float(data.get("scala_connettore", 1.0)),
+        )
+    except Exception as e:
+        print("taglio con coperta fallito:", e, file=sys.stderr)
+        return jsonify({"error": str(e)}), 500
+
+    def pack(p):
+        return {
+            "vertices": np.asarray(p["vertices"]).tolist(),
+            "faces": np.asarray(p["faces"]).tolist(),
+            "watertight": p["watertight"],
+            "volume": p["volume"],
+        }
+
+    return jsonify({"a": pack(r["a"]), "b": pack(r["b"]),
+                    "log": r["log"], "connettore": r.get("connettore")})
 
 
 @app.route("/connettore", methods=["POST", "OPTIONS"])

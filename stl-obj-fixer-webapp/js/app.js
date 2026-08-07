@@ -54,6 +54,18 @@
     cutToolWandBtn: document.getElementById('cutToolWandBtn'),
     cutToolLassoBtn: document.getElementById('cutToolLassoBtn'),
     cutToolPlaneBtn: document.getElementById('cutToolPlaneBtn'),
+    cutToolCopertaBtn: document.getElementById('cutToolCopertaBtn'),
+    copertaControls: document.getElementById('copertaControls'),
+    brushRadiusRow: document.getElementById('brushRadiusRow'),
+    smartSelBox: document.getElementById('smartSelBox'),
+    copertaPart: document.getElementById('copertaPart'),
+    copertaAxisX: document.getElementById('copertaAxisX'),
+    copertaAxisY: document.getElementById('copertaAxisY'),
+    copertaAxisZ: document.getElementById('copertaAxisZ'),
+    copertaResetBtn: document.getElementById('copertaResetBtn'),
+    copertaScala: document.getElementById('copertaScala'),
+    copertaScalaValue: document.getElementById('copertaScalaValue'),
+    copertaCutBtn: document.getElementById('copertaCutBtn'),
     cutLassoCloseBtn: document.getElementById('cutLassoCloseBtn'),
     cutModeAddBtn: document.getElementById('cutModeAddBtn'),
     cutModeEraseBtn: document.getElementById('cutModeEraseBtn'),
@@ -1941,21 +1953,174 @@
     el.cutToolWandBtn.classList.toggle('active', tool === 'wand');
     el.cutToolLassoBtn.classList.toggle('active', tool === 'lasso');
     el.cutToolPlaneBtn.classList.toggle('active', tool === 'plane');
+    el.cutToolCopertaBtn.classList.toggle('active', tool === 'coperta');
     clearLasso();
     resetCutSelection();
     const isPlane = tool === 'plane';
+    const isCoperta = tool === 'coperta';
+    const senzaSelezione = isPlane || isCoperta;
     el.planeControls.style.display = isPlane ? 'block' : 'none';
-    el.selectExtras.style.display = isPlane ? 'none' : 'block';
-    el.selectFinalRow.style.display = isPlane ? 'none' : 'flex';
+    el.copertaControls.style.display = isCoperta ? 'block' : 'none';
+    el.selectExtras.style.display = senzaSelezione ? 'none' : 'block';
+    el.selectFinalRow.style.display = senzaSelezione ? 'none' : 'flex';
     if (isPlane) { populatePlaneParts(); updatePlanePreview(); }
     else viewer.hideCutPlane();
+    // col telo e col piano non si dipinge: via i comandi del pennello
+    if (el.brushRadiusRow) el.brushRadiusRow.style.display = senzaSelezione ? 'none' : 'flex';
+    if (el.smartSelBox) el.smartSelBox.style.display = senzaSelezione ? 'none' : 'block';
+    if (isCoperta) { popolaCopertaParti(); creaCoperta(); }
+    else viewer.nascondiCoperta();
     document.getElementById('cutHint').textContent =
       tool === 'lasso'
         ? 'Lazo: disegna un cappio CHIUSO tutto attorno alla zona (non un tratto). Metti i punti del contorno, poi chiudi toccando il primo punto o "Chiudi lazo" e "Crea parte". Per selezioni a mano libera conviene il Pennello.'
+        : tool === 'coperta'
+          ? 'Coperta: trascina i pallini per piegare il telo e stringerne il contorno. Il telo taglia SOLO dove passa, quindi puoi staccare un polso senza toccare il resto. Verdi = bordo, gialli = interno.'
         : tool === 'plane'
           ? 'Taglio dritto: scegli il pezzo, l\'asse e la posizione del piano rosso, poi "Taglia qui". Le due facce vengono PIATTE e identiche, così i pezzi si incastrano perfettamente. Aggiungi poi i connettori per bloccarli.'
           : 'Pennello: TRASCINA il dito/mouse sul modello per dipingere la selezione (giallo) esattamente dove passi. Ruoti la vista trascinando fuori dal modello (sfondo). Regola il Raggio; ➖ Rimuovi fa da gomma.';
   }
+
+
+  // ------------------- LA COPERTA: telo di taglio deformabile -------------------
+  // Il piano dritto e' infinito: per staccare un polso taglia anche tutto il
+  // resto che incontra. La coperta invece ha un PERIMETRO, e si piega: taglia
+  // solo dove la metti. Le maniglie si trascinano direttamente nel 3D.
+  const COPERTA_N = 5;                 // 5x5 maniglie
+  let coperta = null;                  // { partId, punti: Float64Array(N*N*3) }
+  let copertaAsse = 'z';
+  let copertaTrascina = null;          // { indice, partenza }
+
+  function copertaParte() {
+    if (!currentResult) return null;
+    const id = el.copertaPart.value;
+    return currentResult.parts.find((p) => p.id === id)
+        || currentResult.parts.filter((p) => p.included)[0] || null;
+  }
+  function popolaCopertaParti() {
+    if (!currentResult) return;
+    const inclusi = currentResult.parts.filter((p) => p.included);
+    const prima = el.copertaPart.value;
+    el.copertaPart.innerHTML = '';
+    inclusi.forEach((p) => {
+      const o = document.createElement('option');
+      o.value = p.id; o.textContent = p.name;
+      el.copertaPart.appendChild(o);
+    });
+    if (inclusi.some((p) => p.id === prima)) el.copertaPart.value = prima;
+  }
+
+  // telo piatto, grande una frazione del pezzo, messo al centro e rivolto
+  // secondo l'asse scelto: da qui l'utente lo piega e lo stringe
+  function creaCoperta() {
+    const part = copertaParte();
+    if (!part) { viewer.nascondiCoperta(); coperta = null; return; }
+    const mn = part.stats.bboxMin, mx = part.stats.bboxMax;
+    const centro = [(mn[0] + mx[0]) / 2, (mn[1] + mx[1]) / 2, (mn[2] + mx[2]) / 2];
+    const maxDim = Math.max(mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2], 1);
+    const lato = maxDim * (parseInt(el.copertaScala.value, 10) / 100);
+    const ai = copertaAsse === 'x' ? 0 : (copertaAsse === 'y' ? 1 : 2);
+    const e = [0, 0, 0]; e[ai] = 1;
+    const t = ai === 2 ? [1, 0, 0] : [0, 0, 1];
+    let u = [t[1] * e[2] - t[2] * e[1], t[2] * e[0] - t[0] * e[2], t[0] * e[1] - t[1] * e[0]];
+    const lu = Math.hypot(u[0], u[1], u[2]) || 1; u = [u[0] / lu, u[1] / lu, u[2] / lu];
+    const v = [e[1] * u[2] - e[2] * u[1], e[2] * u[0] - e[0] * u[2], e[0] * u[1] - e[1] * u[0]];
+    const punti = new Float64Array(COPERTA_N * COPERTA_N * 3);
+    for (let i = 0; i < COPERTA_N; i++) {
+      const a = (i / (COPERTA_N - 1) - 0.5) * lato;
+      for (let j = 0; j < COPERTA_N; j++) {
+        const b = (j / (COPERTA_N - 1) - 0.5) * lato;
+        const o = (i * COPERTA_N + j) * 3;
+        for (let k = 0; k < 3; k++) punti[o + k] = centro[k] + u[k] * a + v[k] * b;
+      }
+    }
+    coperta = { partId: part.id, punti };
+    disegnaCoperta();
+  }
+  function disegnaCoperta() {
+    if (!coperta) { viewer.nascondiCoperta(); return; }
+    const maxDim = computeOverallMaxDimension(currentResult.parts) || 100;
+    viewer.mostraCoperta(coperta.punti, COPERTA_N, maxDim * 0.012);
+  }
+  function setCopertaAsse(ax) {
+    copertaAsse = ax;
+    el.copertaAxisX.classList.toggle('active', ax === 'x');
+    el.copertaAxisY.classList.toggle('active', ax === 'y');
+    el.copertaAxisZ.classList.toggle('active', ax === 'z');
+    creaCoperta();
+  }
+  el.copertaAxisX.addEventListener('click', () => setCopertaAsse('x'));
+  el.copertaAxisY.addEventListener('click', () => setCopertaAsse('y'));
+  el.copertaAxisZ.addEventListener('click', () => setCopertaAsse('z'));
+  el.copertaResetBtn.addEventListener('click', () => creaCoperta());
+  el.copertaPart.addEventListener('change', () => creaCoperta());
+  el.copertaScala.addEventListener('input', () => {
+    el.copertaScalaValue.textContent = el.copertaScala.value + '%';
+    creaCoperta();
+  });
+
+  async function tagliaConCoperta() {
+    if (!coperta || !currentResult) { alert('Prima scegli il pezzo da tagliare.'); return; }
+    const part = currentResult.parts.find((p) => p.id === coperta.partId);
+    if (!part) { alert('Il pezzo non c\'e\' piu\': riapri lo strumento Coperta.'); return; }
+    const health = await companionHealth();
+    if (!health) return;
+    if (!health.coperta) {
+      alert('Il companion sul PC non conosce ancora la Coperta.\n\nSostituisci la cartella "ai-segmentation" con quella nuova e riavvia "avvia.bat".');
+      return;
+    }
+    const conn = el.connAutoChk ? el.connAutoChk.checked : true;
+    const gioco = el.connGioco ? parseInt(el.connGioco.value, 10) / 100 : 0.2;
+    setLoading(true, 'Taglio con la coperta…');
+    await new Promise((r) => setTimeout(r, 20));
+    try {
+      const body = meshToPayload(part.positions, part.indices);
+      body.griglia = Array.from(coperta.punti);
+      body.connettore = conn; body.gioco = gioco; body.scala_connettore = scalaConn();
+      const resp = await fetch(AI_URL + '/taglia_coperta', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const out = await resp.json();
+      if (out.error) throw new Error(out.error);
+      const idx = currentResult.parts.indexOf(part);
+      const mk = (p, suff) => {
+        const m = payloadToMesh(p);
+        return {
+          id: 'part_coperta_' + Date.now() + '_' + suff.replace(/\W/g, ''),
+          name: part.name + ' ' + suff,
+          color: part.color.slice(),
+          sourceTriangleCount: m.indices.length / 3,
+          positions: m.positions, indices: m.indices,
+          log: out.log || [], watertight: !!p.watertight,
+          stats: MeshCore.computeStats(m.positions, m.indices),
+          included: true,
+        };
+      };
+      currentResult.parts.splice(idx, 1, mk(out.b, conn ? '(foro)' : '(sotto)'), mk(out.a, conn ? '(perno)' : '(sopra)'));
+      currentResult.parts.sort((a, b) => b.stats.volume - a.stats.volume);
+      renderResult(currentResult);
+      setCutMode(true); setCutTool('coperta');
+      alert('Taglio con la coperta riuscito.' +
+        (out.connettore ? `\n\nConnettore: lato ${out.connettore.lato.toFixed(1)} mm, gioco ${out.connettore.gioco.toFixed(2)} mm.` : ''));
+    } catch (err) {
+      console.error(err);
+      alert('Errore nel taglio con la coperta: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+  el.copertaCutBtn.addEventListener('click', () => tagliaConCoperta());
+
+  // accessori per i test
+  window.__copertaPunti = () => (coperta ? Array.from(coperta.punti) : null);
+  window.__maniglieSotto = (x, y) => viewer.maniglieSotto(x, y);
+  window.__copertaMuovi = (indice, delta) => {
+    if (!coperta) return false;
+    const o = indice * 3;
+    coperta.punti[o] += delta[0]; coperta.punti[o + 1] += delta[1]; coperta.punti[o + 2] += delta[2];
+    disegnaCoperta();
+    return true;
+  };
 
   // ------------------- TAGLIO DRITTO CON UN PIANO -------------------
   let planeAxis = 'z';
@@ -2222,6 +2387,7 @@
   el.cutToolWandBtn.addEventListener('click', () => setCutTool('wand'));
   el.cutToolLassoBtn.addEventListener('click', () => setCutTool('lasso'));
   el.cutToolPlaneBtn.addEventListener('click', () => setCutTool('plane'));
+  el.cutToolCopertaBtn.addEventListener('click', () => setCutTool('coperta'));
   el.cutLassoCloseBtn.addEventListener('click', () => closeLasso());
   window.addEventListener('resize', () => { if (lassoPoints.length > 0) drawLasso(); });
 
@@ -2591,6 +2757,17 @@
   // se il puntatore si e' spostato piu' di qualche pixel.
   let attesaClic = null;
   viewer.setPointerDownHook((x, y) => {
+    // COPERTA: se il cursore e' su una maniglia, la si prende e si trascina.
+    // Se e' altrove, si lascia ruotare la vista come sempre.
+    if (cutMode && cutTool === 'coperta' && coperta) {
+      const k = viewer.maniglieSotto(x, y);
+      if (k >= 0) {
+        copertaTrascina = { indice: k, partenza: [
+          coperta.punti[k * 3], coperta.punti[k * 3 + 1], coperta.punti[k * 3 + 2]] };
+        return true;
+      }
+      return false;
+    }
     if (!cutMode || cutTool !== 'wand') return false; // dipinge solo il pennello
     const hit = viewer.raycastAt(x, y);
     if (!hit) return false; // tocco fuori dal modello: lascia ruotare la vista
@@ -2607,6 +2784,17 @@
     return true; // pointer "preso": niente rotazione mentre si lavora
   });
   el.viewer.addEventListener('pointermove', (e) => {
+    if (copertaTrascina && coperta) {
+      // il punto segue il cursore su un piano che guarda la camera: cosi' si
+      // sposta davvero in 3D, nella direzione in cui si sta guardando
+      const p = viewer.puntoSulPianoVista(e.clientX, e.clientY, copertaTrascina.partenza);
+      if (p) {
+        const o = copertaTrascina.indice * 3;
+        coperta.punti[o] = p[0]; coperta.punti[o + 1] = p[1]; coperta.punti[o + 2] = p[2];
+        disegnaCoperta();
+      }
+      return;
+    }
     if (attesaClic) {
       const d = Math.hypot(e.clientX - attesaClic.x, e.clientY - attesaClic.y);
       if (d > 5) {                       // si sta trascinando: passa al pennello
@@ -2631,6 +2819,7 @@
         refreshCutHighlight();
       }
     }
+    if (copertaTrascina) { copertaTrascina = null; return; }
     if (attesaClic) {
       // era un clic secco: prendi tutta la zona
       applicaSelezioneIntelligente(attesaClic.hit);
