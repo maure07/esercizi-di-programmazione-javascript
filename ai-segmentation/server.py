@@ -175,6 +175,7 @@ def taglia():
             n_connettori=int(data.get("n_connettori", 1)),
             sel_min=data.get("selMin"),
             sel_max=data.get("selMax"),
+            scala_connettore=float(data.get("scala_connettore", 1.0)),
         )
     except Exception as e:
         print("taglio fallito:", e, file=sys.stderr)

@@ -81,6 +81,8 @@
     planeCutProBtn: document.getElementById('planeCutProBtn'),
     connAutoChk: document.getElementById('connAutoChk'),
     connGioco: document.getElementById('connGioco'),
+    connScala: document.getElementById('connScala'),
+    connScalaValue: document.getElementById('connScalaValue'),
     connGiocoValue: document.getElementById('connGiocoValue'),
     repairProBtn: document.getElementById('repairProBtn'),
     selectFinalRow: document.getElementById('selectFinalRow'),
@@ -841,7 +843,7 @@
     try {
       const body = meshToPayload(part.positions, part.indices);
       body.punto = point; body.normale = normal;
-      body.connettore = conn; body.gioco = gioco;
+      body.connettore = conn; body.gioco = gioco; body.scala_connettore = scalaConn();
       const resp = await fetch(AI_URL + '/taglia', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -881,6 +883,15 @@
     }
   }
   el.planeCutProBtn.addEventListener('click', () => runPlaneCutPro());
+  // quanto ingrandire/rimpicciolire il perno rispetto alla misura automatica
+  function scalaConn() {
+    return el.connScala ? (parseInt(el.connScala.value, 10) || 100) / 100 : 1;
+  }
+  if (el.connScala) {
+    el.connScala.addEventListener('input', () => {
+      el.connScalaValue.textContent = el.connScala.value + '%';
+    });
+  }
   el.connGioco.addEventListener('input', () => {
     el.connGiocoValue.textContent = (parseInt(el.connGioco.value, 10) / 100).toFixed(2).replace('.', ',') + ' mm';
   });
@@ -1378,7 +1389,7 @@
       const body = meshToPayload(part.positions, part.indices);
       body.punto = piano.punto; body.normale = piano.normale;
       body.selMin = piano.selMin; body.selMax = piano.selMax;
-      body.connettore = conn; body.gioco = gioco;
+      body.connettore = conn; body.gioco = gioco; body.scala_connettore = scalaConn();
       const resp = await fetch(AI_URL + '/taglia', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -2915,9 +2926,12 @@
     });
     return { count: sel.size, totale: nT, zmin, zmax, modelZmax: part.stats.bboxMax[2] };
   };
-  window.__planarita = () => {
+  window.__planarita = (filtro) => {
     if (!currentResult) return null;
-    return currentResult.parts.slice(0, 3).map((part) => {
+    const scelte = filtro
+      ? currentResult.parts.filter((p) => new RegExp(filtro).test(p.name))
+      : currentResult.parts.slice(0, 3);
+    return scelte.map((part) => {
       const topo = ensurePartTopology(part);
       const N = topo.normals, C = topo.centroids;
       const nT = part.indices.length / 3;

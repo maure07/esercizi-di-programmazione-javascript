@@ -328,14 +328,85 @@
       return new THREE.Color(c[0], c[1], c[2]);
     }
 
+    // Media delle normali SOLO fra facce che si raccordano dolcemente (angolo
+    // sotto la soglia). Restituisce una geometria non indicizzata: serve
+    // perche' su uno spigolo lo stesso vertice deve avere due normali diverse,
+    // una per lato, cosa impossibile con gli indici condivisi.
+    function normaliConSpigoli(positions, indices, vertexColors, gradiSoglia) {
+      const nTri = indices.length / 3;
+      const nVert = positions.length / 3;
+      if (nTri === 0) return null;
+      // normale di ogni faccia: versore (per confrontare gli angoli) e
+      // versione pesata sull'area (per fare la media come si deve)
+      const nu = new Float32Array(nTri * 3);   // versori
+      const np = new Float32Array(nTri * 3);   // pesate sull'area
+      for (let f = 0; f < nTri; f++) {
+        const a = indices[f * 3], b = indices[f * 3 + 1], c = indices[f * 3 + 2];
+        const ax = positions[a * 3], ay = positions[a * 3 + 1], az = positions[a * 3 + 2];
+        const ux = positions[b * 3] - ax, uy = positions[b * 3 + 1] - ay, uz = positions[b * 3 + 2] - az;
+        const vx = positions[c * 3] - ax, vy = positions[c * 3 + 1] - ay, vz = positions[c * 3 + 2] - az;
+        const x = uy * vz - uz * vy, y = uz * vx - ux * vz, z = ux * vy - uy * vx;
+        np[f * 3] = x; np[f * 3 + 1] = y; np[f * 3 + 2] = z;
+        const L = Math.hypot(x, y, z) || 1;
+        nu[f * 3] = x / L; nu[f * 3 + 1] = y / L; nu[f * 3 + 2] = z / L;
+      }
+      // elenco compatto delle facce che toccano ogni vertice
+      const inizio = new Uint32Array(nVert + 1);
+      for (let i = 0; i < indices.length; i++) inizio[indices[i] + 1]++;
+      for (let v = 0; v < nVert; v++) inizio[v + 1] += inizio[v];
+      const facce = new Uint32Array(indices.length);
+      const cursore = inizio.slice(0, nVert);
+      for (let f = 0; f < nTri; f++) {
+        for (let k = 0; k < 3; k++) facce[cursore[indices[f * 3 + k]]++] = f;
+      }
+      const cosSoglia = Math.cos(gradiSoglia * Math.PI / 180);
+      const pos = new Float32Array(nTri * 9);
+      const nor = new Float32Array(nTri * 9);
+      const col = vertexColors ? new Float32Array(nTri * 9) : null;
+      for (let f = 0; f < nTri; f++) {
+        const fx = nu[f * 3], fy = nu[f * 3 + 1], fz = nu[f * 3 + 2];
+        for (let k = 0; k < 3; k++) {
+          const v = indices[f * 3 + k];
+          const o = (f * 3 + k) * 3;
+          pos[o] = positions[v * 3]; pos[o + 1] = positions[v * 3 + 1]; pos[o + 2] = positions[v * 3 + 2];
+          if (col) { col[o] = vertexColors[v * 3]; col[o + 1] = vertexColors[v * 3 + 1]; col[o + 2] = vertexColors[v * 3 + 2]; }
+          let sx = 0, sy = 0, sz = 0;
+          for (let i = inizio[v]; i < inizio[v + 1]; i++) {
+            const g = facce[i];
+            if (nu[g * 3] * fx + nu[g * 3 + 1] * fy + nu[g * 3 + 2] * fz >= cosSoglia) {
+              sx += np[g * 3]; sy += np[g * 3 + 1]; sz += np[g * 3 + 2];
+            }
+          }
+          const L = Math.hypot(sx, sy, sz);
+          if (L > 1e-12) { nor[o] = sx / L; nor[o + 1] = sy / L; nor[o + 2] = sz / L; }
+          else { nor[o] = fx; nor[o + 1] = fy; nor[o + 2] = fz; }
+        }
+      }
+      return { positions: pos, normals: nor, colors: col };
+    }
+
     function addPart(part) {
       const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute('position', new THREE.Float32BufferAttribute(part.positions, 3));
-      geometry.setIndex(new THREE.BufferAttribute(part.indices, 1));
-      // colore per-vertice opzionale (per mostrare la texture/colori del modello)
       const useVC = !!part.vertexColors;
-      if (useVC) geometry.setAttribute('color', new THREE.Float32BufferAttribute(part.vertexColors, 3));
-      geometry.computeVertexNormals();
+      // Normali che rispettano gli SPIGOLI VIVI. computeVertexNormals() di
+      // three.js fa la media fra TUTTE le facce attorno a un vertice, anche
+      // quelle che formano uno spigolo netto: cosi' una faccia di taglio
+      // perfettamente piatta viene disegnata con una sfumatura curva sul
+      // bordo e sembra ondulata, pur essendo piatta al millesimo di mm.
+      // Qui la media si ferma agli spigoli, e il taglio si vede piatto.
+      const creased = part.indices.length / 3 <= 800000
+        ? normaliConSpigoli(part.positions, part.indices, part.vertexColors, 35)
+        : null;
+      if (creased) {
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(creased.positions, 3));
+        geometry.setAttribute('normal', new THREE.Float32BufferAttribute(creased.normals, 3));
+        if (useVC && creased.colors) geometry.setAttribute('color', new THREE.Float32BufferAttribute(creased.colors, 3));
+      } else {
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(part.positions, 3));
+        geometry.setIndex(new THREE.BufferAttribute(part.indices, 1));
+        if (useVC) geometry.setAttribute('color', new THREE.Float32BufferAttribute(part.vertexColors, 3));
+        geometry.computeVertexNormals();
+      }
       const material = new THREE.MeshStandardMaterial({
         color: useVC ? 0xffffff : colorToHex(part.color),
         vertexColors: useVC,

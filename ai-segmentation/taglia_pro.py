@@ -108,7 +108,8 @@ def _sezione(V, F, punto, normale, tolleranza):
 # ---------------------------------------------------------------------------
 def taglia_con_piano(vertices, faces, punto, normale,
                      connettore=True, gioco=0.20, lato=None, profondita=None,
-                     n_connettori=1, sel_min=None, sel_max=None):
+                     n_connettori=1, sel_min=None, sel_max=None,
+                     scala_connettore=1.0):
     """Taglia il solido con un piano e mette perno quadrato + foro.
 
     punto, normale : piano di taglio
@@ -192,6 +193,29 @@ def taglia_con_piano(vertices, faces, punto, normale,
     if A.volume() <= 0 or B.volume() <= 0:
         raise ValueError("Il piano non taglia il modello in due parti.")
 
+    # --- scarta i frammenti estranei finiti nel pezzo staccato ---
+    # La scatola della zona selezionata e' un parallelepipedo: oltre alla mano
+    # puo' contenere pezzi di roba VICINA ma non attaccata (es. un lembo di
+    # pantalone che passa li' accanto). Quei pezzi finiscono nel solido A e si
+    # staccano insieme alla mano, come coriandoli. Qui si tiene di A solo il
+    # blocco attaccato alla zona voluta (quello di volume maggiore) e si
+    # restituiscono gli altri al pezzo grande.
+    if resto is not None:
+        try:
+            blocchi = A.decompose()
+            if len(blocchi) > 1:
+                blocchi = sorted(blocchi, key=lambda m: m.volume(), reverse=True)
+                scartati = blocchi[1:]
+                A = blocchi[0]
+                for s in scartati:
+                    resto = resto + s
+                log.append(
+                    f"Scartati {len(scartati)} frammenti estranei dal pezzo staccato "
+                    f"(rimessi nel pezzo grande)"
+                )
+        except Exception as e:
+            log.append(f"(controllo frammenti non riuscito: {e})")
+
     if resto is not None:
         log.append(
             f"Taglio LOCALE (solo zona selezionata): volume {vol0:.1f} -> "
@@ -221,9 +245,20 @@ def taglia_con_piano(vertices, faces, punto, normale,
 
     if lato is None:
         # perno grande abbastanza da tenere, piccolo abbastanza da entrare
-        lato = float(np.clip(0.28 * minore, 2.0, 10.0))
+        # Il tetto era 10 mm fisso: su una faccia di taglio larga (un polso da
+        # 100 mm, o un modello grande) veniva fuori un perno minuscolo, che non
+        # tiene e si vede appena. Ora il tetto sale insieme alla faccia di
+        # taglio: resta comunque una frazione di essa, mai un perno piu' largo
+        # del pezzo su cui deve stare.
+        lato = float(np.clip(0.28 * minore, 2.0, max(10.0, 0.45 * minore)))
     if profondita is None:
-        profondita = float(np.clip(0.9 * lato, 1.5, 8.0))
+        # anche la profondita' seguiva un tetto fisso (8 mm): con un perno piu'
+        # grande resterebbe un dentino appena accennato, che non guida l'incastro
+        profondita = float(np.clip(0.9 * lato, 1.5, max(8.0, 0.9 * lato)))
+    # manopola "Grandezza perno": moltiplica la misura automatica
+    if scala_connettore and scala_connettore != 1.0:
+        lato = float(lato * scala_connettore)
+        profondita = float(profondita * scala_connettore)
     log.append(
         f"Connettore quadrato automatico: lato {lato:.2f} mm, "
         f"profondita' {profondita:.2f} mm, gioco {gioco:.2f} mm"
