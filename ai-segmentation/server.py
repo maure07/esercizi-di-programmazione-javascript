@@ -128,6 +128,7 @@ def health():
         "dettagli_rilievo": RILIEVI_AVAILABLE,
         "connettore_pro": CONN_AVAILABLE,
         "coperta": TAGLIA_AVAILABLE and hasattr(taglia_pro, "taglia_con_coperta"),
+        "taglio_selezione": TAGLIA_AVAILABLE and hasattr(taglia_pro, "taglia_sulla_selezione"),
         "taglia_pro_versione": getattr(taglia_pro, "VERSIONE", None) if TAGLIA_AVAILABLE else None,
     })
 
@@ -195,6 +196,40 @@ def taglia():
         "a": pack(r["a"]), "b": pack(r["b"]),
         "log": r["log"], "connettore": r.get("connettore"),
     })
+
+
+@app.route("/taglia_selezione", methods=["POST", "OPTIONS"])
+def taglia_selezione():
+    """Stacca ESATTAMENTE i triangoli selezionati, chiudendo i due pezzi con un
+    tappo sul contorno. Nessuna superficie esterna che possa sbordare."""
+    if request.method == "OPTIONS":
+        return ("", 204)
+    if not TAGLIA_AVAILABLE:
+        return jsonify({"error": "Booleane PRO non installate (serve install_pro.bat)"}), 501
+    data = request.get_json(force=True)
+    vertices, faces = _leggi_mesh(data)
+    try:
+        r = taglia_pro.taglia_sulla_selezione(
+            vertices, faces, data["selezione"],
+            connettore=bool(data.get("connettore", True)),
+            gioco=float(data.get("gioco", 0.20)),
+            scala_connettore=float(data.get("scala_connettore", 1.0)),
+            appiattisci=bool(data.get("appiattisci", True)),
+        )
+    except Exception as e:
+        print("taglio sulla selezione fallito:", e, file=sys.stderr)
+        return jsonify({"error": str(e)}), 500
+
+    def pack(p):
+        return {
+            "vertices": np.asarray(p["vertices"]).tolist(),
+            "faces": np.asarray(p["faces"]).tolist(),
+            "watertight": p["watertight"],
+            "volume": p["volume"],
+        }
+
+    return jsonify({"a": pack(r["a"]), "b": pack(r["b"]),
+                    "log": r["log"], "connettore": r.get("connettore")})
 
 
 @app.route("/taglia_coperta", methods=["POST", "OPTIONS"])

@@ -55,7 +55,6 @@
     cutToolLassoBtn: document.getElementById('cutToolLassoBtn'),
     cutToolPlaneBtn: document.getElementById('cutToolPlaneBtn'),
     cutToolCopertaBtn: document.getElementById('cutToolCopertaBtn'),
-    undoPartiRow: document.getElementById('undoPartiRow'),
     undoPartiBtn: document.getElementById('undoPartiBtn'),
     copertaControls: document.getElementById('copertaControls'),
     brushRadiusRow: document.getElementById('brushRadiusRow'),
@@ -726,10 +725,10 @@
     aggiornaUndoParti();
   }
   function aggiornaUndoParti() {
-    if (!el.undoPartiRow) return;
+    if (!el.undoPartiBtn) return;
     const ultimo = storiaParti[storiaParti.length - 1];
-    el.undoPartiRow.style.display = ultimo ? 'block' : 'none';
-    if (ultimo) el.undoPartiBtn.textContent = '↩ Annulla: ' + ultimo.etichetta;
+    el.undoPartiBtn.style.display = ultimo ? 'block' : 'none';
+    if (ultimo) el.undoPartiBtn.title = 'Annulla: ' + ultimo.etichetta;
   }
   function annullaOperazioneParti() {
     const s = storiaParti.pop();
@@ -741,7 +740,7 @@
   }
   // deve corrispondere a VERSIONE in ai-segmentation/taglia_pro.py: serve a
   // capire se sul PC gira ancora un companion vecchio (senza taglio locale)
-  const TAGLIA_PRO_VERSIONE_ATTESA = 'taglio-bordo-4';
+  const TAGLIA_PRO_VERSIONE_ATTESA = 'taglio-selezione-5';
   async function runAiSegmentation() {
     if (!currentParsed) {
       alert('Carica prima un modello.');
@@ -1465,11 +1464,36 @@
       body.selMin = piano.selMin; body.selMax = piano.selMax;
       body.connettore = conn; body.gioco = gioco; body.scala_connettore = scalaConn();
       body.bordo = piano.puntiBordo;
-      const resp = await fetch(AI_URL + '/taglia', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const out = await resp.json();
+      // Prima strada: staccare ESATTAMENTE i triangoli scelti, chiudendo i due
+      // pezzi con un tappo sul contorno. Piano e telo sono superfici che
+      // arrivano da fuori e, dove sbordano, tagliano roba non selezionata
+      // (le lamelle piatte comparse attorno allo strappo del pantalone).
+      let out = null;
+      if (health.taglio_selezione) {
+        const bodySel = meshToPayload(part.positions, part.indices);
+        bodySel.selezione = Array.from(cutSelection.faces);
+        bodySel.connettore = conn; bodySel.gioco = gioco;
+        bodySel.scala_connettore = scalaConn();
+        bodySel.appiattisci = el.flatCutChk ? el.flatCutChk.checked : true;
+        try {
+          const r1 = await fetch(AI_URL + '/taglia_selezione', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(bodySel),
+          });
+          const o1 = await r1.json();
+          if (!o1.error) out = o1;
+          else console.warn('taglio sulla selezione non riuscito, ripiego sul piano:', o1.error);
+        } catch (e) {
+          console.warn('taglio sulla selezione non raggiungibile, ripiego sul piano:', e);
+        }
+      }
+      if (!out) {
+        const resp = await fetch(AI_URL + '/taglia', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        out = await resp.json();
+      }
       if (out.error) throw new Error(out.error);
       const idx = currentResult.parts.indexOf(part);
       const mk = (p, suff) => {

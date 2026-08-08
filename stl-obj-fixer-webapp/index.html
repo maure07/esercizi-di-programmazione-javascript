@@ -83,6 +83,18 @@
     border-radius: 8px;
     pointer-events: none;
   }
+  /* Annulla sta accanto a Inquadra, sopra il modello: e' li' che serve,
+     subito dopo aver visto il risultato di un taglio */
+  #undoPartiBtn {
+    position: absolute;
+    right: 92px; bottom: 10px;
+    background: var(--panel2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px 10px;
+    font-size: 12px;
+  }
   #frameBtn {
     position: absolute;
     right: 10px; bottom: 10px;
@@ -437,6 +449,7 @@
   <canvas id="viewer"></canvas>
   <canvas id="lassoOverlay"></canvas>
   <div id="viewerHint" style="display:none">Mouse: sinistro/centrale ruota · rotellina zoom (verso il cursore) · destro o Shift sposta · <b>doppio clic centra sul punto</b> &nbsp;·&nbsp; Tasti: <b>1</b> fronte <b>2</b> retro <b>3</b>/<b>4</b> lati <b>7</b> sopra <b>9</b> sotto <b>F</b> inquadra &nbsp;·&nbsp; Touch: 1 dito ruota · 2 dita zoom/sposta</div>
+  <button id="undoPartiBtn" style="display:none" title="Annulla l'ultima operazione sui pezzi">↩ Annulla</button>
   <button id="frameBtn" style="display:none">Inquadra</button>
   <div id="emptyState">
     <div class="big">🗿</div>
@@ -759,9 +772,6 @@
   <div id="log"></div>
 
   <div class="section-title" id="partsTitle" style="display:none"></div>
-  <div id="undoPartiRow" style="display:none;margin-bottom:8px">
-    <button id="undoPartiBtn" style="width:100%">↩ Annulla ultima operazione</button>
-  </div>
   <div id="partsList"></div>
 
   <div class="cut-actions" style="margin-top:12px">
