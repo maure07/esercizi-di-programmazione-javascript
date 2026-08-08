@@ -1492,7 +1492,13 @@
         storto = dev / Math.max(2 * lmax, 1e-9);
       }
       let out = null;
-      if (health.taglio_selezione && storto > 0.40) {
+      // Si usa SEMPRE, quando c'e'. Il taglio col piano si limita alla zona
+      // scelta intersecandola con una SCATOLA squadrata, e le pareti di quella
+      // scatola tagliano il modello dove lo incontrano: sono loro le lamelle
+      // rettangolari che comparivano attorno alla selezione. Il taglio esatto
+      // non ha nessuna scatola, quindi non puo' produrle. Il piano resta come
+      // ripiego se il contorno e' troppo intricato per chiuderlo con un tappo.
+      if (health.taglio_selezione) {
         const bodySel = meshToPayload(part.positions, part.indices);
         bodySel.selezione = Array.from(cutSelection.faces);
         bodySel.connettore = conn; bodySel.gioco = gioco;
