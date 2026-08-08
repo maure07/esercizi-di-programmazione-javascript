@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "taglio-selezione-5"
+VERSIONE = "taglio-liscio-6"
 
 
 # ---------------------------------------------------------------------------
@@ -745,9 +745,62 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
     facce_b = [F[f] for f in range(len(F)) if f not in sel]
     diag = float(np.linalg.norm(V.max(axis=0) - V.min(axis=0))) or 1.0
 
+    # LEVIGATURA DEL CONTORNO. Il taglio corre lungo gli spigoli dei triangoli,
+    # quindi il bordo esce a scalini: e' il "rumore" che si vede sul pezzo
+    # staccato. I tagli col piano erano lisci perche' il piano attraversa i
+    # triangoli invece di aggirarli. Qui si ottiene lo stesso effetto
+    # rilassando l'anello: ogni vertice del contorno si sposta verso la meta'
+    # dei suoi due vicini sull'anello, e la sega diventa una curva.
+    # Si usa Taubin (un passo avanti e uno indietro piu' piccolo) perche' il
+    # solo Laplaciano stringerebbe l'anello a ogni giro, rimpicciolendo il
+    # pezzo. I vertici spostati sono gli stessi per i due pezzi, quindi le
+    # facce continuano a combaciare esattamente.
+    def _leviga_anello(anello, giri=4, lam=0.25, tetto_assoluto=None):
+        vicini = {}
+        for x, y in anello:
+            vicini.setdefault(x, []).append(y)
+            vicini.setdefault(y, []).append(x)
+        punti = [v for v, n in vicini.items() if len(n) == 2]
+        if len(punti) < 6:
+            return 0.0
+        # tetto allo spostamento: una frazione della distanza tipica fra due
+        # vertici dell'anello. Serve a togliere i dentini SENZA rimpicciolire
+        # il contorno: un rilassamento libero tira ogni punto verso il centro
+        # e a furia di giri l'anello si stringe fino a collassare.
+        # Tetto LOCALE, vertice per vertice: la media generale non va bene
+        # perche' su una mesh rada l'anello puo' contenere spigoli lunghissimi
+        # (il fianco di un cilindro alto e' un solo quadrato: la diagonale
+        # misura quanto tutto il pezzo) e un tetto medio permetterebbe
+        # spostamenti enormi, fino a far collassare il contorno.
+        tetti = {}
+        for v in punti:
+            x, y = vicini[v]
+            t = 0.4 * min(float(np.linalg.norm(V[v] - V[x])),
+                          float(np.linalg.norm(V[v] - V[y])))
+            # ...e comunque mai piu' di una frazione minuscola del modello:
+            # i dentini da togliere sono piccoli per definizione, quindi un
+            # tetto assoluto non toglie nulla di utile ma impedisce che su una
+            # mesh rada il contorno venga tirato via di decine di millimetri.
+            tetti[v] = min(t, tetto_assoluto) if tetto_assoluto else t
+        p0 = {v: V[v].copy() for v in punti}
+        for _ in range(giri):
+            nuovi = {}
+            for v in punti:
+                x, y = vicini[v]
+                nuovi[v] = V[v] + lam * (0.5 * (V[x] + V[y]) - V[v])
+            for v, p in nuovi.items():
+                d = p - p0[v]
+                n = float(np.linalg.norm(d))
+                t = tetti[v]
+                V[v] = p0[v] + d * (t / n) if n > t else p
+        return max(float(np.linalg.norm(V[v] - p0[v])) for v in punti)
+
     normali_tappo = []
     centri_tappo = []
     for anello in anelli:
+        mosso = _leviga_anello(anello, tetto_assoluto=0.005 * diag)
+        if mosso > 0:
+            log.append(f"Contorno levigato: i vertici del bordo si sono spostati al massimo di {mosso:.2f} mm")
         vs = sorted({a for e in anello for a in e})
         P = V[vs]
         centro = P.mean(axis=0)
