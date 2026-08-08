@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "taglio-liscio-6"
+VERSIONE = "taglio-pulito-7"
 
 
 # ---------------------------------------------------------------------------
@@ -705,6 +705,40 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
             log.append("(saldatura scartata: avrebbe creato triangoli di area nulla)")
     else:
         log.append(f"Vertici gia' condivisi ({len(V)} per {len(F)} triangoli): niente saldatura")
+
+    # DENTI E INTACCATURE. Il contorno della selezione, seguendo gli spigoli dei
+    # triangoli, produce linguette sottili attaccate per un filo e intaccature
+    # profonde un triangolo. Sono proprio i "denti" che si vedono sul pezzo
+    # staccato: in stampa si spezzano e in assemblaggio danno fastidio.
+    # Si tolgono con due regole semplici, ripetute qualche volta:
+    #   - un triangolo selezionato attaccato al resto della selezione da un solo
+    #     lato e' una linguetta: si scarta;
+    #   - un triangolo NON selezionato circondato su due lati dalla selezione e'
+    #     un'intaccatura: si prende.
+    vicini_faccia = {}
+    _lato = {}
+    for f in range(len(F)):
+        a, b, c = int(F[f][0]), int(F[f][1]), int(F[f][2])
+        for e in ((a, b), (b, c), (c, a)):
+            k = (min(e), max(e))
+            _lato.setdefault(k, []).append(f)
+    for k, ff in _lato.items():
+        if len(ff) == 2:
+            vicini_faccia.setdefault(ff[0], []).append(ff[1])
+            vicini_faccia.setdefault(ff[1], []).append(ff[0])
+    for _ in range(3):
+        togli = {f for f in sel if sum(1 for g in vicini_faccia.get(f, []) if g in sel) <= 1}
+        # tre vicini su tre, non due: con due la regola contagia tutto il
+        # pezzo (su una mesh chiusa quasi ogni triangolo finisce per averne
+        # due selezionati) e la selezione cresce fino a coprire il modello
+        metti = {f for f in range(len(F)) if f not in sel
+                 and len(vicini_faccia.get(f, [])) == 3
+                 and sum(1 for g in vicini_faccia[f] if g in sel) == 3}
+        if not togli and not metti:
+            break
+        sel -= togli
+        sel |= metti
+    log.append(f"Contorno ripulito da denti e intaccature: {len(sel)} triangoli selezionati")
 
     # PUNTI PIZZICATI. Se il contorno della selezione si tocca da solo, in quel
     # vertice passa due volte (grado 4 invece di 2) e nessun tappo puo' chiuderlo:

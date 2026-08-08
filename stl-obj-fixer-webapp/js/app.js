@@ -740,7 +740,7 @@
   }
   // deve corrispondere a VERSIONE in ai-segmentation/taglia_pro.py: serve a
   // capire se sul PC gira ancora un companion vecchio (senza taglio locale)
-  const TAGLIA_PRO_VERSIONE_ATTESA = 'taglio-liscio-6';
+  const TAGLIA_PRO_VERSIONE_ATTESA = 'taglio-pulito-7';
   async function runAiSegmentation() {
     if (!currentParsed) {
       alert('Carica prima un modello.');
