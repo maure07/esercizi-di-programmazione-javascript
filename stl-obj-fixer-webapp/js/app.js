@@ -55,6 +55,8 @@
     cutToolLassoBtn: document.getElementById('cutToolLassoBtn'),
     cutToolPlaneBtn: document.getElementById('cutToolPlaneBtn'),
     cutToolCopertaBtn: document.getElementById('cutToolCopertaBtn'),
+    undoPartiRow: document.getElementById('undoPartiRow'),
+    undoPartiBtn: document.getElementById('undoPartiBtn'),
     copertaControls: document.getElementById('copertaControls'),
     brushRadiusRow: document.getElementById('brushRadiusRow'),
     smartSelBox: document.getElementById('smartSelBox'),
@@ -686,9 +688,60 @@
   // Manda la mesh saldata a http://127.0.0.1:8760 e riceve un'etichetta per
   // triangolo, poi costruisce le parti come al solito.
   const AI_URL = 'http://127.0.0.1:8760';
+
+  // Tavolozza per i pezzi nati da un taglio. Prima il pezzo staccato ereditava
+  // il colore di quello da cui veniva: due pezzi identici di colore, e a
+  // schermo non si capiva piu' cosa fosse stato staccato da cosa.
+  const PALETTE_PEZZI = [
+    [0.90, 0.30, 0.24], [0.20, 0.55, 0.85], [0.95, 0.75, 0.15], [0.35, 0.75, 0.35],
+    [0.65, 0.35, 0.85], [0.95, 0.55, 0.20], [0.25, 0.80, 0.75], [0.85, 0.35, 0.60],
+  ];
+  // sceglie il colore piu' LONTANO da quelli gia' in uso, cosi' il pezzo nuovo
+  // si distingue sempre da quelli che ha intorno
+  function coloreNuovo() {
+    const usati = currentResult ? currentResult.parts.map((p) => p.color) : [];
+    let migliore = PALETTE_PEZZI[0], distMax = -1;
+    for (const c of PALETTE_PEZZI) {
+      let min = Infinity;
+      for (const u of usati) {
+        if (!u) continue;
+        const d = (c[0] - u[0]) ** 2 + (c[1] - u[1]) ** 2 + (c[2] - u[2]) ** 2;
+        if (d < min) min = d;
+      }
+      if (min > distMax) { distMax = min; migliore = c; }
+    }
+    return migliore.slice();
+  }
+
+  // --- ANNULLA l'ultima operazione sui pezzi (taglio, connettore, unione...) ---
+  // La selezione aveva gia' il suo "indietro", le operazioni sui pezzi no: un
+  // taglio sbagliato non si poteva disfare se non ricaricando il modello.
+  const storiaParti = [];
+  function pushStoriaParti(etichetta) {
+    if (!currentResult) return;
+    // copia superficiale: le operazioni SOSTITUISCONO positions/indices, non li
+    // modificano sul posto, quindi condividere gli array e' sicuro e non pesa
+    storiaParti.push({ etichetta, parts: currentResult.parts.map((x) => Object.assign({}, x)) });
+    if (storiaParti.length > 15) storiaParti.shift();
+    aggiornaUndoParti();
+  }
+  function aggiornaUndoParti() {
+    if (!el.undoPartiRow) return;
+    const ultimo = storiaParti[storiaParti.length - 1];
+    el.undoPartiRow.style.display = ultimo ? 'block' : 'none';
+    if (ultimo) el.undoPartiBtn.textContent = '↩ Annulla: ' + ultimo.etichetta;
+  }
+  function annullaOperazioneParti() {
+    const s = storiaParti.pop();
+    if (!s || !currentResult) return;
+    currentResult.parts = s.parts;
+    resetCutSelection();
+    renderResult(currentResult);
+    aggiornaUndoParti();
+  }
   // deve corrispondere a VERSIONE in ai-segmentation/taglia_pro.py: serve a
   // capire se sul PC gira ancora un companion vecchio (senza taglio locale)
-  const TAGLIA_PRO_VERSIONE_ATTESA = 'taglio-locale-3';
+  const TAGLIA_PRO_VERSIONE_ATTESA = 'taglio-bordo-4';
   async function runAiSegmentation() {
     if (!currentParsed) {
       alert('Carica prima un modello.');
@@ -851,6 +904,7 @@
     const { point, normal } = planeFromControls(part);
     const conn = el.connAutoChk.checked;
     const gioco = parseInt(el.connGioco.value, 10) / 100;
+    pushStoriaParti('taglio dritto PRO');
     setLoading(true, conn ? 'Taglio esatto + connettore sul PC…' : 'Taglio esatto sul PC…');
     await new Promise((r) => setTimeout(r, 20));
     try {
@@ -870,7 +924,7 @@
         return {
           id: 'part_pro_' + Date.now() + '_' + suff.replace(/\W/g, ''),
           name: part.name + ' ' + suff,
-          color: part.color.slice(),
+          color: /perno|sopra|\(A\)/.test(suff) ? coloreNuovo() : part.color.slice(),
           sourceTriangleCount: indices.length / 3,
           positions, indices,
           log: out.log || [], watertight: !!p.watertight,
@@ -1329,7 +1383,13 @@
     // la normale deve puntare VERSO la selezione
     const verso = (sx - cx) * normale[0] + (sy - cy) * normale[1] + (sz - cz) * normale[2];
     if (verso < 0) normale = [-normale[0], -normale[1], -normale[2]];
-    return { punto: [cx, cy, cz], normale, nBordo, selMin, selMax };
+    // i punti del bordo servono al companion per costruire, quando il bordo
+    // e' ondulato, un telo che ci passa sopra invece del piano medio
+    const puntiBordo = [];
+    bordo.forEach((v) => {
+      puntiBordo.push(part.positions[v * 3], part.positions[v * 3 + 1], part.positions[v * 3 + 2]);
+    });
+    return { punto: [cx, cy, cz], normale, nBordo, selMin, selMax, puntiBordo };
   }
 
   // Taglio PIATTO sulla selezione, con booleane esatte sul companion.
@@ -1396,6 +1456,7 @@
     }
     const conn = el.connAutoChk ? el.connAutoChk.checked : true;
     const gioco = el.connGioco ? parseInt(el.connGioco.value, 10) / 100 : 0.2;
+    pushStoriaParti('taglio piatto');
     setLoading(true, 'Taglio piatto con booleane esatte…');
     await new Promise((r) => setTimeout(r, 20));
     try {
@@ -1403,6 +1464,7 @@
       body.punto = piano.punto; body.normale = piano.normale;
       body.selMin = piano.selMin; body.selMax = piano.selMax;
       body.connettore = conn; body.gioco = gioco; body.scala_connettore = scalaConn();
+      body.bordo = piano.puntiBordo;
       const resp = await fetch(AI_URL + '/taglia', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -1415,7 +1477,7 @@
         return {
           id: 'part_piatto_' + Date.now() + '_' + suff.replace(/\W/g, ''),
           name: part.name + ' ' + suff,
-          color: part.color.slice(),
+          color: /perno|sopra|\(A\)/.test(suff) ? coloreNuovo() : part.color.slice(),
           sourceTriangleCount: m.indices.length / 3,
           positions: m.positions, indices: m.indices,
           log: out.log || [], watertight: !!p.watertight,
@@ -1458,6 +1520,7 @@
     }
     if (!vicino) { alert('Non trovo un pezzo confinante.'); setLoading(false); return; }
     const gioco = el.connGioco ? parseInt(el.connGioco.value, 10) / 100 : 0.2;
+    pushStoriaParti('perno e foro');
     setLoading(true, `Perno e foro fra "${part.name}" e "${vicino.name}"…`);
     await new Promise((r) => setTimeout(r, 20));
     try {
@@ -1547,6 +1610,8 @@
     return n.toLocaleString('it-IT', { maximumFractionDigits: digits === undefined ? 1 : digits });
   }
 
+  window.__storiaParti = () => storiaParti.length;
+  window.__partsColori = () => (currentResult ? currentResult.parts.map((p) => ({ name: p.name, color: p.color })) : null);
   function renderResult(result) {
     el.emptyState.style.display = 'none';
     el.viewerHint.style.display = '';
@@ -2058,8 +2123,27 @@
   }
   function disegnaCoperta() {
     if (!coperta) { viewer.nascondiCoperta(); return; }
+    // Il raggio dei pallini segue la grandezza DEL TELO, non quella del
+    // modello: legandolo al modello, rimpicciolendo la coperta i pallini
+    // restavano giganti, si sovrapponevano fra loro e coprivano il telo,
+    // rendendo impossibile prenderne uno solo. Ora si misura la distanza
+    // media fra maniglie vicine e il pallino resta sempre una frazione di
+    // quella: non si toccano mai, a qualsiasi grandezza del telo.
+    const N = COPERTA_N, P = coperta.punti;
+    let somma = 0, quante = 0;
+    const dist = (a, b) => Math.hypot(P[a * 3] - P[b * 3], P[a * 3 + 1] - P[b * 3 + 1], P[a * 3 + 2] - P[b * 3 + 2]);
+    for (let i = 0; i < N; i++) {
+      for (let j = 0; j < N; j++) {
+        if (j + 1 < N) { somma += dist(i * N + j, i * N + j + 1); quante++; }
+        if (i + 1 < N) { somma += dist(i * N + j, (i + 1) * N + j); quante++; }
+      }
+    }
+    const passo = quante ? somma / quante : 1;
     const maxDim = computeOverallMaxDimension(currentResult.parts) || 100;
-    viewer.mostraCoperta(coperta.punti, COPERTA_N, maxDim * 0.012);
+    // un minimo legato al modello, se no su un telo minuscolo i pallini
+    // diventerebbero invisibili e impossibili da centrare col mouse
+    const raggio = Math.max(passo * 0.20, maxDim * 0.0025);
+    viewer.mostraCoperta(coperta.punti, N, raggio);
   }
   function setCopertaAsse(ax) {
     copertaAsse = ax;
@@ -2096,6 +2180,7 @@
     }
     const conn = el.connAutoChk ? el.connAutoChk.checked : true;
     const gioco = el.connGioco ? parseInt(el.connGioco.value, 10) / 100 : 0.2;
+    pushStoriaParti('taglio con la coperta');
     setLoading(true, 'Taglio con la coperta…');
     await new Promise((r) => setTimeout(r, 20));
     try {
@@ -2114,7 +2199,7 @@
         return {
           id: 'part_coperta_' + Date.now() + '_' + suff.replace(/\W/g, ''),
           name: part.name + ' ' + suff,
-          color: part.color.slice(),
+          color: /perno|sopra|\(A\)/.test(suff) ? coloreNuovo() : part.color.slice(),
           sourceTriangleCount: m.indices.length / 3,
           positions: m.positions, indices: m.indices,
           log: out.log || [], watertight: !!p.watertight,
@@ -2251,6 +2336,7 @@
     const part = planePartObj();
     if (!part) return;
     const { point, normal } = planeFromControls(part);
+    pushStoriaParti('taglio dritto');
     setLoading(true, 'Taglio con il piano in corso…');
     setTimeout(() => {
       try {
@@ -2266,7 +2352,7 @@
         const mk = (rep, suff) => ({
           id: 'part_plane_' + Date.now() + '_' + suff,
           name: part.name + ' ' + suff,
-          color: part.color.slice(),
+          color: /perno|sopra|\(A\)/.test(suff) ? coloreNuovo() : part.color.slice(),
           sourceTriangleCount: rep.indices.length / 3,
           positions: rep.positions, indices: rep.indices,
           log: rep.log, watertight: rep.watertight, stats: rep.stats, included: true,
@@ -2415,6 +2501,7 @@
   el.cutToolLassoBtn.addEventListener('click', () => setCutTool('lasso'));
   el.cutToolPlaneBtn.addEventListener('click', () => setCutTool('plane'));
   el.cutToolCopertaBtn.addEventListener('click', () => setCutTool('coperta'));
+  if (el.undoPartiBtn) el.undoPartiBtn.addEventListener('click', () => annullaOperazioneParti());
   el.cutLassoCloseBtn.addEventListener('click', () => closeLasso());
   window.addEventListener('resize', () => { if (lassoPoints.length > 0) drawLasso(); });
 

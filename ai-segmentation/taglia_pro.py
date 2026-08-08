@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "taglio-locale-3"
+VERSIONE = "taglio-bordo-4"
 
 
 # ---------------------------------------------------------------------------
@@ -103,13 +103,64 @@ def _sezione(V, F, punto, normale, tolleranza):
     return centro, est_u, est_v, (u, v, n)
 
 
+
+# ---------------------------------------------------------------------------
+# superficie di taglio che SEGUE IL BORDO della selezione
+# ---------------------------------------------------------------------------
+# Il piano medio va benissimo quando il bordo e' un anello piatto (una caviglia
+# dentro uno stivale). Ma se il bordo e' ondulato o strappato - la gamba che
+# esce da un pantalone rotto - il piano medio non gli somiglia per niente: il
+# taglio passa dove capita e fa scempio. Qui invece si costruisce un telo che
+# passa per il bordo VERO: stessa idea della coperta, ma disegnata in automatico
+# sulla selezione dell'utente invece che a mano.
+def _superficie_dal_bordo(bordo, punto, normale, margine=1.18, lato_griglia=18):
+    u, v, n = _base_da_normale(normale)
+    P = np.asarray(bordo, dtype=np.float64).reshape(-1, 3)
+    p0 = np.asarray(punto, dtype=np.float64)
+    d = P - p0
+    a = d @ u
+    b = d @ v
+    h = d @ n                      # quanto il bordo si scosta dal piano medio
+    ca, cb = 0.5 * (a.min() + a.max()), 0.5 * (b.min() + b.max())
+    ra = max(0.5 * (a.max() - a.min()), 1e-6) * margine
+    rb = max(0.5 * (b.max() - b.min()), 1e-6) * margine
+    M = int(lato_griglia)
+    ga = np.linspace(ca - ra, ca + ra, M)
+    gb = np.linspace(cb - rb, cb + rb, M)
+    # ogni nodo del telo prende l'altezza dei punti di bordo che ha vicino
+    # (peso gaussiano): il telo si appoggia sul bordo e si distende dove il
+    # bordo non c'e'
+    sigma2 = (0.28 * max(ra, rb)) ** 2
+    fitta = np.empty((M, M, 3), dtype=np.float64)
+    for i in range(M):
+        da = ga[i] - a
+        for j in range(M):
+            db = gb[j] - b
+            w = np.exp(-(da * da + db * db) / (2.0 * sigma2)) + 1e-12
+            hh = float((w * h).sum() / w.sum())
+            fitta[i, j] = p0 + u * ga[i] + v * gb[j] + n * hh
+    return fitta
+
+
+def _quanto_e_storto(bordo, punto, normale):
+    """Quanto il bordo si discosta dall'essere piatto, in frazione della sua
+    larghezza. ~0 = anello piatto (il piano va benissimo), grande = ondulato."""
+    u, v, n = _base_da_normale(normale)
+    P = np.asarray(bordo, dtype=np.float64).reshape(-1, 3)
+    d = P - np.asarray(punto, dtype=np.float64)
+    h = d @ n
+    larghezza = max(float((d @ u).max() - (d @ u).min()),
+                    float((d @ v).max() - (d @ v).min()), 1e-9)
+    return float(h.std() / larghezza)
+
+
 # ---------------------------------------------------------------------------
 # taglio + connettore quadrato automatico
 # ---------------------------------------------------------------------------
 def taglia_con_piano(vertices, faces, punto, normale,
                      connettore=True, gioco=0.20, lato=None, profondita=None,
                      n_connettori=1, sel_min=None, sel_max=None,
-                     scala_connettore=1.0):
+                     scala_connettore=1.0, bordo=None):
     """Taglia il solido con un piano e mette perno quadrato + foro.
 
     punto, normale : piano di taglio
@@ -141,6 +192,7 @@ def taglia_con_piano(vertices, faces, punto, normale,
             "Il modello non e' un solido valido: passalo prima dalla riparazione."
         )
     vol0 = solido.volume()
+    diag_tot = float(np.linalg.norm(V.max(axis=0) - V.min(axis=0))) or 1.0
 
     # --- prova a limitare il taglio alla zona selezionata ---
     # Si racchiude la selezione in una scatola (bbox + margine) e si opera
@@ -177,8 +229,39 @@ def taglia_con_piano(vertices, faces, punto, normale,
     solido_da_tagliare = regione if regione is not None else solido
 
     # --- taglio esatto ---
-    A = solido_da_tagliare.trim_by_plane(list(n), offset)        # lato +normale
-    B = solido_da_tagliare.trim_by_plane(list(-n), -offset)      # lato -normale
+    # Se il bordo della selezione e' un anello piatto (una caviglia dentro uno
+    # stivale) il piano e' perfetto e si usa quello. Se invece e' ondulato o
+    # strappato (una gamba che esce da un pantalone rotto) il piano medio non
+    # gli somiglia e il taglio farebbe scempio: li' si usa un telo che passa
+    # per il bordo vero.
+    telo = None
+    if bordo is not None and len(np.asarray(bordo).reshape(-1, 3)) >= 8:
+        try:
+            storto = _quanto_e_storto(bordo, punto, n)
+            log.append(f"Bordo della selezione: scostamento dal piano {storto * 100:.1f}% della larghezza")
+            # Soglia tarata su casi reali: una caviglia dentro uno stivale
+            # misura ~27% (il piano ci sta benissimo, e la faccia esce piatta
+            # come serve per la stampa), un orlo strappato ~56% (li' il piano
+            # fa scempio). Il 40% li separa: si resta sul piano finche' e'
+            # ragionevole, si passa al telo solo quando il bordo e' davvero
+            # frastagliato.
+            if storto > 0.40:
+                fitta = _superficie_dal_bordo(bordo, punto, n)
+                candidato = _solido_da_coperta(fitta, n, diag_tot * 2.0)
+                if candidato.status().name == "NoError":
+                    telo = candidato
+                    log.append("Bordo ondulato: taglio con un telo che lo segue, non col piano medio")
+                else:
+                    log.append("(telo dal bordo non valido, uso il piano medio)")
+        except Exception as e:
+            log.append(f"(telo dal bordo non riuscito, uso il piano medio: {e})")
+
+    if telo is not None:
+        A = solido_da_tagliare - telo      # lato +normale (la selezione)
+        B = solido_da_tagliare ^ telo      # lato opposto
+    else:
+        A = solido_da_tagliare.trim_by_plane(list(n), offset)        # lato +normale
+        B = solido_da_tagliare.trim_by_plane(list(-n), -offset)      # lato -normale
 
     if (A.volume() <= 0 or B.volume() <= 0) and resto is not None:
         # la scatola locale non stava a cavallo del piano: niente taglio
@@ -187,8 +270,12 @@ def taglia_con_piano(vertices, faces, punto, normale,
         resto = None
         regione = None
         solido_da_tagliare = solido
-        A = solido_da_tagliare.trim_by_plane(list(n), offset)
-        B = solido_da_tagliare.trim_by_plane(list(-n), -offset)
+        if telo is not None:
+            A = solido_da_tagliare - telo
+            B = solido_da_tagliare ^ telo
+        else:
+            A = solido_da_tagliare.trim_by_plane(list(n), offset)
+            B = solido_da_tagliare.trim_by_plane(list(-n), -offset)
 
     if A.volume() <= 0 or B.volume() <= 0:
         raise ValueError("Il piano non taglia il modello in due parti.")
