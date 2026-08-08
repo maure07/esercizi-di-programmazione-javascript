@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "taglio-fine-8"
+VERSIONE = "taglio-tappo-9"
 
 
 # ---------------------------------------------------------------------------
@@ -609,6 +609,89 @@ def taglia_con_coperta(vertices, faces, griglia, connettore=True, gioco=0.20,
 # rovescio) chiude anche il pezzo che resta. Risultato: il taglio corre
 # ESATTAMENTE dove finisce la selezione, i due pezzi combaciano perche'
 # condividono lo stesso tappo, e nessuna lamella estranea puo' comparire.
+def _ordina_anello(anello):
+    """Mette in fila gli spigoli di un anello: v0 -> v1 -> v2 -> ... -> v0.
+
+    Restituisce la lista dei vertici in ordine, oppure None se l'anello non e'
+    un giro semplice (un vertice con piu' di due spigoli, o piu' giri separati
+    finiti nello stesso gruppo).
+    """
+    succ = {}
+    for a, b in anello:
+        if a in succ:
+            return None          # diramazione: non e' un giro semplice
+        succ[a] = b
+    if len(succ) != len(anello):
+        return None
+    partenza = next(iter(succ))
+    giro = [partenza]
+    v = succ[partenza]
+    while v != partenza:
+        if v not in succ or len(giro) > len(anello):
+            return None
+        giro.append(v)
+        v = succ[v]
+    return giro if len(giro) == len(anello) else None
+
+
+def _ritaglia_orecchie(P2):
+    """Triangola un poligono piano (anche rientrante) tagliando le "orecchie".
+
+    Il ventaglio verso il centro, che si usava prima, va bene solo per i
+    contorni convessi: su un contorno rientrante (un polso, una piega, un orlo
+    strappato) alcuni triangoli finiscono FUORI dal contorno e sul pezzo
+    stampato si vede una sporgenza a raggiera. Qui invece si stacca ogni volta
+    un "orecchio" — un angolo sporgente senza altri punti dentro — e i triangoli
+    restano per costruzione dentro al contorno.
+
+    P2: punti (n,2) del contorno in ordine. Torna la lista di terne di indici
+    nell'ordine dato, oppure None se non ce la fa (contorno che si accavalla).
+    """
+    n = len(P2)
+    if n < 3:
+        return None
+    # Verso: se il poligono gira in senso orario lo si SPECCHIA (si ribalta una
+    # coordinata) invece di leggerlo al contrario. Leggendolo al contrario i
+    # triangoli uscivano avvolti al rovescio rispetto agli spigoli del contorno,
+    # e il pezzo che resta non si chiudeva piu'. Specchiandolo l'ordine dei
+    # vertici resta quello del giro, quindi il tappo combacia sempre.
+    area2 = float(np.sum(P2[:, 0] * np.roll(P2[:, 1], -1) - np.roll(P2[:, 0], -1) * P2[:, 1]))
+    if area2 < 0:
+        P2 = P2 * np.array([1.0, -1.0])
+    resto = list(range(n))
+    tri = []
+    giri_a_vuoto = 0
+    while len(resto) > 3 and giri_a_vuoto <= len(resto):
+        m = len(resto)
+        preso = False
+        for k in range(m):
+            i0, i1, i2 = resto[(k - 1) % m], resto[k], resto[(k + 1) % m]
+            a, b, c = P2[i0], P2[i1], P2[i2]
+            cr = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+            if cr <= 1e-12:
+                continue                     # angolo rientrante: non e' un orecchio
+            altri = [j for j in resto if j not in (i0, i1, i2)]
+            if altri:
+                Q = P2[altri]
+                d1 = (b[0] - a[0]) * (Q[:, 1] - a[1]) - (b[1] - a[1]) * (Q[:, 0] - a[0])
+                d2 = (c[0] - b[0]) * (Q[:, 1] - b[1]) - (c[1] - b[1]) * (Q[:, 0] - b[0])
+                d3 = (a[0] - c[0]) * (Q[:, 1] - c[1]) - (a[1] - c[1]) * (Q[:, 0] - c[0])
+                if np.any((d1 >= 0) & (d2 >= 0) & (d3 >= 0)):
+                    continue                 # c'e' dentro un altro punto del contorno
+            tri.append((i0, i1, i2))
+            resto.pop(k)
+            preso = True
+            giri_a_vuoto = 0
+            break
+        if not preso:
+            giri_a_vuoto += 1
+            break
+    if len(resto) != 3:
+        return None
+    tri.append((resto[0], resto[1], resto[2]))
+    return tri
+
+
 def _gruppi_di_bordo(F, sel):
     """Spigoli dove la selezione confina col resto, raggruppati per anello.
 
@@ -927,15 +1010,47 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
         else:
             log.append(f"Anello non appiattito ({100 * scarto / larghezza:.1f}% di scostamento): "
                        "il taglio segue il bordo cosi' com'e'")
-        ic = len(V)
-        V = np.vstack([V, centro])
-        # il tappo chiude la selezione usando ogni spigolo nel verso OPPOSTO a
-        # come lo usa la selezione; sul pezzo che resta va girato
-        for a, b in anello:
-            facce_a.append([b, a, ic])
-            facce_b.append([a, b, ic])
+        # TAPPO. Prima si prova col ritaglio a orecchie sul contorno messo in
+        # fila: i triangoli restano dentro al contorno anche se e' rientrante.
+        # Il vecchio ventaglio verso il centro va bene solo per i contorni
+        # convessi; su un polso o su una piega alcuni triangoli uscivano dal
+        # pezzo e sulla stampa si vedeva una sporgenza a raggiera.
+        giro = _ordina_anello(anello)
+        tri2 = None
+        if giro is not None and len(giro) >= 3:
+            u_an = np.cross(n_an, [0.0, 0.0, 1.0])
+            if np.linalg.norm(u_an) < 1e-9:
+                u_an = np.cross(n_an, [0.0, 1.0, 0.0])
+            u_an = _normalizza(u_an)
+            v_an = np.cross(n_an, u_an)
+            Pg = V[giro]
+            P2 = np.column_stack([(Pg - centro) @ u_an, (Pg - centro) @ v_an])
+            tri2 = _ritaglia_orecchie(P2)
+        if tri2 is not None:
+            # ogni spigolo del contorno viene usato dalla selezione in un verso:
+            # il tappo del pezzo staccato lo usa nel verso opposto, quello del
+            # resto nello stesso verso del giro
+            for i0, i1, i2 in tri2:
+                a, b, c = giro[i0], giro[i1], giro[i2]
+                facce_a.append([c, b, a])
+                facce_b.append([a, b, c])
+            log.append(f"Tappo del taglio ritagliato a orecchie: {len(tri2)} triangoli, "
+                       "nessuna raggiera fuori dal pezzo")
+            # il connettore va messo in un punto sicuramente DENTRO al tappo:
+            # su un contorno rientrante il centro medio puo' cadere fuori
+            aree = [0.5 * abs(float(np.cross(P2[i1] - P2[i0], P2[i2] - P2[i0]))) for i0, i1, i2 in tri2]
+            i_max = int(np.argmax(aree))
+            g = np.mean(V[[giro[k] for k in tri2[i_max]]], axis=0)
+            centri_tappo.append(g)
+        else:
+            ic = len(V)
+            V = np.vstack([V, centro])
+            for a, b in anello:
+                facce_a.append([b, a, ic])
+                facce_b.append([a, b, ic])
+            log.append("Tappo del taglio a raggiera (contorno non richiudibile a orecchie)")
+            centri_tappo.append(centro)
         normali_tappo.append(n_an)
-        centri_tappo.append(centro)
 
     # process=False di proposito: i due pezzi li abbiamo costruiti con la
     # topologia giusta (ogni spigolo esattamente due facce). Lasciando fare a

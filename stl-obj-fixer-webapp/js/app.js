@@ -728,7 +728,12 @@
     if (!el.undoPartiBtn) return;
     const ultimo = storiaParti[storiaParti.length - 1];
     el.undoPartiBtn.style.display = ultimo ? 'block' : 'none';
-    if (ultimo) el.undoPartiBtn.title = 'Annulla: ' + ultimo.etichetta;
+    if (ultimo) {
+      // il numero dice quanti passi indietro restano: ogni clic ne toglie UNO,
+      // non riporta tutto all'inizio
+      el.undoPartiBtn.textContent = `↩ Annulla (${storiaParti.length})`;
+      el.undoPartiBtn.title = `Annulla "${ultimo.etichetta}" (${storiaParti.length} passi indietro disponibili)`;
+    }
   }
   function annullaOperazioneParti() {
     const s = storiaParti.pop();
@@ -740,7 +745,7 @@
   }
   // deve corrispondere a VERSIONE in ai-segmentation/taglia_pro.py: serve a
   // capire se sul PC gira ancora un companion vecchio (senza taglio locale)
-  const TAGLIA_PRO_VERSIONE_ATTESA = 'taglio-fine-8';
+  const TAGLIA_PRO_VERSIONE_ATTESA = 'taglio-tappo-9';
   async function runAiSegmentation() {
     if (!currentParsed) {
       alert('Carica prima un modello.');
@@ -2096,7 +2101,7 @@
     else viewer.nascondiCoperta();
     document.getElementById('cutHint').textContent =
       tool === 'lasso'
-        ? 'Lazo: disegna un cappio CHIUSO tutto attorno alla zona (non un tratto). Metti i punti del contorno, poi chiudi toccando il primo punto o "Chiudi lazo" e "Crea parte". Prende solo quello che si VEDE dentro al cappio (piu\' il suo retro), non quello che sta dietro: gira il modello dal lato buono prima di disegnare.'
+        ? 'Lazo: disegna un cappio CHIUSO tutto attorno alla zona (non un tratto). I punti si possono mettere anche FUORI dal modello, sullo sfondo: per prendere una cintura o un polso il cappio deve passare dai lati. Poi chiudi toccando il primo punto o "Chiudi lazo". Prende solo quello che si VEDE dentro al cappio (piu\' il suo retro), non quello che sta dietro: gira il modello dal lato buono prima di disegnare.'
         : tool === 'coperta'
           ? 'Coperta: trascina i pallini per piegare il telo e stringerne il contorno. Il telo taglia SOLO dove passa, quindi puoi staccare un polso senza toccare il resto. Verdi = bordo, gialli = interno.'
         : tool === 'plane'
@@ -2572,10 +2577,24 @@
       const dx = sx - first.x, dy = sy - first.y;
       if (Math.sqrt(dx * dx + dy * dy) < 24) { closeLasso(); return; }
     }
-    // il punto va ancorato alla superficie: serve colpire il modello
+    // I punti vanno ancorati in 3D, cosi' il cappio segue il modello quando lo
+    // giri. Se il tocco cade SUL modello si aggancia alla superficie; se cade
+    // sullo sfondo si aggancia a un piano che guarda la camera, passante per
+    // l'ultimo punto messo.
+    // Prima i tocchi fuori dal modello venivano semplicemente buttati via: per
+    // circondare una cintura o un polso servono per forza dei punti ai lati,
+    // sullo sfondo, e non potendoli mettere il cappio si schiacciava in una
+    // striscia sulla superficie. E' il motivo per cui "prendeva solo una riga".
     const hit = viewer.raycastAt(clientX, clientY);
-    if (!hit) return;
-    lassoPoints.push(hit.point);
+    let punto = hit ? hit.point : null;
+    if (!punto) {
+      const rif = lassoPoints.length
+        ? lassoPoints[lassoPoints.length - 1]
+        : viewer.getTarget();
+      punto = viewer.puntoSulPianoVista(clientX, clientY, rif);
+    }
+    if (!punto) return;
+    lassoPoints.push(punto);
     el.cutLassoCloseBtn.style.display = lassoPoints.length >= 3 ? 'block' : 'none';
     el.cutUndoBtn.disabled = false;
     drawLasso();
