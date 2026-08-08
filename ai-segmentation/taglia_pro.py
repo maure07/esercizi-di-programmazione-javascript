@@ -1128,12 +1128,24 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
     dim_pezzo = np.asarray(ma.bounds[1]) - np.asarray(ma.bounds[0])
     area = float(ma.area) or 1.0
     spessore = min(float(dim_pezzo.min()), 4.0 * abs(float(ma.volume)) / area)
+    # Un perno non deve mai superare un terzo dello spessore, altrimenti sfonda
+    # il pezzo. Sotto una certa misura pero' non e' nemmeno stampabile (con un
+    # ugello da 0,4 servono almeno un paio di millimetri): su un pezzo troppo
+    # sottile e' meglio NON metterlo e dirlo, che metterne uno che rovina il
+    # modello. Prima un `max(4.0, ...)` scavalcava il limite e su una lamina da
+    # 1,7 mm usciva comunque un perno da 4 mm.
+    tetto = 0.33 * spessore
+    if lato is None and profondita is None and tetto < 2.0:
+        log.append(f"Pezzo staccato spesso solo {spessore:.1f} mm: niente perno "
+                   "(sarebbe piu' grosso del pezzo). I due pezzi combaciano "
+                   "comunque: si uniscono con la colla.")
+        va, fa = np.asarray(ma.vertices), np.asarray(ma.faces)
+        vb, fb = np.asarray(mb.vertices), np.asarray(mb.faces)
+        return {"a": _pack(va, fa), "b": _pack(vb, fb), "log": log}
     if lato is None:
-        lato = float(np.clip(0.28 * minore, 2.0,
-                             max(4.0, min(0.45 * minore, 0.33 * spessore))))
+        lato = float(np.clip(0.28 * minore, 2.0, max(2.0, min(0.45 * minore, tetto))))
     if profondita is None:
-        profondita = float(np.clip(0.9 * lato, 1.5,
-                                   max(3.0, min(0.9 * lato, 0.33 * spessore))))
+        profondita = float(np.clip(0.9 * lato, 1.5, max(1.5, min(0.9 * lato, tetto))))
     if scala_connettore and scala_connettore != 1.0:
         lato *= scala_connettore
         profondita *= scala_connettore
