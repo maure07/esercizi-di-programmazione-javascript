@@ -627,6 +627,136 @@
       return [camera.position.x, camera.position.y, camera.position.z];
     }
 
+    // Proiezione di TANTI punti in un colpo solo. projectToScreen va bene per
+    // un punto, ma il Lazo deve proiettare il centro di ogni triangolo: su un
+    // modello da 400.000 triangoli sono 400.000 chiamate, ognuna delle quali
+    // rimisura il riquadro della pagina e rifa i conti della camera. Qui la
+    // matrice si calcola una volta sola e poi si macinano i punti di fila.
+    const matVP = new THREE.Matrix4();
+    function proiettaTanti(punti) {
+      const rect = canvas.getBoundingClientRect();
+      camera.updateMatrixWorld();
+      matVP.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+      const e = matVP.elements;
+      const n = (punti.length / 3) | 0;
+      const xy = new Float32Array(n * 2);
+      const dietro = new Uint8Array(n);
+      for (let i = 0; i < n; i++) {
+        const x = punti[i * 3], y = punti[i * 3 + 1], z = punti[i * 3 + 2];
+        const w = e[3] * x + e[7] * y + e[11] * z + e[15];
+        if (w <= 0) { dietro[i] = 1; continue; }
+        const iw = 1 / w;
+        const cx = (e[0] * x + e[4] * y + e[8] * z + e[12]) * iw;
+        const cy = (e[1] * x + e[5] * y + e[9] * z + e[13]) * iw;
+        const cz = (e[2] * x + e[6] * y + e[10] * z + e[14]) * iw;
+        xy[i * 2] = ((cx + 1) / 2) * rect.width;
+        xy[i * 2 + 1] = ((1 - cy) / 2) * rect.height;
+        if (cz > 1) dietro[i] = 1;
+      }
+      return { xy, dietro };
+    }
+
+    // --- MAPPA DI PROFONDITA' (scheda video) ---------------------------------
+    // Serve al Lazo. Proiettare i triangoli sullo schermo non basta: dentro il
+    // cappio finisce anche tutto quello che sta DIETRO (il corpo dietro la mano,
+    // la testa dietro i capelli), e la selezione prendeva roba che non si vede
+    // nemmeno. Qui si chiede alla scheda video di disegnare la scena una volta
+    // sola scrivendo, al posto del colore, la DISTANZA dall'occhio: si ottiene
+    // pixel per pixel la distanza della superficie piu' vicina. Poi basta
+    // confrontare: se un triangolo e' piu' lontano di quel valore, e' coperto.
+    // Il lavoro pesante lo fa la GPU, quindi funziona anche su mesh da centinaia
+    // di migliaia di triangoli senza rallentare.
+    const matProfondita = new THREE.ShaderMaterial({
+      uniforms: { uMax: { value: 1 } },
+      vertexShader: [
+        'varying vec3 vP;',
+        'void main() {',
+        '  vec4 mv = modelViewMatrix * vec4(position, 1.0);',
+        '  vP = mv.xyz;',
+        '  gl_Position = projectionMatrix * mv;',
+        '}',
+      ].join('\n'),
+      fragmentShader: [
+        'uniform float uMax;',
+        'varying vec3 vP;',
+        'void main() {',
+        // Distanza VERA dall'occhio (non la profondita' lungo l'asse della
+        // camera): l'app confronta distanze vere, e ai bordi dello schermo le
+        // due misure differiscono anche del 20%, cioe' quanto basta per
+        // scambiare una superficie in vista per una coperta.
+        '  float d = clamp(length(vP) / uMax, 0.0, 0.99999);',
+        '  vec3 e = fract(vec3(1.0, 255.0, 65025.0) * d);',
+        '  e -= vec3(e.y, e.z, 0.0) * (1.0 / 255.0);',
+        '  gl_FragColor = vec4(e, 1.0);',
+        '}',
+      ].join('\n'),
+      side: THREE.DoubleSide,
+    });
+    let bersaglio = null;
+
+    // Restituisce una funzione (xCss, yCss) -> distanza dall'occhio della
+    // superficie visibile in quel punto, oppure Infinity se li' non c'e' nulla.
+    function mappaProfondita(x0, y0, x1, y1) {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = renderer.getPixelRatio();
+      const W = Math.max(1, Math.round(rect.width * dpr));
+      const H = Math.max(1, Math.round(rect.height * dpr));
+      if (!bersaglio || bersaglio.width !== W || bersaglio.height !== H) {
+        if (bersaglio) bersaglio.dispose();
+        bersaglio = new THREE.WebGLRenderTarget(W, H, {
+          minFilter: THREE.NearestFilter,
+          magFilter: THREE.NearestFilter,
+        });
+      }
+      // fondo bianco = distanza massima = "qui non c'e' niente"
+      const maxDist = camera.far;
+      matProfondita.uniforms.uMax.value = maxDist;
+      // durante questa passata si disegnano SOLO i pezzi del modello: griglia,
+      // piano di taglio ed evidenziazione non devono coprire nulla.
+      const nascosti = [];
+      const dentro = new Set();
+      meshes.forEach((m) => dentro.add(m));
+      scene.traverse((o) => {
+        if (o !== scene && o.visible && !dentro.has(o) && (o.isMesh || o.isLine || o.isLineSegments || o.isPoints)) {
+          o.visible = false;
+          nascosti.push(o);
+        }
+      });
+      const sfondoPrec = scene.background;
+      const overridePrec = scene.overrideMaterial;
+      scene.background = new THREE.Color(0xffffff);
+      scene.overrideMaterial = matProfondita;
+      renderer.setRenderTarget(bersaglio);
+      renderer.render(scene, camera);
+      renderer.setRenderTarget(null);
+      scene.background = sfondoPrec;
+      scene.overrideMaterial = overridePrec;
+      nascosti.forEach((o) => { o.visible = true; });
+
+      // si rilegge solo il rettangolo che contiene il cappio, non tutto lo schermo
+      const px0 = Math.max(0, Math.floor(x0 * dpr) - 1);
+      const px1 = Math.min(W - 1, Math.ceil(x1 * dpr) + 1);
+      const py0 = Math.max(0, Math.floor(y0 * dpr) - 1);
+      const py1 = Math.min(H - 1, Math.ceil(y1 * dpr) + 1);
+      const w = Math.max(1, px1 - px0 + 1);
+      const h = Math.max(1, py1 - py0 + 1);
+      const buf = new Uint8Array(w * h * 4);
+      // readRenderTargetPixels conta le righe dal BASSO, la pagina dall'alto
+      renderer.readRenderTargetPixels(bersaglio, px0, H - 1 - py1, w, h, buf);
+
+      return function distanzaA(xCss, yCss) {
+        const px = Math.round(xCss * dpr) - px0;
+        const py = Math.round(yCss * dpr);
+        const riga = (H - 1 - py) - (H - 1 - py1); // riga dentro il buffer letto
+        if (px < 0 || px >= w || riga < 0 || riga >= h) return Infinity;
+        const i = (riga * w + px) * 4;
+        // bianco pieno = sfondo: li' non c'e' nessuna superficie
+        if (buf[i] === 255 && buf[i + 1] === 255 && buf[i + 2] === 255) return Infinity;
+        const d = (buf[i] / 255) + (buf[i + 1] / 255) / 255 + (buf[i + 2] / 255) / 65025;
+        return d * maxDist;
+      };
+    }
+
     // --- evidenziazione della selezione manuale ---
     let highlightMesh = null;
     function setHighlight(positionsArray) {
@@ -676,7 +806,7 @@
     function getTarget() { return [target.x, target.y, target.z]; }
 
     return { scene, camera, renderer, clearParts, addPart, setPartVisible, setPartOffset, frameAll, resize, raycastAt, setHighlight, projectToScreen, getCameraPosition, getTarget, setPointerDownHook, showCutPlane, hideCutPlane, impostaVista, animaVerso,
-      mostraCoperta, nascondiCoperta, maniglieSotto, puntoSulPianoVista };
+      mostraCoperta, nascondiCoperta, maniglieSotto, puntoSulPianoVista, mappaProfondita, proiettaTanti };
   }
 
   root.createViewer = createViewer;

@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "taglio-pulito-7"
+VERSIONE = "taglio-fine-8"
 
 
 # ---------------------------------------------------------------------------
@@ -785,18 +785,28 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
     # triangoli invece di aggirarli. Qui si ottiene lo stesso effetto
     # rilassando l'anello: ogni vertice del contorno si sposta verso la meta'
     # dei suoi due vicini sull'anello, e la sega diventa una curva.
-    # Si usa Taubin (un passo avanti e uno indietro piu' piccolo) perche' il
-    # solo Laplaciano stringerebbe l'anello a ogni giro, rimpicciolendo il
-    # pezzo. I vertici spostati sono gli stessi per i due pezzi, quindi le
-    # facce continuano a combaciare esattamente.
-    def _leviga_anello(anello, giri=4, lam=0.25, tetto_assoluto=None):
+    # Il contorno pero' vive sulla PELLE del modello: se lo si lascia libero,
+    # raddrizzandosi affonda nella parete e assottiglia il pezzo (su un
+    # cilindro rado si perdeva il 2% di volume). Quindi ogni spostamento viene
+    # schiacciato sul piano tangente alla superficie: la linea di taglio
+    # scivola sulla pelle come una matita, senza scavarla.
+    # I vertici spostati sono gli stessi per i due pezzi, quindi le facce
+    # continuano a combaciare esattamente.
+    nf = np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]])
+    normali_v = np.zeros_like(V)
+    for k in range(3):
+        np.add.at(normali_v, F[:, k], nf)
+    ln = np.linalg.norm(normali_v, axis=1)
+    normali_v[ln > 1e-12] /= ln[ln > 1e-12][:, None]
+
+    def _leviga_anello(anello, giri=12, lam=0.35, tetto_assoluto=None):
         vicini = {}
         for x, y in anello:
             vicini.setdefault(x, []).append(y)
             vicini.setdefault(y, []).append(x)
         punti = [v for v, n in vicini.items() if len(n) == 2]
         if len(punti) < 6:
-            return 0.0
+            return 0.0, 0.0, 0.0
         # tetto allo spostamento: una frazione della distanza tipica fra due
         # vertici dell'anello. Serve a togliere i dentini SENZA rimpicciolire
         # il contorno: un rilassamento libero tira ogni punto verso il centro
@@ -809,7 +819,12 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
         tetti = {}
         for v in punti:
             x, y = vicini[v]
-            t = 0.4 * min(float(np.linalg.norm(V[v] - V[x])),
+            # 1,5 spigoli, non 0,4: la scalinatura da togliere e' alta quanto
+            # UNO spigolo, quindi con un tetto sotto l'unita' il contorno non
+            # riesce nemmeno a raddrizzarsi. Su una mesh fitta (spigoli da un
+            # millimetro) il vecchio tetto lasciava spostare 0,27 mm: la sega
+            # restava tale e quale.
+            t = 1.5 * min(float(np.linalg.norm(V[v] - V[x])),
                           float(np.linalg.norm(V[v] - V[y])))
             # ...e comunque mai piu' di una frazione minuscola del modello:
             # i dentini da togliere sono piccoli per definizione, quindi un
@@ -817,24 +832,62 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
             # mesh rada il contorno venga tirato via di decine di millimetri.
             tetti[v] = min(t, tetto_assoluto) if tetto_assoluto else t
         p0 = {v: V[v].copy() for v in punti}
-        for _ in range(giri):
-            nuovi = {}
+        zero = np.zeros(3)
+
+        def _seghettatura():
+            # quanto ogni punto sporge rispetto alla meta' dei suoi due vicini,
+            # in proporzione alla lunghezza tipica degli spigoli: 0 = filo
+            # dritto, ~1 = zig-zag da un vertice all'altro.
+            s = l = 0.0
             for v in punti:
                 x, y = vicini[v]
-                nuovi[v] = V[v] + lam * (0.5 * (V[x] + V[y]) - V[v])
+                s += float(np.linalg.norm(0.5 * (V[x] + V[y]) - V[v]))
+                l += 0.5 * (float(np.linalg.norm(V[v] - V[x]))
+                            + float(np.linalg.norm(V[v] - V[y])))
+            return s / l if l else 0.0
+
+        prima = _seghettatura()
+        for _ in range(giri):
+            # Spostamento laplaciano grezzo: ogni punto verso la meta' dei suoi
+            # due vicini. Preso cosi' com'e' toglie i dentini ma stringe anche
+            # le curve buone (un anello circolare si accartoccia verso il
+            # centro giro dopo giro).
+            d = {}
+            for v in punti:
+                x, y = vicini[v]
+                d[v] = 0.5 * (V[x] + V[y]) - V[v]
+            # Si tiene solo la parte "a scatti": si calcola la media dello
+            # spostamento sui vicini e la si sottrae. Su una curva regolare
+            # i vicini spingono tutti nello stesso verso, la media e' uguale
+            # allo spostamento e non resta nulla: la curva non si stringe. Su
+            # una scalinatura i vicini spingono a zig-zag, la media si annulla
+            # e lo spostamento resta intero: i dentini vengono via.
+            media = dict(d)
+            for _ in range(2):
+                media = {v: 0.5 * (media[v] + 0.5 * (media.get(vicini[v][0], zero)
+                                                     + media.get(vicini[v][1], zero)))
+                         for v in punti}
+            nuovi = {}
+            for v in punti:
+                passo = lam * (d[v] - media[v])
+                n = normali_v[v]
+                passo = passo - n * float(passo @ n)   # scivola, non affonda
+                nuovi[v] = V[v] + passo
             for v, p in nuovi.items():
-                d = p - p0[v]
-                n = float(np.linalg.norm(d))
+                s = p - p0[v]
+                n = float(np.linalg.norm(s))
                 t = tetti[v]
-                V[v] = p0[v] + d * (t / n) if n > t else p
-        return max(float(np.linalg.norm(V[v] - p0[v])) for v in punti)
+                V[v] = p0[v] + s * (t / n) if n > t else p
+        return (max(float(np.linalg.norm(V[v] - p0[v])) for v in punti),
+                prima, _seghettatura())
 
     normali_tappo = []
     centri_tappo = []
     for anello in anelli:
-        mosso = _leviga_anello(anello, tetto_assoluto=0.005 * diag)
+        mosso, segh0, segh1 = _leviga_anello(anello, tetto_assoluto=0.005 * diag)
         if mosso > 0:
-            log.append(f"Contorno levigato: i vertici del bordo si sono spostati al massimo di {mosso:.2f} mm")
+            log.append(f"Contorno levigato: seghettatura da {segh0:.2f} a {segh1:.2f} "
+                       f"(0 = filo dritto), spostamento massimo {mosso:.2f} mm")
         vs = sorted({a for e in anello for a in e})
         P = V[vs]
         centro = P.mean(axis=0)
@@ -947,13 +1000,30 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
     Pan = np.asarray([V[a] for e in anelli[i_big] for a in e], dtype=np.float64)
     minore = 2.0 * min(0.5 * float((Pan @ u).max() - (Pan @ u).min()),
                        0.5 * float((Pan @ v).max() - (Pan @ v).min()))
+    # Il perno va misurato anche sullo SPESSORE del pezzo staccato, non solo
+    # sull'ampiezza dell'anello di taglio: una ciocca di capelli ha un anello
+    # largo ma e' sottile, e un perno tarato sull'anello la sfonda da parte a
+    # parte rovinando il modello.
+    # Lo spessore NON si puo' leggere dalla scatola che contiene il pezzo: una
+    # ciocca ricurva sta in una scatola da 121 mm pur essendo spessa 30. Si usa
+    # anche il rapporto fra volume e superficie, che per una lastra vale meta'
+    # dello spessore e non si lascia ingannare dalla curvatura (misurato sul
+    # modello vero: ciocca scatola 121 mm, volume/superficie 30 mm; gamba
+    # scatola 307 mm, volume/superficie 110 mm — cioe' lo spessore giusto).
+    dim_pezzo = np.asarray(ma.bounds[1]) - np.asarray(ma.bounds[0])
+    area = float(ma.area) or 1.0
+    spessore = min(float(dim_pezzo.min()), 4.0 * abs(float(ma.volume)) / area)
     if lato is None:
-        lato = float(np.clip(0.28 * minore, 2.0, max(10.0, 0.45 * minore)))
+        lato = float(np.clip(0.28 * minore, 2.0,
+                             max(4.0, min(0.45 * minore, 0.33 * spessore))))
     if profondita is None:
-        profondita = float(np.clip(0.9 * lato, 1.5, max(8.0, 0.9 * lato)))
+        profondita = float(np.clip(0.9 * lato, 1.5,
+                                   max(3.0, min(0.9 * lato, 0.33 * spessore))))
     if scala_connettore and scala_connettore != 1.0:
         lato *= scala_connettore
         profondita *= scala_connettore
+    log.append(f"Pezzo staccato spesso {spessore:.1f} mm: perno limitato a "
+               f"lato {lato:.1f} mm, profondita' {profondita:.1f} mm")
 
     A = _manifold(np.asarray(ma.vertices), np.asarray(ma.faces))
     B = _manifold(np.asarray(mb.vertices), np.asarray(mb.faces))

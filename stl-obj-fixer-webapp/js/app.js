@@ -740,7 +740,7 @@
   }
   // deve corrispondere a VERSIONE in ai-segmentation/taglia_pro.py: serve a
   // capire se sul PC gira ancora un companion vecchio (senza taglio locale)
-  const TAGLIA_PRO_VERSIONE_ATTESA = 'taglio-pulito-7';
+  const TAGLIA_PRO_VERSIONE_ATTESA = 'taglio-fine-8';
   async function runAiSegmentation() {
     if (!currentParsed) {
       alert('Carica prima un modello.');
@@ -2096,7 +2096,7 @@
     else viewer.nascondiCoperta();
     document.getElementById('cutHint').textContent =
       tool === 'lasso'
-        ? 'Lazo: disegna un cappio CHIUSO tutto attorno alla zona (non un tratto). Metti i punti del contorno, poi chiudi toccando il primo punto o "Chiudi lazo" e "Crea parte". Per selezioni a mano libera conviene il Pennello.'
+        ? 'Lazo: disegna un cappio CHIUSO tutto attorno alla zona (non un tratto). Metti i punti del contorno, poi chiudi toccando il primo punto o "Chiudi lazo" e "Crea parte". Prende solo quello che si VEDE dentro al cappio (piu\' il suo retro), non quello che sta dietro: gira il modello dal lato buono prima di disegnare.'
         : tool === 'coperta'
           ? 'Coperta: trascina i pallini per piegare il telo e stringerne il contorno. Il telo taglia SOLO dove passa, quindi puoi staccare un polso senza toccare il resto. Verdi = bordo, gialli = interno.'
         : tool === 'plane'
@@ -2453,6 +2453,20 @@
     return new Set(best || []);
   }
 
+  // Selezione col Lazo.
+  //
+  // Il cappio e' disegnato sullo SCHERMO, ma il modello e' solido: dentro al
+  // perimetro ci finisce anche tutto quello che sta dietro (il corpo dietro la
+  // mano, la testa dietro i capelli). Prima si prendevano le facce "rivolte
+  // verso di te", ma anche il corpo dietro ha facce rivolte verso di te: ecco
+  // perche' chiudendo il lazo veniva selezionata roba tutt'altro che scelta.
+  //
+  // Ora si procede in due tempi:
+  //  1) si chiede alla scheda video quale superficie si VEDE in ogni pixel, e
+  //     si tengono solo i triangoli davvero in vista dentro al cappio;
+  //  2) da quelli si gira attorno al pezzo (fronte -> fianco -> retro) restando
+  //     dentro al cappio. Il corpo dietro non viene raggiunto: e' attaccato
+  //     solo attraverso il braccio, che esce dal cappio.
   function lassoSelectFaces(polygon) {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     polygon.forEach((p) => {
@@ -2461,53 +2475,75 @@
     });
     const camPos = viewer.getCameraPosition();
     const through = el.lassoThroughChk.checked; // lazo passante: prendi anche il retro
+    // Se per qualche motivo la scheda video non sa restituire la mappa (driver
+    // vecchio, contesto perso), si torna al comportamento di prima invece di
+    // lasciare il Lazo rotto.
+    let profonditaA = null;
+    if (!through && viewer.mappaProfondita) {
+      try {
+        profonditaA = viewer.mappaProfondita(minX, minY, maxX, maxY);
+      } catch (e) {
+        profonditaA = null;
+      }
+    }
     let best = null;
     for (const part of currentResult.parts) {
       if (part.visible === false) continue;
       const topo = ensurePartTopology(part);
       const n = part.indices.length / 3;
       const insideAll = new Set(); // tutte le facce dentro il perimetro (fronte+retro)
-      const front = new Set();     // rivolte verso di te (visibili)
-      const fillable = new Set();  // fronte + fianco (per riempire i buchi, MA non il retro)
+      const viste = new Set();     // quelle che si vedono davvero (non coperte)
+      const proj = viewer.proiettaTanti
+        ? viewer.proiettaTanti(topo.centroids)
+        : null;
       for (let t = 0; t < n; t++) {
         const cx = topo.centroids[t * 3], cy = topo.centroids[t * 3 + 1], cz = topo.centroids[t * 3 + 2];
-        const s = viewer.projectToScreen(cx, cy, cz);
-        if (s.behind) continue;
-        if (s.x < minX || s.x > maxX || s.y < minY || s.y > maxY) continue;
-        if (!pointInPolygon(s.x, s.y, polygon)) continue;
+        let sx, sy;
+        if (proj) {
+          if (proj.dietro[t]) continue;
+          sx = proj.xy[t * 2]; sy = proj.xy[t * 2 + 1];
+        } else {
+          const s = viewer.projectToScreen(cx, cy, cz);
+          if (s.behind) continue;
+          sx = s.x; sy = s.y;
+        }
+        if (sx < minX || sx > maxX || sy < minY || sy > maxY) continue;
+        if (!pointInPolygon(sx, sy, polygon)) continue;
         insideAll.add(t);
-        let vx = cx - camPos[0], vy = cy - camPos[1], vz = cz - camPos[2];
-        const vl = Math.sqrt(vx * vx + vy * vy + vz * vz) || 1;
-        const facing = (topo.normals[t * 3] * vx + topo.normals[t * 3 + 1] * vy + topo.normals[t * 3 + 2] * vz) / vl;
-        if (facing < 0) front.add(t);        // verso la camera
-        if (facing < 0.35) fillable.add(t);  // fronte o fianco (esclude il retro netto)
+        if (!profonditaA) continue;
+        const vx = cx - camPos[0], vy = cy - camPos[1], vz = cz - camPos[2];
+        const vl = Math.sqrt(vx * vx + vy * vy + vz * vz);
+        // la distanza letta e' quella della superficie visibile in quel pixel;
+        // il triangolo la puo' superare al massimo del proprio raggio, perche'
+        // il pixel guarda un punto qualsiasi del triangolo, non il suo centro.
+        if (vl <= profonditaA(sx, sy) + (topo.raggi ? topo.raggi[t] : 0) + 1e-4) viste.add(t);
       }
-      if (insideAll.size > 0 && (!best || insideAll.size > best.insideAll.size)) {
-        best = { partId: part.id, topo, insideAll, front, fillable };
+      const peso = through ? insideAll.size : (viste.size || insideAll.size * 1e-6);
+      if (insideAll.size > 0 && (!best || peso > best.peso)) {
+        best = { partId: part.id, topo, insideAll, viste, peso };
       }
     }
     if (!best) return null;
 
     let selected;
-    if (through) {
+    if (through || best.viste.size === 0) {
       selected = best.insideAll; // taglio passante: tutto quello dentro il perimetro
     } else {
-      // parti dalle facce viste; poi RIEMPI solo i buchi interni usando le facce
-      // di fianco (non quelle del retro, cosi' non sborda sulle superfici sottili
-      // come i capelli). Nessun filtro "zona piu' grande": non si perdono le
-      // ciocche/parti separate.
-      selected = new Set(best.front.size > 0 ? best.front : best.insideAll);
+      // dai triangoli visti si allarga per contatto, ma SOLO dentro al cappio:
+      // cosi' si prende tutto il volume della zona scelta (anche il suo retro,
+      // che non si vede) e ci si ferma dove il cappio taglia.
+      selected = new Set(best.viste);
       const adj = best.topo.adjacency;
-      for (let it = 0; it < 10; it++) {
-        let added = 0;
-        best.fillable.forEach((t) => {
-          if (selected.has(t)) return;
-          let c = 0;
-          const a = adj[t];
-          for (let i = 0; i < a.length; i++) if (selected.has(a[i])) c++;
-          if (c >= 2) { selected.add(t); added++; }
-        });
-        if (!added) break;
+      const coda = Array.from(best.viste);
+      while (coda.length) {
+        const f = coda.pop();
+        const a = adj[f];
+        for (let i = 0; i < a.length; i++) {
+          const g = a[i];
+          if (selected.has(g) || !best.insideAll.has(g)) continue;
+          selected.add(g);
+          coda.push(g);
+        }
       }
     }
     return selected.size > 0 ? { partId: best.partId, faces: selected } : null;
@@ -2587,6 +2623,10 @@
     const nTris = part.indices.length / 3;
     const normals = new Float32Array(nTris * 3);
     const centroids = new Float32Array(nTris * 3);
+    // quanto e' "grosso" ogni triangolo: distanza massima dal suo centro a un
+    // vertice. Serve al Lazo per capire se un triangolo e' davanti o coperto
+    // senza sbagliare per via del suo stesso spessore.
+    const raggi = new Float32Array(nTris);
     for (let t = 0; t < nTris; t++) {
       const a = part.indices[t * 3], b = part.indices[t * 3 + 1], c = part.indices[t * 3 + 2];
       const ax = part.positions[a * 3], ay = part.positions[a * 3 + 1], az = part.positions[a * 3 + 2];
@@ -2597,9 +2637,13 @@
       let nz = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
       const len = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
       normals[t * 3] = nx / len; normals[t * 3 + 1] = ny / len; normals[t * 3 + 2] = nz / len;
-      centroids[t * 3] = (ax + bx + cx) / 3;
-      centroids[t * 3 + 1] = (ay + by + cy) / 3;
-      centroids[t * 3 + 2] = (az + bz + cz) / 3;
+      const gx = (ax + bx + cx) / 3, gy = (ay + by + cy) / 3, gz = (az + bz + cz) / 3;
+      centroids[t * 3] = gx; centroids[t * 3 + 1] = gy; centroids[t * 3 + 2] = gz;
+      raggi[t] = Math.sqrt(Math.max(
+        (ax - gx) * (ax - gx) + (ay - gy) * (ay - gy) + (az - gz) * (az - gz),
+        (bx - gx) * (bx - gx) + (by - gy) * (by - gy) + (bz - gz) * (bz - gz),
+        (cx - gx) * (cx - gx) + (cy - gy) * (cy - gy) + (cz - gz) * (cz - gz)
+      ));
     }
     const edgeMap = MeshCore.buildEdgeMap(part.indices);
     const adjacency = Array.from({ length: nTris }, () => []);
@@ -2612,7 +2656,7 @@
         }
       }
     });
-    part._topo = { adjacency, normals, centroids };
+    part._topo = { adjacency, normals, centroids, raggi };
     return part._topo;
   }
 
@@ -2833,7 +2877,7 @@
     const fracParteModello = maxDimParte / (maxDimModello || 1e-6);
     let raggioMorbido = fracParteModello < 0.4
       ? maxDimParte * 1.3                          // pezzo gia' una zona isolata piccola: quasi libero
-      : maxDimParte * (0.07 + estensione / 300);   // pezzo grande/composito: raggio stretto
+      : maxDimParte * (0.05 + estensione / 500);   // pezzo grande/composito: raggio stretto
     // PAVIMENTO legato alla risoluzione della mesh: su una mesh rada (poche
     // facce grandi, tipico di un modello di prova o di un pezzo poco
     // dettagliato) il raggio calcolato sopra puo' finire piu' piccolo di un
@@ -3236,6 +3280,7 @@
   // accessi di sola lettura usati dai test automatici (nessun effetto sull'app)
   window.__viewerCam = () => viewer.getCameraPosition();
   window.__viewerScene = () => viewer.scene;
+  window.__viewer = viewer;
   window.__viewerTarget = () => viewer.getTarget();
   window.__parsedInfo = () => currentParsed ? {
     hasColorInfo: currentParsed.hasColorInfo,
@@ -3374,6 +3419,52 @@
   };
   // seleziona i triangoli il cui baricentro cade in una scatola: serve ai
   // test per isolare il calcolo del PIANO dalla selezione automatica
+  window.__proietta = (x, y, z) => viewer.projectToScreen(x, y, z);
+  // selezione magica partendo da un punto 3D preciso (per i test)
+  window.__smartDaPunto = (punto, estensione) => {
+    if (!currentResult) return null;
+    let part = null, best = -1, bestD = Infinity;
+    for (const p of currentResult.parts) {
+      const topo = ensurePartTopology(p);
+      const nT = p.indices.length / 3;
+      for (let t = 0; t < nT; t++) {
+        const d = Math.hypot(topo.centroids[t * 3] - punto[0],
+          topo.centroids[t * 3 + 1] - punto[1], topo.centroids[t * 3 + 2] - punto[2]);
+        if (d < bestD) { bestD = d; best = t; part = p; }
+      }
+    }
+    if (!part) return null;
+    const sel = pulisciSelezione(part, smartSelect(part, best, estensione, 0.85));
+    const mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+    sel.forEach((f) => {
+      for (let k = 0; k < 3; k++) {
+        const v = part.indices[f * 3 + k];
+        for (let a = 0; a < 3; a++) {
+          const c = part.positions[v * 3 + a];
+          if (c < mn[a]) mn[a] = c;
+          if (c > mx[a]) mx[a] = c;
+        }
+      }
+    });
+    return { parte: part.name, facce: sel.size, totale: part.indices.length / 3, bboxMin: mn, bboxMax: mx, distanzaSeme: bestD };
+  };
+  window.__selInfo = () => {
+    if (!cutSelection || !currentResult) return null;
+    const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
+    if (!part) return null;
+    const mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+    cutSelection.faces.forEach((f) => {
+      for (let k = 0; k < 3; k++) {
+        const v = part.indices[f * 3 + k];
+        for (let a = 0; a < 3; a++) {
+          const c = part.positions[v * 3 + a];
+          if (c < mn[a]) mn[a] = c;
+          if (c > mx[a]) mx[a] = c;
+        }
+      }
+    });
+    return { parte: part.name, facce: cutSelection.faces.size, totale: part.indices.length / 3, bboxMin: mn, bboxMax: mx };
+  };
   window.__selBox = (min, max) => {
     if (!currentResult) return 0;
     let scelta = null, meglio = -1;
