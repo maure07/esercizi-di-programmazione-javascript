@@ -766,7 +766,11 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
         # posizione angolare ma altezza diversa cadono nello stesso punto, e
         # da li' nascono triangoli di area nulla e buchi nel pezzo.
         sicuro = False
-        if appiattisci and scarto / larghezza < 0.10:
+        # Soglia larga di proposito: una caviglia dentro uno stivale misura
+        # ~27% e li' la faccia PIATTA e' proprio quello che serve per stampare.
+        # A proteggere non e' questa soglia ma il controllo `sicuro` qui sotto,
+        # che rinuncia se schiacciando l'anello due vertici si sovrappongono.
+        if appiattisci and scarto / larghezza < 0.35:
             Pp = P - np.outer((P - centro) @ n_an, n_an)
             minimo = larghezza
             for i in range(len(Pp)):

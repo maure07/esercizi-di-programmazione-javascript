@@ -1468,8 +1468,31 @@
       // pezzi con un tappo sul contorno. Piano e telo sono superfici che
       // arrivano da fuori e, dove sbordano, tagliano roba non selezionata
       // (le lamelle piatte comparse attorno allo strappo del pantalone).
+      // QUALE MOTORE. Se il contorno della selezione e' un anello
+      // ragionevolmente piano (una caviglia dentro uno stivale: ~27% di
+      // scostamento) il piano e' la scelta giusta e regala una faccia di
+      // taglio PIATTA, comoda da stampare. Se invece e' frastagliato (un orlo
+      // strappato: oltre il 100%) il piano farebbe scempio, e allora si stacca
+      // esattamente la selezione chiudendola con un tappo.
+      let storto = 0;
+      if (piano.puntiBordo && piano.puntiBordo.length >= 24) {
+        const P = piano.puntiBordo, n = piano.normale, c = piano.punto;
+        let somma = 0, somma2 = 0, cnt = 0;
+        let lmin = Infinity, lmax = -Infinity;
+        for (let i = 0; i < P.length; i += 3) {
+          const dx = P[i] - c[0], dy = P[i + 1] - c[1], dz = P[i + 2] - c[2];
+          const h = dx * n[0] + dy * n[1] + dz * n[2];
+          somma += h; somma2 += h * h; cnt++;
+          const lat = Math.hypot(dx - h * n[0], dy - h * n[1], dz - h * n[2]);
+          if (lat < lmin) lmin = lat;
+          if (lat > lmax) lmax = lat;
+        }
+        const media = somma / cnt;
+        const dev = Math.sqrt(Math.max(0, somma2 / cnt - media * media));
+        storto = dev / Math.max(2 * lmax, 1e-9);
+      }
       let out = null;
-      if (health.taglio_selezione) {
+      if (health.taglio_selezione && storto > 0.40) {
         const bodySel = meshToPayload(part.positions, part.indices);
         bodySel.selezione = Array.from(cutSelection.faces);
         bodySel.connettore = conn; bodySel.gioco = gioco;
