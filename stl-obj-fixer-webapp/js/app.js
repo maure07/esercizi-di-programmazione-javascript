@@ -2473,17 +2473,16 @@
       if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
       if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
     });
-    const camPos = viewer.getCameraPosition();
     const through = el.lassoThroughChk.checked; // lazo passante: prendi anche il retro
-    // Se per qualche motivo la scheda video non sa restituire la mappa (driver
-    // vecchio, contesto perso), si torna al comportamento di prima invece di
-    // lasciare il Lazo rotto.
-    let profonditaA = null;
-    if (!through && viewer.mappaProfondita) {
+    // Si chiede alla scheda video l'elenco dei triangoli che si vedono davvero.
+    // Se per qualche motivo non risponde (driver vecchio, contesto perso), si
+    // torna al comportamento di prima invece di lasciare il Lazo rotto.
+    let visibili = null;
+    if (!through && viewer.facceVisibili) {
       try {
-        profonditaA = viewer.mappaProfondita(minX, minY, maxX, maxY);
+        visibili = viewer.facceVisibili(minX, minY, maxX, maxY);
       } catch (e) {
-        profonditaA = null;
+        visibili = null;
       }
     }
     let best = null;
@@ -2493,30 +2492,26 @@
       const n = part.indices.length / 3;
       const insideAll = new Set(); // tutte le facce dentro il perimetro (fronte+retro)
       const viste = new Set();     // quelle che si vedono davvero (non coperte)
+      const inVista = visibili ? visibili.get(part.id) : null;
       const proj = viewer.proiettaTanti
         ? viewer.proiettaTanti(topo.centroids)
         : null;
       for (let t = 0; t < n; t++) {
-        const cx = topo.centroids[t * 3], cy = topo.centroids[t * 3 + 1], cz = topo.centroids[t * 3 + 2];
         let sx, sy;
         if (proj) {
           if (proj.dietro[t]) continue;
           sx = proj.xy[t * 2]; sy = proj.xy[t * 2 + 1];
         } else {
-          const s = viewer.projectToScreen(cx, cy, cz);
+          const s = viewer.projectToScreen(topo.centroids[t * 3], topo.centroids[t * 3 + 1], topo.centroids[t * 3 + 2]);
           if (s.behind) continue;
           sx = s.x; sy = s.y;
         }
         if (sx < minX || sx > maxX || sy < minY || sy > maxY) continue;
         if (!pointInPolygon(sx, sy, polygon)) continue;
         insideAll.add(t);
-        if (!profonditaA) continue;
-        const vx = cx - camPos[0], vy = cy - camPos[1], vz = cz - camPos[2];
-        const vl = Math.sqrt(vx * vx + vy * vy + vz * vz);
-        // la distanza letta e' quella della superficie visibile in quel pixel;
-        // il triangolo la puo' superare al massimo del proprio raggio, perche'
-        // il pixel guarda un punto qualsiasi del triangolo, non il suo centro.
-        if (vl <= profonditaA(sx, sy) + (topo.raggi ? topo.raggi[t] : 0) + 1e-4) viste.add(t);
+        // la scheda video ha gia' detto quali si vedono; qui restano solo
+        // quelli che stanno anche dentro al cappio
+        if (inVista && inVista.has(t)) viste.add(t);
       }
       const peso = through ? insideAll.size : (viste.size || insideAll.size * 1e-6);
       if (insideAll.size > 0 && (!best || peso > best.peso)) {
@@ -3420,6 +3415,23 @@
   // seleziona i triangoli il cui baricentro cade in una scatola: serve ai
   // test per isolare il calcolo del PIANO dalla selezione automatica
   window.__proietta = (x, y, z) => viewer.projectToScreen(x, y, z);
+  window.__selInfo = () => {
+    if (!cutSelection || !currentResult) return null;
+    const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
+    if (!part) return null;
+    const mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+    cutSelection.faces.forEach((f) => {
+      for (let k = 0; k < 3; k++) {
+        const v = part.indices[f * 3 + k];
+        for (let a = 0; a < 3; a++) {
+          const c = part.positions[v * 3 + a];
+          if (c < mn[a]) mn[a] = c;
+          if (c > mx[a]) mx[a] = c;
+        }
+      }
+    });
+    return { parte: part.name, facce: cutSelection.faces.size, totale: part.indices.length / 3, bboxMin: mn, bboxMax: mx };
+  };
   // selezione magica partendo da un punto 3D preciso (per i test)
   window.__smartDaPunto = (punto, estensione) => {
     if (!currentResult) return null;
@@ -3448,22 +3460,87 @@
     });
     return { parte: part.name, facce: sel.size, totale: part.indices.length / 3, bboxMin: mn, bboxMax: mx, distanzaSeme: bestD };
   };
-  window.__selInfo = () => {
+  // In quante macchie separate e' fatta la selezione: una selezione "a strisce"
+  // e' fatta di tante isolette, una buona e' una macchia sola.
+  window.__isoleSelezione = () => {
     if (!cutSelection || !currentResult) return null;
     const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
     if (!part) return null;
-    const mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
-    cutSelection.faces.forEach((f) => {
-      for (let k = 0; k < 3; k++) {
-        const v = part.indices[f * 3 + k];
-        for (let a = 0; a < 3; a++) {
-          const c = part.positions[v * 3 + a];
-          if (c < mn[a]) mn[a] = c;
-          if (c > mx[a]) mx[a] = c;
+    const adj = ensurePartTopology(part).adjacency;
+    const resto = new Set(cutSelection.faces);
+    let numero = 0, maggiore = 0;
+    while (resto.size) {
+      const s = resto.values().next().value;
+      resto.delete(s);
+      let n = 1;
+      const pila = [s];
+      while (pila.length) {
+        const f = pila.pop();
+        const a = adj[f];
+        for (let i = 0; i < a.length; i++) {
+          if (resto.has(a[i])) { resto.delete(a[i]); pila.push(a[i]); n++; }
         }
       }
+      numero++;
+      if (n > maggiore) maggiore = n;
+    }
+    return { numero, frazioneMaggiore: maggiore / cutSelection.faces.size };
+  };
+  window.__cronoLazo = (poligono) => {
+    const T = {};
+    let t = performance.now();
+    const seg = (k) => { const n = performance.now(); T[k] = Math.round(n - t); t = n; };
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    poligono.forEach((p) => {
+      if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
     });
-    return { parte: part.name, facce: cutSelection.faces.size, totale: part.indices.length / 3, bboxMin: mn, bboxMax: mx };
+    const vis = viewer.facceVisibili(minX, minY, maxX, maxY); seg('facceVisibili');
+    const part = currentResult.parts.slice().sort((a, b) => b.indices.length - a.indices.length)[0];
+    const topo = ensurePartTopology(part); seg('topologia');
+    const proj = viewer.proiettaTanti(topo.centroids); seg('proiezione');
+    const dentro = new Set();
+    const n = part.indices.length / 3;
+    for (let i = 0; i < n; i++) {
+      if (proj.dietro[i]) continue;
+      const x = proj.xy[i * 2], y = proj.xy[i * 2 + 1];
+      if (x < minX || x > maxX || y < minY || y > maxY) continue;
+      if (pointInPolygon(x, y, poligono)) dentro.add(i);
+    }
+    seg('dentroAlCappio');
+    const sel = lassoSelectFaces(poligono); seg('lassoIntero');
+    cutSelection = sel; refreshCutHighlight(); seg('evidenziazione');
+    const semi = vis.get(part.id) || new Set();
+    const gamma = (insieme) => {
+      const mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+      insieme.forEach((f) => {
+        for (let k = 0; k < 3; k++) {
+          const v = part.indices[f * 3 + k];
+          for (let a = 0; a < 3; a++) {
+            const c = part.positions[v * 3 + a];
+            if (c < mn[a]) mn[a] = c; if (c > mx[a]) mx[a] = c;
+          }
+        }
+      });
+      return { mn: mn.map(Math.round), mx: mx.map(Math.round) };
+    };
+    const semiDentro = new Set();
+    semi.forEach((f) => { if (dentro.has(f)) semiDentro.add(f); });
+    return { tempi: T, visti: semi.size, semiDentroAlCappio: semiDentro.size,
+      gammaSemi: semiDentro.size ? gamma(semiDentro) : null,
+      dentro: dentro.size, scelti: sel ? sel.faces.size : 0 };
+  };
+  window.__diagnosiVisibili = () => {
+    if (!currentResult) return null;
+    const t0 = performance.now();
+    const vis = viewer.facceVisibili(0, 0, 1e6, 1e6);
+    const ms = performance.now() - t0;
+    const out = [];
+    vis.forEach((set, id) => {
+      const p = currentResult.parts.find((x) => x.id === id);
+      out.push({ parte: p ? p.name : id, inVista: set.size, totale: p ? p.indices.length / 3 : null });
+    });
+    return { millisecondi: Math.round(ms), pezzi: out };
   };
   window.__selBox = (min, max) => {
     if (!currentResult) return 0;

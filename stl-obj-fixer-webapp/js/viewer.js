@@ -304,6 +304,8 @@
     function clearParts() {
       meshes.forEach((m) => { scene.remove(m); m.geometry.dispose(); m.material.dispose(); });
       meshes.clear();
+      numeratori.forEach((n) => n.geom.dispose());
+      numeratori.clear();
       setHighlight(null);
     }
 
@@ -656,84 +658,114 @@
       return { xy, dietro };
     }
 
-    // --- MAPPA DI PROFONDITA' (scheda video) ---------------------------------
-    // Serve al Lazo. Proiettare i triangoli sullo schermo non basta: dentro il
-    // cappio finisce anche tutto quello che sta DIETRO (il corpo dietro la mano,
-    // la testa dietro i capelli), e la selezione prendeva roba che non si vede
-    // nemmeno. Qui si chiede alla scheda video di disegnare la scena una volta
-    // sola scrivendo, al posto del colore, la DISTANZA dall'occhio: si ottiene
-    // pixel per pixel la distanza della superficie piu' vicina. Poi basta
-    // confrontare: se un triangolo e' piu' lontano di quel valore, e' coperto.
-    // Il lavoro pesante lo fa la GPU, quindi funziona anche su mesh da centinaia
-    // di migliaia di triangoli senza rallentare.
-    const matProfondita = new THREE.ShaderMaterial({
-      uniforms: { uMax: { value: 1 } },
+    // --- QUALI TRIANGOLI SI VEDONO DAVVERO (scheda video) --------------------
+    // Confrontare le distanze non basta: su un modello da 400.000 triangoli i
+    // triangoli sono piu' piccoli di un pixel, quindi meta' di loro non
+    // "possiede" il pixel del proprio centro e verrebbe scambiata per coperta.
+    // Si e' visto sul modello vero: la selezione usciva a strisce frastagliate.
+    // Qui invece la scheda video disegna la scena scrivendo, al posto del
+    // colore, il NUMERO di ogni triangolo. Rileggendo i pixel si sa esattamente
+    // quali triangoli sono in vista: e' la stessa domanda che si fa la scheda
+    // video per decidere cosa disegnare, quindi la risposta non puo' sbagliare.
+    const matNumeri = new THREE.ShaderMaterial({
       vertexShader: [
-        'varying vec3 vP;',
+        'attribute vec3 numTri;',
+        'varying vec3 vNum;',
         'void main() {',
-        '  vec4 mv = modelViewMatrix * vec4(position, 1.0);',
-        '  vP = mv.xyz;',
-        '  gl_Position = projectionMatrix * mv;',
+        '  vNum = numTri;',
+        '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
         '}',
       ].join('\n'),
       fragmentShader: [
-        'uniform float uMax;',
-        'varying vec3 vP;',
-        'void main() {',
-        // Distanza VERA dall'occhio (non la profondita' lungo l'asse della
-        // camera): l'app confronta distanze vere, e ai bordi dello schermo le
-        // due misure differiscono anche del 20%, cioe' quanto basta per
-        // scambiare una superficie in vista per una coperta.
-        '  float d = clamp(length(vP) / uMax, 0.0, 0.99999);',
-        '  vec3 e = fract(vec3(1.0, 255.0, 65025.0) * d);',
-        '  e -= vec3(e.y, e.z, 0.0) * (1.0 / 255.0);',
-        '  gl_FragColor = vec4(e, 1.0);',
-        '}',
+        'varying vec3 vNum;',
+        'void main() { gl_FragColor = vec4(vNum, 1.0); }',
       ].join('\n'),
       side: THREE.DoubleSide,
     });
-    let bersaglio = null;
+    let bersaglioNumeri = null;
+    const numeratori = new Map(); // partId -> { base, geom }
 
-    // Restituisce una funzione (xCss, yCss) -> distanza dall'occhio della
-    // superficie visibile in quel punto, oppure Infinity se li' non c'e' nulla.
-    function mappaProfondita(x0, y0, x1, y1) {
+    // Prepara (una volta sola) la geometria "numerata" di un pezzo: stessi
+    // triangoli, ma ogni vertice porta scritto il numero del proprio triangolo
+    // in tre byte, cioe' un colore.
+    function geometriaNumerata(id, mesh, base) {
+      const vecchia = numeratori.get(id);
+      if (vecchia && vecchia.base === base && vecchia.geom.userData.fonte === mesh.geometry) {
+        return vecchia.geom;
+      }
+      if (vecchia) vecchia.geom.dispose();
+      const src = mesh.geometry;
+      const pos = src.getAttribute('position');
+      const idx = src.getIndex();
+      const nTri = idx ? idx.count / 3 : pos.count / 3;
+      const N = new Uint8Array(nTri * 9);
+      // si lavora sugli array grezzi: con getX/getY/getZ su 400.000 triangoli
+      // sarebbero sette milioni di chiamate e il primo lazo si piantava per
+      // qualche secondo.
+      const src2 = pos.array;
+      let P;
+      if (!idx) {
+        P = src2 instanceof Float32Array ? src2 : new Float32Array(src2);
+      } else {
+        P = new Float32Array(nTri * 9);
+        const ia = idx.array;
+        for (let i = 0; i < nTri * 3; i++) {
+          const v = ia[i] * 3;
+          P[i * 3] = src2[v]; P[i * 3 + 1] = src2[v + 1]; P[i * 3 + 2] = src2[v + 2];
+        }
+      }
+      for (let t = 0; t < nTri; t++) {
+        const n = base + t + 1; // lo 0 resta allo sfondo
+        const r = (n >> 16) & 255, g = (n >> 8) & 255, bl = n & 255;
+        const o = t * 9;
+        N[o] = r; N[o + 1] = g; N[o + 2] = bl;
+        N[o + 3] = r; N[o + 4] = g; N[o + 5] = bl;
+        N[o + 6] = r; N[o + 7] = g; N[o + 8] = bl;
+      }
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute('position', new THREE.BufferAttribute(P, 3));
+      geom.setAttribute('numTri', new THREE.BufferAttribute(N, 3, true));
+      geom.userData.fonte = src;
+      numeratori.set(id, { base, geom });
+      return geom;
+    }
+
+    // Restituisce una Map partId -> Set(numero di triangolo) con i soli
+    // triangoli che si vedono dentro al rettangolo indicato.
+    function facceVisibili(x0, y0, x1, y1) {
       const rect = canvas.getBoundingClientRect();
       const dpr = renderer.getPixelRatio();
       const W = Math.max(1, Math.round(rect.width * dpr));
       const H = Math.max(1, Math.round(rect.height * dpr));
-      if (!bersaglio || bersaglio.width !== W || bersaglio.height !== H) {
-        if (bersaglio) bersaglio.dispose();
-        bersaglio = new THREE.WebGLRenderTarget(W, H, {
-          minFilter: THREE.NearestFilter,
-          magFilter: THREE.NearestFilter,
+      if (!bersaglioNumeri || bersaglioNumeri.width !== W || bersaglioNumeri.height !== H) {
+        if (bersaglioNumeri) bersaglioNumeri.dispose();
+        bersaglioNumeri = new THREE.WebGLRenderTarget(W, H, {
+          minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
         });
       }
-      // fondo bianco = distanza massima = "qui non c'e' niente"
-      const maxDist = camera.far;
-      matProfondita.uniforms.uMax.value = maxDist;
-      // durante questa passata si disegnano SOLO i pezzi del modello: griglia,
-      // piano di taglio ed evidenziazione non devono coprire nulla.
-      const nascosti = [];
-      const dentro = new Set();
-      meshes.forEach((m) => dentro.add(m));
-      scene.traverse((o) => {
-        if (o !== scene && o.visible && !dentro.has(o) && (o.isMesh || o.isLine || o.isLineSegments || o.isPoints)) {
-          o.visible = false;
-          nascosti.push(o);
-        }
+      // scena usa e getta con le sole geometrie numerate dei pezzi visibili
+      const finta = new THREE.Scene();
+      finta.background = new THREE.Color(0x000000); // nero = sfondo
+      const fette = []; // per ogni pezzo: da quale numero comincia e quanti ne ha
+      let base = 0;
+      meshes.forEach((m, id) => {
+        if (!m.visible) return;
+        const geom = geometriaNumerata(id, m, base);
+        const nTri = geom.getAttribute('position').count / 3;
+        const oggetto = new THREE.Mesh(geom, matNumeri);
+        oggetto.position.copy(m.position);
+        oggetto.quaternion.copy(m.quaternion);
+        oggetto.scale.copy(m.scale);
+        finta.add(oggetto);
+        fette.push({ id, nTri, base });
+        base += nTri;
       });
-      const sfondoPrec = scene.background;
-      const overridePrec = scene.overrideMaterial;
-      scene.background = new THREE.Color(0xffffff);
-      scene.overrideMaterial = matProfondita;
-      renderer.setRenderTarget(bersaglio);
-      renderer.render(scene, camera);
-      renderer.setRenderTarget(null);
-      scene.background = sfondoPrec;
-      scene.overrideMaterial = overridePrec;
-      nascosti.forEach((o) => { o.visible = true; });
+      if (!fette.length) return new Map();
 
-      // si rilegge solo il rettangolo che contiene il cappio, non tutto lo schermo
+      // Una sola passata per tutti i pezzi: la numerazione e' continua da un
+      // pezzo all'altro, poi si torna indietro al pezzo giusto con gli
+      // intervalli. Cosi' la scheda video disegna una volta e si legge una
+      // volta, anche con dieci pezzi sullo schermo.
       const px0 = Math.max(0, Math.floor(x0 * dpr) - 1);
       const px1 = Math.min(W - 1, Math.ceil(x1 * dpr) + 1);
       const py0 = Math.max(0, Math.floor(y0 * dpr) - 1);
@@ -741,20 +773,28 @@
       const w = Math.max(1, px1 - px0 + 1);
       const h = Math.max(1, py1 - py0 + 1);
       const buf = new Uint8Array(w * h * 4);
-      // readRenderTargetPixels conta le righe dal BASSO, la pagina dall'alto
-      renderer.readRenderTargetPixels(bersaglio, px0, H - 1 - py1, w, h, buf);
+      renderer.setRenderTarget(bersaglioNumeri);
+      renderer.render(finta, camera);
+      renderer.setRenderTarget(null);
+      renderer.readRenderTargetPixels(bersaglioNumeri, px0, H - 1 - py1, w, h, buf);
+      finta.clear();
 
-      return function distanzaA(xCss, yCss) {
-        const px = Math.round(xCss * dpr) - px0;
-        const py = Math.round(yCss * dpr);
-        const riga = (H - 1 - py) - (H - 1 - py1); // riga dentro il buffer letto
-        if (px < 0 || px >= w || riga < 0 || riga >= h) return Infinity;
-        const i = (riga * w + px) * 4;
-        // bianco pieno = sfondo: li' non c'e' nessuna superficie
-        if (buf[i] === 255 && buf[i + 1] === 255 && buf[i + 2] === 255) return Infinity;
-        const d = (buf[i] / 255) + (buf[i + 1] / 255) / 255 + (buf[i + 2] / 255) / 65025;
-        return d * maxDist;
-      };
+      const risultato = new Map();
+      for (let i = 0; i < buf.length; i += 4) {
+        const n = (buf[i] << 16) | (buf[i + 1] << 8) | buf[i + 2];
+        if (n <= 0) continue;
+        const g = n - 1; // numero globale
+        for (let k = 0; k < fette.length; k++) {
+          const f = fette[k];
+          if (g >= f.base && g < f.base + f.nTri) {
+            let s = risultato.get(f.id);
+            if (!s) { s = new Set(); risultato.set(f.id, s); }
+            s.add(g - f.base);
+            break;
+          }
+        }
+      }
+      return risultato;
     }
 
     // --- evidenziazione della selezione manuale ---
@@ -806,7 +846,7 @@
     function getTarget() { return [target.x, target.y, target.z]; }
 
     return { scene, camera, renderer, clearParts, addPart, setPartVisible, setPartOffset, frameAll, resize, raycastAt, setHighlight, projectToScreen, getCameraPosition, getTarget, setPointerDownHook, showCutPlane, hideCutPlane, impostaVista, animaVerso,
-      mostraCoperta, nascondiCoperta, maniglieSotto, puntoSulPianoVista, mappaProfondita, proiettaTanti };
+      mostraCoperta, nascondiCoperta, maniglieSotto, puntoSulPianoVista, proiettaTanti, facceVisibili };
   }
 
   root.createViewer = createViewer;
