@@ -746,6 +746,13 @@
   // deve corrispondere a VERSIONE in ai-segmentation/taglia_pro.py: serve a
   // capire se sul PC gira ancora un companion vecchio (senza taglio locale)
   const TAGLIA_PRO_VERSIONE_ATTESA = 'taglio-tappo-9';
+  // Versione scritta in chiaro sotto al titolo. Serve a capire al volo, da uno
+  // screenshot, se il file aperto e' quello aggiornato: senza, quando qualcosa
+  // non va non si sa nemmeno quale versione si sta guardando.
+  (function mostraVersione() {
+    const e = document.getElementById('versioneApp');
+    if (e) e.textContent = 'app ' + TAGLIA_PRO_VERSIONE_ATTESA;
+  })();
   async function runAiSegmentation() {
     if (!currentParsed) {
       alert('Carica prima un modello.');
@@ -1407,6 +1414,17 @@
     }
     const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
     if (!part) return;
+    // SELEZIONE = TUTTO IL PEZZO. Qui non c'e' nessun contorno lungo cui
+    // tagliare, e il taglio esatto fallisce; l'app ripiegava sul piano, che
+    // taglia DRITTO e trancia il pezzo a meta' ignorando la selezione (e' cosi'
+    // che una ciocca di capelli selezionata tutta finiva tranciata in
+    // orizzontale insieme alla testa). Meglio fermarsi e dirlo.
+    if (cutSelection.faces.size >= 0.98 * (part.indices.length / 3)) {
+      alert('Hai selezionato praticamente tutto il pezzo "' + part.name + '".\n\n' +
+            'Non c\'e\' nessun contorno lungo cui tagliare: questa zona e\' gia\' un pezzo a se\'. ' +
+            'Se volevi staccarne solo una parte, restringi la selezione.');
+      return;
+    }
     const piano = pianoDelBordo(part, cutSelection.faces);
     if (!piano) { alert('Non riesco a ricavare un piano dal bordo della selezione.'); return; }
     // La selezione "un clic = tutta la zona" su superfici morbide (senza una
@@ -1497,6 +1515,11 @@
         storto = dev / Math.max(2 * lmax, 1e-9);
       }
       let out = null;
+      // Perche' si e' finiti sul piano invece che sul taglio esatto. Prima
+      // questo finiva solo nella console del browser: l'utente vedeva un taglio
+      // dritto che ignorava meta' della selezione e non poteva sapere che era
+      // un RIPIEGO, ne' perche'.
+      let motivoRipiego = null;
       // Si usa SEMPRE, quando c'e'. Il taglio col piano si limita alla zona
       // scelta intersecandola con una SCATOLA squadrata, e le pareti di quella
       // scatola tagliano il modello dove lo incontrano: sono loro le lamelle
@@ -1516,9 +1539,9 @@
           });
           const o1 = await r1.json();
           if (!o1.error) out = o1;
-          else console.warn('taglio sulla selezione non riuscito, ripiego sul piano:', o1.error);
+          else motivoRipiego = o1.error;
         } catch (e) {
-          console.warn('taglio sulla selezione non raggiungibile, ripiego sul piano:', e);
+          motivoRipiego = 'il companion non ha risposto (' + (e && e.message ? e.message : e) + ')';
         }
       }
       if (!out) {
@@ -1538,7 +1561,10 @@
           color: /perno|sopra|\(A\)/.test(suff) ? coloreNuovo() : part.color.slice(),
           sourceTriangleCount: m.indices.length / 3,
           positions: m.positions, indices: m.indices,
-          log: out.log || [], watertight: !!p.watertight,
+          log: (motivoRipiego
+            ? ['RIPIEGO SUL PIANO — il taglio esatto sulla selezione non e\' riuscito: ' + motivoRipiego]
+            : []).concat(out.log || []),
+          watertight: !!p.watertight,
           stats: MeshCore.computeStats(m.positions, m.indices),
           included: true,
         };
@@ -1547,8 +1573,19 @@
       currentResult.parts.sort((a, b) => b.stats.volume - a.stats.volume);
       cutSelection = null;
       renderResult(currentResult);
-      alert('Taglio piatto riuscito: le due facce che si toccano sono piane e combaciano.' +
-            (out.connettore ? `\n\nConnettore: lato ${out.connettore.lato.toFixed(1)} mm, gioco ${out.connettore.gioco.toFixed(2)} mm.` : ''));
+      if (motivoRipiego) {
+        // Il taglio col piano taglia DRITTO: ignora la forma della selezione.
+        // Va detto, altrimenti sembra che la selezione sia stata buttata via
+        // senza motivo.
+        alert('ATTENZIONE: non sono riuscito a tagliare esattamente sulla selezione.\n\n' +
+              'Motivo: ' + motivoRipiego + '\n\n' +
+              'Ho ripiegato sul taglio col PIANO, che taglia dritto e quindi ignora ' +
+              'la forma della zona che avevi scelto. Se il risultato non va bene, ' +
+              'annulla con "↩ Annulla" e ritocca la selezione.');
+      } else {
+        alert('Taglio piatto riuscito: le due facce che si toccano sono piane e combaciano.' +
+              (out.connettore ? `\n\nConnettore: lato ${out.connettore.lato.toFixed(1)} mm, gioco ${out.connettore.gioco.toFixed(2)} mm.` : ''));
+      }
     } catch (err) {
       console.error(err);
       alert('Errore nel taglio piatto: ' + err.message);
@@ -2491,6 +2528,7 @@
       }
     }
     let best = null;
+    const toccati = []; // pezzi che il cappio tocca: se sono piu' di uno va detto
     for (const part of currentResult.parts) {
       if (part.visible === false) continue;
       const topo = ensurePartTopology(part);
@@ -2519,11 +2557,22 @@
         if (inVista && inVista.has(t)) viste.add(t);
       }
       const peso = through ? insideAll.size : (viste.size || insideAll.size * 1e-6);
+      if (viste.size > 0 || (through && insideAll.size > 0)) {
+        toccati.push({ nome: part.name, quanti: through ? insideAll.size : viste.size });
+      }
       if (insideAll.size > 0 && (!best || peso > best.peso)) {
         best = { partId: part.id, topo, insideAll, viste, peso };
       }
     }
     if (!best) return null;
+    // Il ritaglio lavora su UN pezzo alla volta. Se il cappio ne abbraccia piu'
+    // d'uno (una cintura spesso e' divisa fra la fascia e la gonna) se ne
+    // prende uno solo e degli altri non resta traccia: sembra che il lazo
+    // abbia "ignorato la selezione". Meglio dirlo.
+    best.altriPezzi = toccati
+      .filter((t) => t.nome !== (currentResult.parts.find((p) => p.id === best.partId) || {}).name)
+      .filter((t) => t.quanti >= Math.max(20, 0.08 * best.peso))
+      .map((t) => t.nome);
 
     let selected;
     if (through || best.viste.size === 0) {
@@ -2546,7 +2595,9 @@
         }
       }
     }
-    return selected.size > 0 ? { partId: best.partId, faces: selected } : null;
+    return selected.size > 0
+      ? { partId: best.partId, faces: selected, altriPezzi: best.altriPezzi }
+      : null;
   }
 
   function closeLasso() {
@@ -2566,6 +2617,13 @@
       cutSelection = sel;
     }
     refreshCutHighlight();
+    if (sel.altriPezzi && sel.altriPezzi.length) {
+      const mio = (currentResult.parts.find((p) => p.id === sel.partId) || {}).name || 'il pezzo';
+      alert('Il cappio tocca piu\' di un pezzo.\n\n' +
+            'Ho selezionato solo "' + mio + '". Restano fuori: ' + sel.altriPezzi.join(', ') + '.\n\n' +
+            'Il ritaglio lavora su un pezzo per volta: se la zona che ti serve (per esempio una ' +
+            'cintura) e\' divisa fra piu\' pezzi, uniscili prima con "Unisci" e poi rifai il lazo.');
+    }
   }
 
   function addLassoPoint(clientX, clientY) {
@@ -3449,7 +3507,8 @@
         }
       }
     });
-    return { parte: part.name, facce: cutSelection.faces.size, totale: part.indices.length / 3, bboxMin: mn, bboxMax: mx };
+    return { parte: part.name, facce: cutSelection.faces.size, totale: part.indices.length / 3,
+      bboxMin: mn, bboxMax: mx, altriPezzi: cutSelection.altriPezzi || [] };
   };
   // selezione magica partendo da un punto 3D preciso (per i test)
   window.__smartDaPunto = (punto, estensione) => {
