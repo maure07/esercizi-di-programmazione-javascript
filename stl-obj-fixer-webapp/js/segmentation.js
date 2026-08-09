@@ -730,6 +730,17 @@
       return g;
     }
 
+    // NESSUNA divisione: il modello resta un pezzo solo. Serve a chi vuole
+    // ritagliare tutto a mano e non ha nessun interesse per i pezzi che il
+    // programma troverebbe da solo. La riparazione viene fatta lo stesso.
+    if (segmentMode === 'nessuna') {
+      const tutti = new Array(nTris);
+      for (let t = 0; t < nTris; t++) tutti[t] = t;
+      const g = new Map();
+      g.set('Modello intero', { triangles: tutti, color: FALLBACK_PALETTE[0] });
+      return finalizeParts(g, 'nessuna', warnings, positions, indices, options);
+    }
+
     if (segmentMode === 'geometry') {
       const groups = buildGeometryGroups();
       const target = options.colorParts === undefined ? 8 : options.colorParts;

@@ -126,6 +126,7 @@
     toSegmentBtn2: document.getElementById('toSegmentBtn2'),
     segmentPanel: document.getElementById('segmentPanel'),
     segmentBtn: document.getElementById('segmentBtn'),
+    saltaSegmBtn: document.getElementById('saltaSegmBtn'),
     segmentAiBtn: document.getElementById('segmentAiBtn'),
     dettagliChk: document.getElementById('dettagliChk'),
     dettagliSens: document.getElementById('dettagliSens'),
@@ -675,6 +676,7 @@
   el.toSegmentBtn.addEventListener('click', () => goToStep(3));
   el.toSegmentBtn2.addEventListener('click', () => goToStep(3));
   el.segmentBtn.addEventListener('click', () => runSegmentation());
+  if (el.saltaSegmBtn) el.saltaSegmBtn.addEventListener('click', () => saltaSegmentazione());
   el.segmentAiBtn.addEventListener('click', () => runAiSegmentation());
   el.smartSelAngle.addEventListener('input', () => {
     el.smartSelAngleValue.textContent = el.smartSelAngle.value + '\u00b0';
@@ -745,7 +747,7 @@
   }
   // deve corrispondere a VERSIONE in ai-segmentation/taglia_pro.py: serve a
   // capire se sul PC gira ancora un companion vecchio (senza taglio locale)
-  const TAGLIA_PRO_VERSIONE_ATTESA = 'taglio-tappo-9';
+  const TAGLIA_PRO_VERSIONE_ATTESA = 'taglio-tappo-10';
   // Versione scritta in chiaro sotto al titolo. Serve a capire al volo, da uno
   // screenshot, se il file aperto e' quello aggiornato: senza, quando qualcosa
   // non va non si sa nemmeno quale versione si sta guardando.
@@ -1030,6 +1032,42 @@
     currentResult = result;
     renderResult(result);
     setLoading(false);
+  }
+
+  // SALTA LA SEGMENTAZIONE AUTOMATICA. Il ritaglio manuale si sbloccava solo
+  // dopo aver segmentato, quindi bisognava per forza passare da una divisione
+  // in pezzi che magari non c'entrava niente con quella voluta. Qui si tiene il
+  // modello INTERO come pezzo unico e si va dritti agli strumenti a mano.
+  async function saltaSegmentazione() {
+    if (!currentParsed) {
+      if (currentResult && currentResult.mode === 'progetto') {
+        alert('Questo è già un progetto diviso in pezzi: per ripartire da zero carica il file 3D originale (.stl/.obj).');
+      }
+      return;
+    }
+    setLoading(true, 'Preparo il modello come pezzo unico…');
+    await new Promise((r) => setTimeout(r, 30));
+    let result;
+    try {
+      // stessa riparazione della segmentazione automatica, ma senza dividere:
+      // colorParts 1 e nessuna separazione per forma
+      result = Segmentation.buildParts(currentParsed, {
+        colorParts: 1, segmentMode: 'nessuna', colorBoundaryThreshold: 1,
+      });
+    } catch (err) {
+      console.error(err);
+      alert('Errore durante la preparazione del modello: ' + err.message);
+      setLoading(false);
+      return;
+    }
+    if (currentScaleFactor !== 1) scaleAllParts(result.parts, currentScaleFactor);
+    currentResult = result;
+    renderResult(result);
+    setLoading(false);
+    if (result.parts.length > 1) {
+      alert('Il modello era gia\' fatto di ' + result.parts.length + ' pezzi staccati fra loro '
+        + '(non attaccati), quindi restano separati. Gli strumenti di ritaglio manuale sono pronti.');
+    }
   }
 
   function computeOverallMaxDimension(parts) {

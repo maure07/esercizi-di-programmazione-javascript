@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "taglio-tappo-9"
+VERSIONE = "taglio-tappo-10"
 
 
 # ---------------------------------------------------------------------------
@@ -609,6 +609,13 @@ def taglia_con_coperta(vertices, faces, griglia, connettore=True, gioco=0.20,
 # rovescio) chiude anche il pezzo che resta. Risultato: il taglio corre
 # ESATTAMENTE dove finisce la selezione, i due pezzi combaciano perche'
 # condividono lo stesso tappo, e nessuna lamella estranea puo' comparire.
+def _area2(a, b, c):
+    """Doppia area con segno del triangolo a-b-c nel piano (prodotto vettore in
+    due dimensioni). Scritta a mano perche' numpy 2 non accetta piu' np.cross
+    su vettori a due componenti."""
+    return float((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]))
+
+
 def _ordina_anello(anello):
     """Mette in fila gli spigoli di un anello: v0 -> v1 -> v2 -> ... -> v0.
 
@@ -1038,7 +1045,13 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
                        "nessuna raggiera fuori dal pezzo")
             # il connettore va messo in un punto sicuramente DENTRO al tappo:
             # su un contorno rientrante il centro medio puo' cadere fuori
-            aree = [0.5 * abs(float(np.cross(P2[i1] - P2[i0], P2[i2] - P2[i0]))) for i0, i1, i2 in tri2]
+            # area del triangolo nel piano, calcolata a mano: np.cross su
+            # vettori a DUE componenti e' stato tolto da numpy 2, e li' faceva
+            # fallire il taglio con "Both input arrays must be 3-dimensional
+            # vectors". Il taglio ripiegava allora sul piano, che ignora la
+            # forma della selezione: e' il difetto che si vedeva su gamba,
+            # capelli e cintura.
+            aree = [0.5 * abs(_area2(P2[i0], P2[i1], P2[i2])) for i0, i1, i2 in tri2]
             i_max = int(np.argmax(aree))
             g = np.mean(V[[giro[k] for k in tri2[i_max]]], axis=0)
             centri_tappo.append(g)
