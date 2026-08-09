@@ -623,14 +623,20 @@
       Lazo passante — opzionale (prende anche quello che sta DIETRO, coperto alla vista)
     </label>
     <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:12px;color:var(--text-dim)">
-      <input type="checkbox" id="flatCutChk" checked style="width:16px;height:16px;accent-color:var(--accent2)" />
-      Faccia di taglio piatta quando si può (incastro liscio)
+      <input type="checkbox" id="flatCutChk" checked style="display:none" />
+      <span>Faccia di taglio piatta:</span>
+      <select id="flatCutModo" style="flex:1;min-width:120px">
+        <option value="auto" selected>solo dove costa poco</option>
+        <option value="sempre">sempre (anche se aggiunge materiale)</option>
+        <option value="mai">mai (segui il contorno com'è)</option>
+      </select>
     </label>
     <div style="font-size:11px;color:var(--text-dim);margin:-4px 0 8px 24px;line-height:1.4">
-      La faccia piatta si ottiene riempiendo fino al piano: se il contorno che hai scelto è
-      ondulato, quel riempimento sarebbe un blocco di materiale in più che snatura il pezzo.
-      Perciò la faccia viene resa piatta <b>solo dove costa poco</b>; dove il contorno è storto
-      il taglio resta <b>fedele al modello</b> e te lo scrive nel resoconto del pezzo.
+      La faccia piatta si ottiene riempiendo fino al piano. Su un contorno già quasi piano non
+      costa nulla; su uno ondulato quel riempimento è materiale in più che snatura il pezzo.
+      Con <b>“solo dove costa poco”</b> decide da sé e te lo scrive nel resoconto.
+      Scegli <b>“sempre”</b> se ti serve per forza una faccia d'appoggio piana (per esempio per
+      stampare il pezzo in piedi), <b>“mai”</b> se vuoi la massima fedeltà al modello.
     </div>
     </div>
 

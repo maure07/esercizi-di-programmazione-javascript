@@ -113,6 +113,7 @@
     toPrintBtn: document.getElementById('toPrintBtn'),
     lassoThroughChk: document.getElementById('lassoThroughChk'),
     flatCutChk: document.getElementById('flatCutChk'),
+    flatCutModo: document.getElementById('flatCutModo'),
     analysisPanel: document.getElementById('analysisPanel'),
     analysisReport: document.getElementById('analysisReport'),
     modelHeight: document.getElementById('modelHeight'),
@@ -747,7 +748,7 @@
   }
   // deve corrispondere a VERSIONE in ai-segmentation/taglia_pro.py: serve a
   // capire se sul PC gira ancora un companion vecchio (senza taglio locale)
-  const TAGLIA_PRO_VERSIONE_ATTESA = 'taglio-fedele-14';
+  const TAGLIA_PRO_VERSIONE_ATTESA = 'taglio-scelta-15';
   // Versione scritta in chiaro sotto al titolo. Serve a capire al volo, da uno
   // screenshot, se il file aperto e' quello aggiornato: senza, quando qualcosa
   // non va non si sa nemmeno quale versione si sta guardando.
@@ -1583,7 +1584,9 @@
         bodySel.selezione = Array.from(cutSelection.faces);
         bodySel.connettore = conn; bodySel.gioco = gioco;
         bodySel.scala_connettore = scalaConn();
-        bodySel.appiattisci = el.flatCutChk ? el.flatCutChk.checked : true;
+        // 'auto' | 'sempre' | 'mai' (la vecchia casella resta per i test)
+          bodySel.appiattisci = el.flatCutModo ? el.flatCutModo.value
+            : (el.flatCutChk && el.flatCutChk.checked ? 'auto' : 'mai');
         try {
           const r1 = await fetch(AI_URL + '/taglia_selezione', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },

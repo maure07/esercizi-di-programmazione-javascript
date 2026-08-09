@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "taglio-fedele-14"
+VERSIONE = "taglio-scelta-15"
 
 
 # ---------------------------------------------------------------------------
@@ -1116,7 +1116,13 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
         # com'e'. Misurato sul modello vero: capelli e cintura stanno sotto
         # l'1%, la macchia sulla coscia al 14%.
         storto = scarto / larghezza
-        vuole_piatta = appiattisci and storto < 0.02
+        # appiattisci: "mai" | "auto" (solo dove costa poco) | "sempre"
+        modo = appiattisci
+        if modo is True:
+            modo = 'auto'
+        elif modo is False:
+            modo = 'mai'
+        vuole_piatta = (modo == 'sempre') or (modo == 'auto' and storto < 0.02)
         giro = _ordina_anello(anello)
         if giro is None:
             giro = _cicli_anello(anello)
@@ -1129,10 +1135,12 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
         v_an = np.cross(n_an, u_an)
         fatto = False
         if giro and not vuole_piatta:
-            log.append(f"Contorno ondulato ({100 * storto:.1f}%): taglio FEDELE al modello "
-                       "(una faccia piatta qui vorrebbe dire riempire di materiale fino al piano)"
-                       if appiattisci else
-                       "Faccia piatta non richiesta: il taglio segue il contorno com'e'")
+            log.append(
+                f"Contorno ondulato ({100 * storto:.1f}%): taglio FEDELE al modello. Una faccia "
+                "piatta qui vorrebbe dire riempire di materiale fino al piano; se la preferisci "
+                "lo stesso, metti \"Faccia di taglio piatta\" su SEMPRE."
+                if modo == 'auto' else
+                "Faccia piatta non richiesta: il taglio segue il contorno com'e'")
         if giro and vuole_piatta:
             # il piano si mette dalla parte del pezzo staccato piu' lontana,
             # cosi' la gonnella non sbuca fuori dalla pelle

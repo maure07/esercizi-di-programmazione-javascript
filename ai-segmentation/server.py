@@ -214,7 +214,7 @@ def taglia_selezione():
             connettore=bool(data.get("connettore", True)),
             gioco=float(data.get("gioco", 0.20)),
             scala_connettore=float(data.get("scala_connettore", 1.0)),
-            appiattisci=bool(data.get("appiattisci", True)),
+            appiattisci=data.get("appiattisci", True),
         )
     except Exception as e:
         print("taglio sulla selezione fallito:", e, file=sys.stderr)
