@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "taglio-liscio-13"
+VERSIONE = "taglio-fedele-14"
 
 
 # ---------------------------------------------------------------------------
@@ -1107,6 +1107,16 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
         # La gonnella sta dentro al pezzo, quindi non si vede; la faccia che si
         # appoggia sul piatto della stampante e' piana davvero; e i due pezzi
         # condividono gonnella e disco, quindi combaciano al millesimo.
+        # ...ma la faccia piatta SI PAGA IN MATERIALE. La gonnella riempie tutto
+        # lo spazio fra il contorno vero e il piano: se il contorno e' ondulato
+        # (una macchia su una coscia tonda: 14% di scostamento) quel riempimento
+        # e' un blocco che si vede e snatura il pezzo. Quindi la faccia piatta
+        # si fa solo quando costa poco, cioe' quando il contorno e' gia' quasi
+        # piano; altrimenti si resta FEDELI al modello e si chiude il contorno
+        # com'e'. Misurato sul modello vero: capelli e cintura stanno sotto
+        # l'1%, la macchia sulla coscia al 14%.
+        storto = scarto / larghezza
+        vuole_piatta = appiattisci and storto < 0.02
         giro = _ordina_anello(anello)
         if giro is None:
             giro = _cicli_anello(anello)
@@ -1118,7 +1128,12 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
         u_an = _normalizza(u_an)
         v_an = np.cross(n_an, u_an)
         fatto = False
-        if giro:
+        if giro and not vuole_piatta:
+            log.append(f"Contorno ondulato ({100 * storto:.1f}%): taglio FEDELE al modello "
+                       "(una faccia piatta qui vorrebbe dire riempire di materiale fino al piano)"
+                       if appiattisci else
+                       "Faccia piatta non richiesta: il taglio segue il contorno com'e'")
+        if giro and vuole_piatta:
             # il piano si mette dalla parte del pezzo staccato piu' lontana,
             # cosi' la gonnella non sbuca fuori dalla pelle
             quote = (V[[k for c in giro for k in c]] - centro) @ n_an
