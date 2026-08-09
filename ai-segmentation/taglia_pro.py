@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "taglio-gonnella-12"
+VERSIONE = "taglio-liscio-13"
 
 
 # ---------------------------------------------------------------------------
@@ -984,7 +984,7 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
             if y not in _dmin or d < _dmin[y]:
                 _dmin[y] = d
 
-    def _leviga_anello(anello, giri=12, lam=0.35, tetto_assoluto=None):
+    def _leviga_anello(anello, giri=24, lam=0.42, tetto_assoluto=None):
         vicini = {}
         for x, y in anello:
             vicini.setdefault(x, []).append(y)
@@ -1014,10 +1014,11 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
             # ...ma MAI oltre la meta' della distanza dal vertice piu' vicino
             # con cui condivide un triangolo. Oltre quel limite il punto
             # scavalca i suoi compagni e i triangoli attorno si allungano in
-            # schegge: e' la frangia sporca che restava attorno alla faccia di
-            # taglio (spostamenti fino a 5,5 mm su triangoli da un millimetro).
+            # schegge. Il limite e' UNA volta quella distanza, non meta':
+            # misurato, stringerlo a meta' non migliorava la chiusura dei pezzi
+            # e lasciava il contorno piu' seghettato (0,16 invece di 0,09).
             if v in _dmin:
-                t = min(t, 0.5 * _dmin[v])
+                t = min(t, 1.0 * _dmin[v])
             # ...e comunque mai piu' di una frazione minuscola del modello:
             # i dentini da togliere sono piccoli per definizione, quindi un
             # tetto assoluto non toglie nulla di utile ma impedisce che su una
