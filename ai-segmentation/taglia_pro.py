@@ -889,6 +889,23 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
     ln = np.linalg.norm(normali_v, axis=1)
     normali_v[ln > 1e-12] /= ln[ln > 1e-12][:, None]
 
+    # Per ogni vertice: distanza dal vertice piu' vicino con cui condivide un
+    # triangolo. Serve a non far scavalcare un vertice ai suoi compagni mentre
+    # il contorno si liscia: se un punto del bordo scivola piu' di cosi', i
+    # triangoli che gli stanno attorno si allungano in schegge, ed e' la
+    # "frangia sporca" che si vede attorno alla faccia di taglio.
+    _dmin = {}
+    for f in F:
+        a, b, c = int(f[0]), int(f[1]), int(f[2])
+        for x, y in ((a, b), (b, c), (c, a)):
+            d = float(np.linalg.norm(V[x] - V[y]))
+            if d <= 0:
+                continue
+            if x not in _dmin or d < _dmin[x]:
+                _dmin[x] = d
+            if y not in _dmin or d < _dmin[y]:
+                _dmin[y] = d
+
     def _leviga_anello(anello, giri=12, lam=0.35, tetto_assoluto=None):
         vicini = {}
         for x, y in anello:
@@ -916,6 +933,13 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
             # restava tale e quale.
             t = 1.5 * min(float(np.linalg.norm(V[v] - V[x])),
                           float(np.linalg.norm(V[v] - V[y])))
+            # ...ma MAI oltre la meta' della distanza dal vertice piu' vicino
+            # con cui condivide un triangolo. Oltre quel limite il punto
+            # scavalca i suoi compagni e i triangoli attorno si allungano in
+            # schegge: e' la frangia sporca che restava attorno alla faccia di
+            # taglio (spostamenti fino a 5,5 mm su triangoli da un millimetro).
+            if v in _dmin:
+                t = min(t, 0.5 * _dmin[v])
             # ...e comunque mai piu' di una frazione minuscola del modello:
             # i dentini da togliere sono piccoli per definizione, quindi un
             # tetto assoluto non toglie nulla di utile ma impedisce che su una
