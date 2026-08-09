@@ -747,7 +747,7 @@
   }
   // deve corrispondere a VERSIONE in ai-segmentation/taglia_pro.py: serve a
   // capire se sul PC gira ancora un companion vecchio (senza taglio locale)
-  const TAGLIA_PRO_VERSIONE_ATTESA = 'taglio-tappo-10';
+  const TAGLIA_PRO_VERSIONE_ATTESA = 'taglio-fedele-11';
   // Versione scritta in chiaro sotto al titolo. Serve a capire al volo, da uno
   // screenshot, se il file aperto e' quello aggiornato: senza, quando qualcosa
   // non va non si sa nemmeno quale versione si sta guardando.
@@ -2629,7 +2629,7 @@
         toccati.push({ nome: part.name, quanti: through ? insideAll.size : viste.size });
       }
       if (insideAll.size > 0 && (!best || peso > best.peso)) {
-        best = { partId: part.id, topo, insideAll, viste, peso };
+        best = { partId: part.id, topo, insideAll, viste, peso, proj };
       }
     }
     if (!best) return null;
@@ -2663,8 +2663,48 @@
         }
       }
     }
+    // SOLO QUELLO CHE HAI CERCHIATO, NON QUELLO CHE IL CAPPIO SFIORA.
+    // Un cappio attorno a una cintura passa per forza sopra le braccia, e le
+    // braccia finiscono dentro al perimetro: venivano selezionate anche loro,
+    // in due macchie ai lati. La zona voluta pero' sta al CENTRO del cappio,
+    // mentre le braccia lo attraversano di striscio al bordo. Quindi si tiene
+    // solo cio' che tocca il "cuore" del cappio (il perimetro ristretto verso
+    // il centro); le macchie che stanno solo sul bordo si scartano.
+    let scartate = 0;
+    if (!through && selected.size > 0) {
+      let cx = 0, cy = 0;
+      polygon.forEach((p) => { cx += p.x; cy += p.y; });
+      cx /= polygon.length; cy /= polygon.length;
+      const cuore = polygon.map((p) => ({ x: cx + (p.x - cx) * 0.55, y: cy + (p.y - cy) * 0.55 }));
+      const adj = best.topo.adjacency;
+      const visto = new Set();
+      const tenute = new Set();
+      const proj2 = best.proj;
+      selected.forEach((f) => {
+        if (visto.has(f)) return;
+        const isola = [];
+        const pila = [f];
+        visto.add(f);
+        let tocca = false;
+        while (pila.length) {
+          const g = pila.pop();
+          isola.push(g);
+          if (!tocca && proj2 && !proj2.dietro[g]
+              && pointInPolygon(proj2.xy[g * 2], proj2.xy[g * 2 + 1], cuore)) tocca = true;
+          const a = adj[g];
+          for (let i = 0; i < a.length; i++) {
+            if (selected.has(a[i]) && !visto.has(a[i])) { visto.add(a[i]); pila.push(a[i]); }
+          }
+        }
+        if (tocca) isola.forEach((g) => tenute.add(g));
+        else scartate++;
+      });
+      // se il cuore non tocca niente (cappio strettissimo) si tiene tutto
+      if (tenute.size > 0) selected = tenute;
+      else scartate = 0;
+    }
     return selected.size > 0
-      ? { partId: best.partId, faces: selected, altriPezzi: best.altriPezzi }
+      ? { partId: best.partId, faces: selected, altriPezzi: best.altriPezzi, zoneScartate: scartate }
       : null;
   }
 
@@ -3560,6 +3600,18 @@
   // seleziona i triangoli il cui baricentro cade in una scatola: serve ai
   // test per isolare il calcolo del PIANO dalla selezione automatica
   window.__proietta = (x, y, z) => viewer.projectToScreen(x, y, z);
+  // mostra un solo pezzo (per fotografarlo nei test)
+  window.__soloQuesto = (nome) => {
+    if (!currentResult) return 0;
+    let n = 0;
+    currentResult.parts.forEach((p) => {
+      const mostra = p.name === nome;
+      p.visible = mostra;
+      viewer.setPartVisible(p.id, mostra);
+      if (mostra) n++;
+    });
+    return n;
+  };
   window.__selInfo = () => {
     if (!cutSelection || !currentResult) return null;
     const part = currentResult.parts.find((p) => p.id === cutSelection.partId);

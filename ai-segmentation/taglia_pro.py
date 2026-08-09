@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "taglio-tappo-10"
+VERSIONE = "taglio-fedele-11"
 
 
 # ---------------------------------------------------------------------------
@@ -1000,7 +1000,15 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
         # ~27% e li' la faccia PIATTA e' proprio quello che serve per stampare.
         # A proteggere non e' questa soglia ma il controllo `sicuro` qui sotto,
         # che rinuncia se schiacciando l'anello due vertici si sovrappongono.
-        if appiattisci and scarto / larghezza < 0.35:
+        # Soglia STRETTA. Appiattire vuol dire tirare i vertici del contorno su
+        # un piano, e quei vertici stanno sulla PELLE del modello: se il
+        # contorno e' davvero curvo (una macchia su una coscia tonda: 14% di
+        # scostamento) schiacciarlo lascia un gradino ben visibile sul pezzo
+        # che resta. Prima si appiattiva fino al 35% ed era proprio quella la
+        # "sporgenza" segnalata. I casi in cui la faccia piatta serve davvero
+        # (una caviglia dentro uno stivale, un polso) hanno anelli gia' quasi
+        # piani: misurati sul modello reale stanno tutti sotto l'1%.
+        if appiattisci and scarto / larghezza < 0.06:
             Pp = P - np.outer((P - centro) @ n_an, n_an)
             minimo = larghezza
             for i in range(len(Pp)):
