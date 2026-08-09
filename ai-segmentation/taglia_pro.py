@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "taglio-fedele-11"
+VERSIONE = "taglio-gonnella-12"
 
 
 # ---------------------------------------------------------------------------
@@ -641,6 +641,84 @@ def _ordina_anello(anello):
     return giro if len(giro) == len(anello) else None
 
 
+def _orecchie_3d(P3, n):
+    """Chiude un contorno storto senza proiettarlo su un piano.
+
+    Il ritaglio a orecchie normale lavora sul contorno schiacciato su un piano;
+    se il contorno e' molto ondulato (una macchia su una coscia tonda) la
+    proiezione si accavalla e non si riesce a chiudere. Si finiva allora sul
+    tappo a raggiera, quei triangoli lunghi che partono tutti da un punto e che
+    sul pezzo si vedono benissimo. Qui invece si sceglie ogni volta l'angolo
+    piu' "compatto" da staccare, lavorando direttamente in tre dimensioni: i
+    triangoli vengono corti e larghi, e la faccia di taglio resta pulita.
+    """
+    m = len(P3)
+    if m < 3:
+        return None
+    resto = list(range(m))
+    tri = []
+    while len(resto) > 3:
+        k_migliore, punteggio_migliore = -1, -1.0
+        k_ripiego, punteggio_ripiego = -1, -1.0
+        q = len(resto)
+        for k in range(q):
+            i0, i1, i2 = resto[(k - 1) % q], resto[k], resto[(k + 1) % q]
+            a, b, c = P3[i0], P3[i1], P3[i2]
+            area = float(np.cross(b - a, c - a) @ n)
+            per2 = (float(np.dot(b - a, b - a)) + float(np.dot(c - b, c - b))
+                    + float(np.dot(a - c, a - c)))
+            if per2 <= 0:
+                continue
+            if area > 1e-12 and area / per2 > punteggio_migliore:
+                punteggio_migliore, k_migliore = area / per2, k
+            if abs(area) / per2 > punteggio_ripiego:
+                punteggio_ripiego, k_ripiego = abs(area) / per2, k
+        # Se nessun angolo e' sporgente (contorno tutto rientrante rispetto al
+        # piano medio) si stacca comunque il piu' compatto: meglio un triangolo
+        # un po' storto che il tappo a raggiera, che si vede sul pezzo.
+        if k_migliore < 0:
+            k_migliore = k_ripiego
+        if k_migliore < 0:
+            return None
+        q = len(resto)
+        tri.append((resto[(k_migliore - 1) % q], resto[k_migliore], resto[(k_migliore + 1) % q]))
+        resto.pop(k_migliore)
+    tri.append((resto[0], resto[1], resto[2]))
+    return tri
+
+
+def _cicli_anello(anello):
+    """Spezza un contorno RAMIFICATO in piu' giri semplici.
+
+    _ordina_anello si arrende appena un vertice ha due strade: succedeva su
+    contorni che si toccano da soli, e si ripiegava sul tappo a raggiera, che
+    sul pezzo si vede eccome. Qui invece si percorrono gli spigoli consumandoli:
+    dove ci sono piu' strade se ne prende una qualsiasi, e alla fine si hanno
+    piu' giri chiusi, ognuno richiudibile a orecchie.
+    """
+    da_fare = {}
+    for a, b in anello:
+        da_fare.setdefault(a, []).append(b)
+    cicli = []
+    for partenza in list(da_fare.keys()):
+        while da_fare.get(partenza):
+            giro = [partenza]
+            v = da_fare[partenza].pop()
+            guardia = 0
+            while v != partenza and guardia <= len(anello):
+                guardia += 1
+                if not da_fare.get(v):
+                    giro = None
+                    break
+                giro.append(v)
+                v = da_fare[v].pop()
+            if giro and len(giro) >= 3 and v == partenza:
+                cicli.append(giro)
+            elif giro is None:
+                continue
+    return cicli
+
+
 def _ritaglia_orecchie(P2):
     """Triangola un poligono piano (anche rientrante) tagliando le "orecchie".
 
@@ -1019,81 +1097,106 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
         # fianco si alternano): appiattendolo, due vertici alla stessa
         # posizione angolare ma altezza diversa cadono nello stesso punto, e
         # da li' nascono triangoli di area nulla e buchi nel pezzo.
-        sicuro = False
-        # Soglia larga di proposito: una caviglia dentro uno stivale misura
-        # ~27% e li' la faccia PIATTA e' proprio quello che serve per stampare.
-        # A proteggere non e' questa soglia ma il controllo `sicuro` qui sotto,
-        # che rinuncia se schiacciando l'anello due vertici si sovrappongono.
-        # Soglia STRETTA. Appiattire vuol dire tirare i vertici del contorno su
-        # un piano, e quei vertici stanno sulla PELLE del modello: se il
-        # contorno e' davvero curvo (una macchia su una coscia tonda: 14% di
-        # scostamento) schiacciarlo lascia un gradino ben visibile sul pezzo
-        # che resta. Prima si appiattiva fino al 35% ed era proprio quella la
-        # "sporgenza" segnalata. I casi in cui la faccia piatta serve davvero
-        # (una caviglia dentro uno stivale, un polso) hanno anelli gia' quasi
-        # piani: misurati sul modello reale stanno tutti sotto l'1%.
-        if appiattisci and scarto / larghezza < 0.06:
-            Pp = P - np.outer((P - centro) @ n_an, n_an)
-            minimo = larghezza
-            for i in range(len(Pp)):
-                d = np.linalg.norm(Pp[i + 1:] - Pp[i], axis=1)
-                if len(d):
-                    minimo = min(minimo, float(d.min()))
-            sicuro = minimo > larghezza * 1e-4
-        if sicuro:
-            for v in vs:
-                V[v] = V[v] - n_an * float((V[v] - centro) @ n_an)
-            P = V[vs]
-            centro = P.mean(axis=0)
-            log.append(f"Faccia di taglio appiattita (anello quasi piano: {100 * scarto / larghezza:.1f}%)")
-        else:
-            log.append(f"Anello non appiattito ({100 * scarto / larghezza:.1f}% di scostamento): "
-                       "il taglio segue il bordo cosi' com'e'")
-        # TAPPO. Prima si prova col ritaglio a orecchie sul contorno messo in
-        # fila: i triangoli restano dentro al contorno anche se e' rientrante.
-        # Il vecchio ventaglio verso il centro va bene solo per i contorni
-        # convessi; su un polso o su una piega alcuni triangoli uscivano dal
-        # pezzo e sulla stampa si vedeva una sporgenza a raggiera.
+        # FACCIA DI TAGLIO PIATTA SENZA TOCCARE LA PELLE.
+        # Prima si tiravano i vertici del contorno sul piano medio: la faccia
+        # veniva piatta, ma quei vertici stanno sulla PELLE del modello e su un
+        # contorno curvo restava un gradino ben visibile (la "sporgenza").
+        # Ora la pelle non si tocca: si aggiunge una GONNELLA interna che porta
+        # il contorno vero fino al piano, e li' si chiude con un disco piatto.
+        # La gonnella sta dentro al pezzo, quindi non si vede; la faccia che si
+        # appoggia sul piatto della stampante e' piana davvero; e i due pezzi
+        # condividono gonnella e disco, quindi combaciano al millesimo.
         giro = _ordina_anello(anello)
-        tri2 = None
-        if giro is not None and len(giro) >= 3:
-            u_an = np.cross(n_an, [0.0, 0.0, 1.0])
-            if np.linalg.norm(u_an) < 1e-9:
-                u_an = np.cross(n_an, [0.0, 1.0, 0.0])
-            u_an = _normalizza(u_an)
-            v_an = np.cross(n_an, u_an)
-            Pg = V[giro]
-            P2 = np.column_stack([(Pg - centro) @ u_an, (Pg - centro) @ v_an])
-            tri2 = _ritaglia_orecchie(P2)
-        if tri2 is not None:
-            # ogni spigolo del contorno viene usato dalla selezione in un verso:
-            # il tappo del pezzo staccato lo usa nel verso opposto, quello del
-            # resto nello stesso verso del giro
-            for i0, i1, i2 in tri2:
-                a, b, c = giro[i0], giro[i1], giro[i2]
-                facce_a.append([c, b, a])
-                facce_b.append([a, b, c])
-            log.append(f"Tappo del taglio ritagliato a orecchie: {len(tri2)} triangoli, "
-                       "nessuna raggiera fuori dal pezzo")
-            # il connettore va messo in un punto sicuramente DENTRO al tappo:
-            # su un contorno rientrante il centro medio puo' cadere fuori
-            # area del triangolo nel piano, calcolata a mano: np.cross su
-            # vettori a DUE componenti e' stato tolto da numpy 2, e li' faceva
-            # fallire il taglio con "Both input arrays must be 3-dimensional
-            # vectors". Il taglio ripiegava allora sul piano, che ignora la
-            # forma della selezione: e' il difetto che si vedeva su gamba,
-            # capelli e cintura.
-            aree = [0.5 * abs(_area2(P2[i0], P2[i1], P2[i2])) for i0, i1, i2 in tri2]
-            i_max = int(np.argmax(aree))
-            g = np.mean(V[[giro[k] for k in tri2[i_max]]], axis=0)
-            centri_tappo.append(g)
+        if giro is None:
+            giro = _cicli_anello(anello)
         else:
+            giro = [giro]
+        u_an = np.cross(n_an, [0.0, 0.0, 1.0])
+        if np.linalg.norm(u_an) < 1e-9:
+            u_an = np.cross(n_an, [0.0, 1.0, 0.0])
+        u_an = _normalizza(u_an)
+        v_an = np.cross(n_an, u_an)
+        fatto = False
+        if giro:
+            # il piano si mette dalla parte del pezzo staccato piu' lontana,
+            # cosi' la gonnella non sbuca fuori dalla pelle
+            quote = (V[[k for c in giro for k in c]] - centro) @ n_an
+            piano_q = float(np.median(quote))
+            nuovi_tri_a, nuovi_tri_b = [], []
+            V_extra = []
+            base = len(V)
+            aree_tot = []
+            ok = True
+            for ciclo in giro:
+                if len(ciclo) < 3:
+                    ok = False
+                    break
+                Pg = V[ciclo]
+                # proiezione sul piano (quota comune), in coordinate del piano
+                proj = Pg - np.outer((Pg - centro) @ n_an - piano_q, n_an)
+                P2 = np.column_stack([(proj - centro) @ u_an, (proj - centro) @ v_an])
+                tri2 = _ritaglia_orecchie(P2)
+                if tri2 is None:
+                    ok = False
+                    break
+                idx_piano = [base + len(V_extra) + i for i in range(len(ciclo))]
+                V_extra.extend(list(proj))
+                # gonnella: ogni spigolo del contorno sale al suo gemello sul piano
+                n_c = len(ciclo)
+                for i in range(n_c):
+                    a, b = ciclo[i], ciclo[(i + 1) % n_c]
+                    a2, b2 = idx_piano[i], idx_piano[(i + 1) % n_c]
+                    if a2 != a:
+                        nuovi_tri_b.append([a, b, b2]); nuovi_tri_a.append([b2, b, a])
+                        nuovi_tri_b.append([a, b2, a2]); nuovi_tri_a.append([a2, b2, a])
+                # disco piatto
+                for i0, i1, i2 in tri2:
+                    A, B, C = idx_piano[i0], idx_piano[i1], idx_piano[i2]
+                    nuovi_tri_b.append([A, B, C]); nuovi_tri_a.append([C, B, A])
+                aree_tot.append((sum(0.5 * abs(_area2(P2[i0], P2[i1], P2[i2])) for i0, i1, i2 in tri2),
+                                 P2, tri2, idx_piano))
+            if ok and aree_tot:
+                V = np.vstack([V, np.asarray(V_extra, dtype=np.float64)]) if V_extra else V
+                facce_a.extend(nuovi_tri_a)
+                facce_b.extend(nuovi_tri_b)
+                salita = float(np.max(np.abs(quote - piano_q)))
+                log.append(f"Faccia di taglio PIATTA con gonnella interna: {len(giro)} contorno/i, "
+                           f"la pelle non viene toccata (dislivello colmato {salita:.1f} mm)")
+                # connettore al centro del disco piu' grande
+                _, P2m, tri2m, idxm = max(aree_tot, key=lambda t: t[0])
+                aree = [0.5 * abs(_area2(P2m[i0], P2m[i1], P2m[i2])) for i0, i1, i2 in tri2m]
+                i_max = int(np.argmax(aree))
+                centri_tappo.append(np.mean(V[[idxm[k] for k in tri2m[i_max]]], axis=0))
+                fatto = True
+        if not fatto and giro:
+            # La faccia piatta non e' possibile (il contorno, schiacciato sul
+            # piano, si accavalla): si chiude il contorno COM'E', in tre
+            # dimensioni. Non e' piatta, ma niente raggiera.
+            n_tri = 0
+            for ciclo in giro:
+                if len(ciclo) < 3:
+                    continue
+                t3 = _orecchie_3d(V[ciclo], n_an)
+                if t3 is None:
+                    n_tri = 0
+                    break
+                for i0, i1, i2 in t3:
+                    a, b, c = ciclo[i0], ciclo[i1], ciclo[i2]
+                    facce_a.append([c, b, a])
+                    facce_b.append([a, b, c])
+                n_tri += len(t3)
+            if n_tri:
+                log.append(f"Contorno troppo ondulato per una faccia piatta: chiuso "
+                           f"seguendolo com'e' ({n_tri} triangoli, niente raggiera)")
+                centri_tappo.append(centro)
+                fatto = True
+        if not fatto:
             ic = len(V)
             V = np.vstack([V, centro])
             for a, b in anello:
                 facce_a.append([b, a, ic])
                 facce_b.append([a, b, ic])
-            log.append("Tappo del taglio a raggiera (contorno non richiudibile a orecchie)")
+            log.append("Tappo del taglio a raggiera (contorno non richiudibile altrimenti)")
             centri_tappo.append(centro)
         normali_tappo.append(n_an)
 
