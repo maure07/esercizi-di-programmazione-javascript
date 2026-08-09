@@ -902,10 +902,24 @@
   }
   el.repairProBtn.addEventListener('click', () => runRepairPro());
 
-  // Taglio PRO con piano + connettore quadrato automatico (perno + foro).
+  // Taglio col PIANO + connettore quadrato automatico (perno + foro).
+  // ATTENZIONE: taglia DRITTO. Non guarda la forma della selezione: e' un
+  // altro strumento rispetto a "Taglia SULLA SELEZIONE".
   async function runPlaneCutPro() {
     const part = planePartObj();
     if (!part) { alert('Scegli il pezzo da tagliare.'); return; }
+    // Chi ha appena dipinto una mano o una cintura si aspetta che il taglio
+    // segua quel contorno: questo pulsante invece passa dritto e trancia tutto
+    // quello che incontra. Va chiesto, non subito.
+    if (cutSelection && cutSelection.faces && cutSelection.faces.size >= 4) {
+      const ok = confirm('Hai una selezione dipinta sul modello.\n\n' +
+        'Questo pulsante taglia DRITTO col piano rosso: la forma della selezione NON viene ' +
+        'seguita, e quello che il piano incontra viene tranciato.\n\n' +
+        'Per staccare esattamente la zona che hai scelto, annulla e usa in fondo al pannello ' +
+        '"✂️ Taglia SULLA SELEZIONE + connettore".\n\n' +
+        'Vuoi comunque tagliare dritto col piano?');
+      if (!ok) return;
+    }
     const health = await companionHealth();
     if (!health) return;
     if (!health.booleane_pro) {
@@ -2110,6 +2124,22 @@
   }
 
   function setCutTool(tool) {
+    // Passare al "Taglio dritto" (o alla coperta) BUTTA VIA la selezione
+    // dipinta: sono strumenti che non la usano. Chi aveva appena cerchiato una
+    // cintura e poi premeva il taglio col piano si ritrovava un taglio dritto
+    // che sembrava "ignorare la selezione" — in realta' la selezione non
+    // c'era piu'. Ora si avvisa e si puo' tornare indietro.
+    if ((tool === 'plane' || tool === 'coperta') && cutTool !== tool
+        && cutSelection && cutSelection.faces && cutSelection.faces.size >= 4) {
+      const ok = confirm('Hai una zona selezionata sul modello ('
+        + cutSelection.faces.size.toLocaleString('it-IT') + ' triangoli).\n\n'
+        + 'Il "Taglio dritto" taglia col piano e NON segue il contorno che hai disegnato: '
+        + 'passando a questo strumento la selezione viene persa.\n\n'
+        + 'Se volevi staccare proprio quella zona, annulla e usa in fondo al pannello '
+        + '"✂️ Taglia SULLA SELEZIONE + connettore".\n\n'
+        + 'Vuoi passare comunque al taglio dritto?');
+      if (!ok) return;
+    }
     cutTool = tool;
     el.cutToolWandBtn.classList.toggle('active', tool === 'wand');
     el.cutToolLassoBtn.classList.toggle('active', tool === 'lasso');

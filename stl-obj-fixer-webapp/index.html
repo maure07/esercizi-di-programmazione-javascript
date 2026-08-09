@@ -563,8 +563,11 @@
     <button id="cutToggleBtn">✂️ Ritaglio manuale e Taglio PRO</button>
   </div>
   <div id="cutRowHint" style="display:none;font-size:11.5px;color:var(--text-dim);margin:6px 0 10px;line-height:1.4">
-    Qui dentro trovi anche <b>📏 Taglio dritto</b> → <b>⚙️ Taglio PRO + connettore</b>:
-    taglia con booleane esatte e mette da solo il perno quadrato e il foro.
+    Ci sono <b>due tagli diversi</b>, non sceglierli a caso:
+    <b>✂️ Taglia SULLA SELEZIONE</b> (in fondo) stacca esattamente la zona che hai dipinto o
+    cerchiato, seguendone il contorno — è quello per mani, ciocche, cinture.
+    <b>📐 Taglia col PIANO</b> taglia invece dritto e ignora la forma della selezione.
+    Tutti e due mettono da soli perno e foro.
   </div>
   <div id="cutControls" style="display:none">
     <div id="cutHint">Tocca il modello per selezionare (giallo). Raggio piccolo = tocchi precisi. ➖ Rimuovi cancella dove tocchi, ↩ annulla l'ultimo tocco.</div>
@@ -696,20 +699,24 @@
           <span id="connScalaValue">100%</span>
         </div>
         <div class="cut-actions">
-          <button id="planeCutProBtn" style="background:linear-gradient(90deg,#3fd08a,#2f9bd0);color:#fff;border:none">⚙️ Taglio PRO + connettore (PC locale)</button>
+          <button id="planeCutProBtn" style="background:#2a2d36;color:var(--text);border:1px solid var(--border)">📐 Taglia col PIANO qui sopra + connettore</button>
         </div>
         <div style="font-size:11.5px;color:var(--text-dim);margin-top:6px;line-height:1.4">
-          Booleane esatte sul PC: taglio perfettamente liscio, perno quadrato su un pezzo e foro con gioco sull'altro.
+          <b>Taglia DRITTO col piano rosso</b>: la forma della zona che hai selezionato non viene
+          guardata. Serve quando vuoi una fetta netta (per esempio dividere in due un pezzo troppo
+          alto per il piatto). Se invece vuoi staccare proprio la zona che hai dipinto, usa
+          <b>“✂️ Taglia SULLA SELEZIONE”</b> in fondo al pannello.
         </div>
       </div>
     </div>
     <div class="cut-actions" id="selectFinalRow">
-      <button id="cutFlatProBtn" style="background:linear-gradient(90deg,#3fd08a,#2f9bd0);color:#fff;border:none">✂️ Taglia PIATTO + connettore (PC)</button>
+      <button id="cutFlatProBtn" style="background:linear-gradient(90deg,#3fd08a,#2f9bd0);color:#fff;border:none;font-weight:700">✂️ Taglia SULLA SELEZIONE + connettore (PC)</button>
     </div>
     <div style="font-size:11px;color:var(--text-dim);margin:0 0 8px;line-height:1.4">
-      Taglia il solido con il <b>piano medio del bordo</b> che hai selezionato, usando le booleane
-      esatte: le due facce che si toccano restano <b>piane e combacianti</b>. Il pulsante qui sotto
-      ritaglia invece i triangoli scelti, lasciando il bordo come l'hai disegnato.
+      <b>È questo il taglio sagomato</b>: stacca esattamente la zona che hai dipinto o cerchiato,
+      seguendone il contorno, e mette perno e foro. Usa questo per una mano, una ciocca di capelli,
+      una cintura. (Il pulsante “📐 Taglia col PIANO” più sopra taglia invece dritto e non guarda
+      la forma della selezione.)
     </div>
     <div class="cut-actions">
       <button id="cutCreateBtn" disabled>Crea parte (0 triangoli)</button>
