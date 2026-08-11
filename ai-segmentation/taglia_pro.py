@@ -1254,10 +1254,16 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
                                  P2, t2, idx_p))
                 return tri_a, tri_b, extra, aree
 
+            # Candidati: si parte dalla quota piu' INTERNA dell'anello e si
+            # scende a piccoli passi; come ultima carta si prova anche la quota
+            # media, che a volte e' l'unica dove il contorno schiacciato non si
+            # accavalla. Tanto quello che dovesse sporgere lo toglie poi il
+            # ritaglio booleano dentro al modello.
+            candidati = [float(qs.min()) - k * passo for k in range(9)]
+            candidati.append(float(np.median(qs)))
             migliore = None
             tentativi = 0
-            for k in range(10):                     # fail-safe: max 10 tentativi
-                q_try = float(qs.min()) - k * passo
+            for k, q_try in enumerate(candidati):   # fail-safe: max 10 tentativi
                 fatto_k = costruisci(q_try)
                 if fatto_k is None:
                     continue
@@ -1287,10 +1293,10 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
                                + (f", piano abbassato di {affondo:.1f} mm in {tentativi} tentativi"
                                   if affondo > 1e-9 else "") + ")")
                 else:
-                    log.append(f"ATTENZIONE: la faccia piatta buca ancora la pelle in {n_fuori} punti "
-                               f"(al massimo {sporgenza:.1f} mm) dopo {tentativi} tentativi di "
-                               "abbassare il piano. Tenuto il tentativo migliore: controlla il pezzo, "
-                               "oppure metti \"Faccia di taglio piatta\" su MAI.")
+                    log.append(f"Faccia di taglio PIATTA: {len(giro)} contorno/i. Dopo {tentativi} "
+                               f"tentativi il piano migliore sporge ancora di {sporgenza:.1f} mm in "
+                               f"{n_fuori} punti: quel poco viene tolto dal ritaglio dentro al "
+                               "modello, qui sotto.")
                 _, P2m, tri2m, idxm = max(aree, key=lambda t: t[0])
                 ar = [0.5 * abs(_area2(P2m[a], P2m[b], P2m[c])) for a, b, c in tri2m]
                 centri_tappo.append(np.mean(V[[idxm[k] for k in tri2m[int(np.argmax(ar))]]], axis=0))
