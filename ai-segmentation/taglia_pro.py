@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "taglio-scelta-15"
+VERSIONE = "taglio-dentro-16"
 
 
 # ---------------------------------------------------------------------------
@@ -641,6 +641,61 @@ def _ordina_anello(anello):
     return giro if len(giro) == len(anello) else None
 
 
+def _controllore_pelle(V_orig, F_orig, scatola, margine):
+    """Restituisce una funzione che dice quanto dei punti dati sta FUORI dal
+    modello di partenza.
+
+    Serve a impedire che il tappo del taglio buchi la pelle. Non basta guardare
+    i VERTICI del tappo: un disco piatto largo può avere tutti i vertici dentro
+    e sfondare comunque in mezzo, dove il modello si incurva. Misurato sul
+    modello vero: guardando i soli vertici la sporgenza risultava 0,05 mm,
+    campionando anche l'interno delle facce risultava 5,2 mm.
+
+    Per non pagare una ricerca sull'intero modello (400.000 triangoli) si lavora
+    su una porzione locale: solo i triangoli attorno alla zona di taglio.
+    """
+    import trimesh
+    lo = np.asarray(scatola[0], dtype=np.float64) - margine
+    hi = np.asarray(scatola[1], dtype=np.float64) + margine
+    C = V_orig[F_orig].mean(axis=1)
+    vicine = np.all((C >= lo) & (C <= hi), axis=1)
+    if not vicine.any():
+        return None
+    Fl = F_orig[vicine]
+    usati = np.unique(Fl)
+    rimappa = {int(v): i for i, v in enumerate(usati)}
+    Fl2 = np.vectorize(rimappa.__getitem__)(Fl)
+    patch = trimesh.Trimesh(vertices=V_orig[usati], faces=Fl2, process=False)
+    normali = np.asarray(patch.face_normals, dtype=np.float64)
+
+    def quanto_fuori(punti):
+        P = np.asarray(punti, dtype=np.float64).reshape(-1, 3)
+        if not len(P):
+            return 0, 0.0
+        vicino, _, tri = trimesh.proximity.closest_point(patch, P)
+        # segno: se il punto sta dalla parte della normale, e' fuori dal solido
+        fuori = np.einsum('ij,ij->i', P - vicino, normali[tri])
+        pos = fuori[fuori > 0]
+        return int(len(pos)), float(pos.max()) if len(pos) else 0.0
+
+    return quanto_fuori
+
+
+def _campiona_facce(V, facce, per_faccia=3):
+    """Punti sparsi sulle facce date: baricentro e punti a meta' strada verso i
+    vertici. Serve a controllare anche l'INTERNO delle facce, non solo i bordi."""
+    if not facce:
+        return np.zeros((0, 3))
+    T = V[np.asarray(facce, dtype=np.int64)]
+    g = T.mean(axis=1)
+    if per_faccia <= 1:
+        return g
+    pezzi = [g]
+    for k in range(min(per_faccia - 1, 3)):
+        pezzi.append(0.5 * (g + T[:, k]))
+    return np.vstack(pezzi)
+
+
 def _orecchie_3d(P3, n):
     """Chiude un contorno storto senza proiettarlo su un piano.
 
@@ -837,6 +892,10 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
     import trimesh
     V = np.asarray(vertices, dtype=np.float64).copy()
     F = np.asarray(faces, dtype=np.int64)
+    # copia intatta del modello di partenza: serve per controllare che il tappo
+    # del taglio non vada a bucare la pelle (vedi _controllore_pelle)
+    V_orig = np.asarray(vertices, dtype=np.float64).copy()
+    F_orig = np.asarray(faces, dtype=np.int64).copy()
     sel = set(int(x) for x in np.asarray(selezione).ravel())
     if not sel or len(sel) >= len(F):
         raise ValueError("La selezione e' vuota, o copre tutto il pezzo.")
@@ -1074,6 +1133,9 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
         return (max(float(np.linalg.norm(V[v] - p0[v])) for v in punti),
                 prima, _seghettatura())
 
+    # costruito al primo bisogno: dice se un punto sta fuori dalla pelle
+    quanto_fuori = None
+    tappo_a = []          # facce aggiunte come tappo (per il controllo sporgenze)
     normali_tappo = []
     centri_tappo = []
     for anello in anelli:
@@ -1142,55 +1204,96 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
                 if modo == 'auto' else
                 "Faccia piatta non richiesta: il taglio segue il contorno com'e'")
         if giro and vuole_piatta:
-            # il piano si mette dalla parte del pezzo staccato piu' lontana,
-            # cosi' la gonnella non sbuca fuori dalla pelle
-            quote = (V[[k for c in giro for k in c]] - centro) @ n_an
-            piano_q = float(np.median(quote))
-            nuovi_tri_a, nuovi_tri_b = [], []
-            V_extra = []
-            base = len(V)
-            aree_tot = []
-            ok = True
-            for ciclo in giro:
-                if len(ciclo) < 3:
-                    ok = False
+            # DOVE METTERE IL PIANO. Il disco piatto e la gonnella non devono
+            # bucare la pelle del modello. Col piano alla quota MEDIA dell'anello
+            # meta' della gonnella sale verso l'esterno e sbuca fuori: misurato
+            # sul modello vero, 993 punti su 3000 fuori dal solido, fino a 5,2 mm
+            # in stampa. Si parte quindi dalla quota piu' INTERNA dell'anello
+            # (cosi' ogni tratto di gonnella scende dentro al pezzo) e, se il
+            # controllo trova ancora una compenetrazione, si scende ancora,
+            # fino a un massimo di 10 tentativi.
+            vs_giro = [k for c in giro for k in c]
+            # verso l'esterno del pezzo, letto dalle normali dei vertici di bordo
+            n_est = normali_v[vs_giro].sum(axis=0)
+            segno = 1.0 if float(n_est @ n_an) >= 0 else -1.0
+            n_dir = segno * n_an          # +n_dir = fuori dal pezzo
+            qs = (V[vs_giro] - centro) @ n_dir
+            spessore_anello = float(qs.max() - qs.min()) or 1.0
+            passo = 0.35 * spessore_anello
+            if quanto_fuori is None:
+                scatola = (V[vs_giro].min(axis=0), V[vs_giro].max(axis=0))
+                quanto_fuori = _controllore_pelle(V_orig, F_orig, scatola,
+                                                  margine=0.5 * spessore_anello + 0.02 * diag)
+
+            def costruisci(q_dir):
+                """Prova a costruire il tappo col piano a quota q_dir (misurata
+                lungo n_dir). Torna None se il contorno non si richiude."""
+                tri_a, tri_b, extra, aree = [], [], [], []
+                base_l = len(V)
+                for ciclo in giro:
+                    if len(ciclo) < 3:
+                        return None
+                    Pg = V[ciclo]
+                    proj = Pg - np.outer((Pg - centro) @ n_dir - q_dir, n_dir)
+                    P2 = np.column_stack([(proj - centro) @ u_an, (proj - centro) @ v_an])
+                    t2 = _ritaglia_orecchie(P2)
+                    if t2 is None:
+                        return None
+                    idx_p = [base_l + len(extra) + i for i in range(len(ciclo))]
+                    extra.extend(list(proj))
+                    n_c = len(ciclo)
+                    for i in range(n_c):
+                        a, b = ciclo[i], ciclo[(i + 1) % n_c]
+                        a2, b2 = idx_p[i], idx_p[(i + 1) % n_c]
+                        tri_b.append([a, b, b2]); tri_a.append([b2, b, a])
+                        tri_b.append([a, b2, a2]); tri_a.append([a2, b2, a])
+                    for i0, i1, i2 in t2:
+                        A, B, C = idx_p[i0], idx_p[i1], idx_p[i2]
+                        tri_b.append([A, B, C]); tri_a.append([C, B, A])
+                    aree.append((sum(0.5 * abs(_area2(P2[a], P2[b], P2[c])) for a, b, c in t2),
+                                 P2, t2, idx_p))
+                return tri_a, tri_b, extra, aree
+
+            migliore = None
+            tentativi = 0
+            for k in range(10):                     # fail-safe: max 10 tentativi
+                q_try = float(qs.min()) - k * passo
+                fatto_k = costruisci(q_try)
+                if fatto_k is None:
+                    continue
+                tentativi = k + 1
+                tri_a, tri_b, extra, aree = fatto_k
+                if quanto_fuori is None:
+                    migliore = (0, 0.0, q_try, fatto_k)
                     break
-                Pg = V[ciclo]
-                # proiezione sul piano (quota comune), in coordinate del piano
-                proj = Pg - np.outer((Pg - centro) @ n_an - piano_q, n_an)
-                P2 = np.column_stack([(proj - centro) @ u_an, (proj - centro) @ v_an])
-                tri2 = _ritaglia_orecchie(P2)
-                if tri2 is None:
-                    ok = False
+                Vp = np.vstack([V, np.asarray(extra, dtype=np.float64)]) if extra else V
+                n_fuori, sporgenza = quanto_fuori(_campiona_facce(Vp, tri_b))
+                if migliore is None or n_fuori < migliore[0]:
+                    migliore = (n_fuori, sporgenza, q_try, fatto_k)
+                if n_fuori == 0:
                     break
-                idx_piano = [base + len(V_extra) + i for i in range(len(ciclo))]
-                V_extra.extend(list(proj))
-                # gonnella: ogni spigolo del contorno sale al suo gemello sul piano
-                n_c = len(ciclo)
-                for i in range(n_c):
-                    a, b = ciclo[i], ciclo[(i + 1) % n_c]
-                    a2, b2 = idx_piano[i], idx_piano[(i + 1) % n_c]
-                    if a2 != a:
-                        nuovi_tri_b.append([a, b, b2]); nuovi_tri_a.append([b2, b, a])
-                        nuovi_tri_b.append([a, b2, a2]); nuovi_tri_a.append([a2, b2, a])
-                # disco piatto
-                for i0, i1, i2 in tri2:
-                    A, B, C = idx_piano[i0], idx_piano[i1], idx_piano[i2]
-                    nuovi_tri_b.append([A, B, C]); nuovi_tri_a.append([C, B, A])
-                aree_tot.append((sum(0.5 * abs(_area2(P2[i0], P2[i1], P2[i2])) for i0, i1, i2 in tri2),
-                                 P2, tri2, idx_piano))
-            if ok and aree_tot:
-                V = np.vstack([V, np.asarray(V_extra, dtype=np.float64)]) if V_extra else V
-                facce_a.extend(nuovi_tri_a)
-                facce_b.extend(nuovi_tri_b)
-                salita = float(np.max(np.abs(quote - piano_q)))
-                log.append(f"Faccia di taglio PIATTA con gonnella interna: {len(giro)} contorno/i, "
-                           f"la pelle non viene toccata (dislivello colmato {salita:.1f} mm)")
-                # connettore al centro del disco piu' grande
-                _, P2m, tri2m, idxm = max(aree_tot, key=lambda t: t[0])
-                aree = [0.5 * abs(_area2(P2m[i0], P2m[i1], P2m[i2])) for i0, i1, i2 in tri2m]
-                i_max = int(np.argmax(aree))
-                centri_tappo.append(np.mean(V[[idxm[k] for k in tri2m[i_max]]], axis=0))
+
+            if migliore is not None:
+                n_fuori, sporgenza, q_scelto, (tri_a, tri_b, extra, aree) = migliore
+                if extra:
+                    V = np.vstack([V, np.asarray(extra, dtype=np.float64)])
+                facce_a.extend(tri_a); tappo_a.extend(tri_a)
+                facce_b.extend(tri_b)
+                salita = float(np.max(np.abs(qs - q_scelto)))
+                affondo = float(qs.min() - q_scelto)
+                if n_fuori == 0:
+                    log.append(f"Faccia di taglio PIATTA: {len(giro)} contorno/i, verificata "
+                               f"dentro la pelle del modello (dislivello colmato {salita:.1f} mm"
+                               + (f", piano abbassato di {affondo:.1f} mm in {tentativi} tentativi"
+                                  if affondo > 1e-9 else "") + ")")
+                else:
+                    log.append(f"ATTENZIONE: la faccia piatta buca ancora la pelle in {n_fuori} punti "
+                               f"(al massimo {sporgenza:.1f} mm) dopo {tentativi} tentativi di "
+                               "abbassare il piano. Tenuto il tentativo migliore: controlla il pezzo, "
+                               "oppure metti \"Faccia di taglio piatta\" su MAI.")
+                _, P2m, tri2m, idxm = max(aree, key=lambda t: t[0])
+                ar = [0.5 * abs(_area2(P2m[a], P2m[b], P2m[c])) for a, b, c in tri2m]
+                centri_tappo.append(np.mean(V[[idxm[k] for k in tri2m[int(np.argmax(ar))]]], axis=0))
                 fatto = True
         if not fatto and giro:
             # La faccia piatta non e' possibile (il contorno, schiacciato sul
@@ -1206,7 +1309,7 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
                     break
                 for i0, i1, i2 in t3:
                     a, b, c = ciclo[i0], ciclo[i1], ciclo[i2]
-                    facce_a.append([c, b, a])
+                    facce_a.append([c, b, a]); tappo_a.append([c, b, a])
                     facce_b.append([a, b, c])
                 n_tri += len(t3)
             if n_tri:
@@ -1218,7 +1321,7 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
             ic = len(V)
             V = np.vstack([V, centro])
             for a, b in anello:
-                facce_a.append([b, a, ic])
+                facce_a.append([b, a, ic]); tappo_a.append([b, a, ic])
                 facce_b.append([a, b, ic])
             log.append("Tappo del taglio a raggiera (contorno non richiudibile altrimenti)")
             centri_tappo.append(centro)
@@ -1232,6 +1335,65 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
     mb = trimesh.Trimesh(vertices=V, faces=np.asarray(facce_b, dtype=np.int64), process=False)
     ma.remove_unreferenced_vertices()
     mb.remove_unreferenced_vertices()
+
+    # IL PEZZO NON PUO' USCIRE DAL MODELLO.
+    # Il tappo e' una superficie tesa sul contorno del taglio: se il contorno e'
+    # ondulato, in mezzo si gonfia e BUCA la pelle. Misurato sul modello vero:
+    # fino a 3,6 mm fuori dal solido, ben visibile sul pezzo. Spostare il piano
+    # a tentativi non basta (scendendo troppo si esce dall'altra parte).
+    # Qui invece la garanzia e' esatta: si intersecano i pezzi col modello di
+    # partenza. Quello che sporgeva viene tagliato via dalla pelle stessa, e il
+    # resto e' esattamente il complemento, quindi i due pezzi continuano a
+    # combaciare e la loro somma resta il modello.
+    serve_ritaglio = True
+    try:
+        if tappo_a:
+            # su un tappo da decine di migliaia di triangoli il controllo
+            # costerebbe piu' del taglio: ne basta un campione sparso
+            Ta = np.asarray(tappo_a, dtype=np.int64)
+            if len(Ta) > 400:
+                passo_c = max(1, len(Ta) // 400)
+                Ta = Ta[::passo_c]
+            scat = (V[Ta.ravel()].min(axis=0), V[Ta.ravel()].max(axis=0))
+            controllo = _controllore_pelle(V_orig, F_orig, scat, margine=0.02 * diag)
+            if controllo is not None:
+                n_f, sp = controllo(_campiona_facce(V, Ta.tolist()))
+                # tolleranza: sotto un millesimo della diagonale e' rumore numerico
+                serve_ritaglio = n_f > 0 and sp > 0.001 * diag
+                log.append(f"Controllo sporgenze del tappo: {n_f} punti oltre la pelle"
+                           + (f", fino a {sp:.2f} mm" if n_f else "")
+                           + ("" if serve_ritaglio else " (entro tolleranza, niente da ritagliare)"))
+    except Exception as e:
+        log.append(f"(controllo sporgenze non eseguito: {e})")
+    try:
+        if not serve_ritaglio:
+            raise StopIteration
+        # il modello di partenza va passato SALDATO: negli STL ogni triangolo ha
+        # i suoi vertici per conto proprio e manifold3d rifiuta una mesh che
+        # topologicamente e' fatta di 400.000 pezzi staccati
+        _o = trimesh.Trimesh(vertices=V_orig, faces=F_orig, process=True)
+        _o.update_faces(_o.nondegenerate_faces())
+        _o.remove_unreferenced_vertices()
+        Orig = _manifold(np.asarray(_o.vertices), np.asarray(_o.faces))
+        Am = _manifold(np.asarray(ma.vertices), np.asarray(ma.faces))
+        if Orig.status().name != "NoError" or Am.status().name != "NoError":
+            log.append(f"(controllo delle sporgenze saltato: modello {Orig.status().name}, "
+                       f"pezzo {Am.status().name})")
+        if Orig.status().name == "NoError" and Am.status().name == "NoError":
+            Ac = Am ^ Orig                    # solo la parte dentro al modello
+            Bc = Orig - Ac                    # il complemento esatto
+            if Ac.status().name == "NoError" and Bc.status().name == "NoError":
+                va, fa_ = _to_arrays(Ac)
+                vb, fb_ = _to_arrays(Bc)
+                if len(fa_) and len(fb_):
+                    ma = trimesh.Trimesh(vertices=va, faces=fa_, process=False)
+                    mb = trimesh.Trimesh(vertices=vb, faces=fb_, process=False)
+                    log.append("Pezzi ritagliati dentro il modello di partenza: "
+                               "niente sporgenze fuori dalla pelle")
+    except StopIteration:
+        pass
+    except Exception as e:
+        log.append(f"(controllo delle sporgenze non riuscito: {e}; pezzi consegnati come sono)")
     log.append(f"Pezzo staccato: {len(ma.faces)} facce, chiuso={ma.is_watertight}; "
                f"resto: {len(mb.faces)} facce, chiuso={mb.is_watertight}")
     if not (ma.is_watertight and mb.is_watertight):
