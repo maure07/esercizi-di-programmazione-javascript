@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "nocciolo-piatto-19"
+VERSIONE = "nocciolo-liscio-20"
 
 
 # ---------------------------------------------------------------------------
@@ -1092,6 +1092,103 @@ def _prisma_selezione(V, F, sel, anelli, n, lunghezza, dilata=0.0):
     return Vn, np.asarray(Fn, dtype=np.int64)
 
 
+def _inviluppo_convesso(P):
+    """Inviluppo convesso di una nuvola di punti 2D (catena monotona).
+    Scritto a mano per non dipendere da scipy, che sul PC potrebbe non esserci."""
+    pts = sorted({(float(a), float(b)) for a, b in P})
+    if len(pts) < 3:
+        return np.asarray(pts, dtype=np.float64)
+
+    def croce(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    basso = []
+    for p in pts:
+        while len(basso) >= 2 and croce(basso[-2], basso[-1], p) <= 0:
+            basso.pop()
+        basso.append(p)
+    alto = []
+    for p in reversed(pts):
+        while len(alto) >= 2 and croce(alto[-2], alto[-1], p) <= 0:
+            alto.pop()
+        alto.append(p)
+    return np.asarray(basso[:-1] + alto[:-1], dtype=np.float64)
+
+
+def _ricampiona(poly, k):
+    """Ridistribuisce i punti di un contorno chiuso a passo costante."""
+    chiusa = np.vstack([poly, poly[:1]])
+    d = np.linalg.norm(np.diff(chiusa, axis=0), axis=1)
+    s = np.concatenate([[0.0], np.cumsum(d)])
+    if s[-1] <= 1e-12:
+        return poly
+    t = np.linspace(0.0, s[-1], k, endpoint=False)
+    return np.column_stack([np.interp(t, s, chiusa[:, 0]),
+                            np.interp(t, s, chiusa[:, 1])])
+
+
+def _contorno_semplice(P2, lati=128, giri=8, dilata=0.0):
+    """Contorno LISCIO attorno a una macchia, guardata da dritto.
+
+    E' la differenza fra il nostro taglio e quello del coniglio di Bing: li'
+    la tasca ha un contorno semplice, da noi seguiva il bordo grezzo della
+    selezione, che cammina sugli spigoli dei triangoli. Su un modello da
+    395.000 triangoli quel bordo e' una sega con centinaia di denti, e sono i
+    denti a far sembrare storto un pezzo che ha il fondo perfettamente piano.
+
+    Si prende l'inviluppo convesso della macchia schiacciata sul piano di
+    taglio, lo si ricampiona a passo costante e lo si arrotonda; poi lo si
+    riapre quel tanto che basta perche' contenga di nuovo tutta la macchia
+    (arrotondare stringe, e un contorno che stringe taglierebbe via pezzi di
+    quello che hai scelto).
+    """
+    H = _inviluppo_convesso(P2)
+    if len(H) < 3:
+        return None
+    R = _ricampiona(H, max(lati, 16))
+    S = R.copy()
+    for _ in range(giri):
+        S = 0.5 * S + 0.25 * np.roll(S, 1, axis=0) + 0.25 * np.roll(S, -1, axis=0)
+    c = S.mean(axis=0)
+    rs = np.linalg.norm(S - c, axis=1)
+    rr = np.linalg.norm(R - c, axis=1)
+    buoni = rs > 1e-9
+    if buoni.any():
+        k = float(np.max(rr[buoni] / rs[buoni]))
+        S = c + (S - c) * max(1.0, k)
+    if dilata:
+        rs = np.linalg.norm(S - c, axis=1)
+        rs[rs < 1e-9] = 1.0
+        S = c + (S - c) * (1.0 + dilata / rs)[:, None]
+    return S
+
+
+def _prisma_da_contorno(S2, u, v, n, q_alto, q_basso):
+    """Fustella dritta: il contorno 2D esteso fra due quote lungo n."""
+    k = len(S2)
+    if k < 3 or q_alto <= q_basso:
+        return None
+    # verso antiorario nel piano (u, v): serve perche' le facce guardino fuori
+    area2 = float(np.sum(S2[:, 0] * np.roll(S2[:, 1], -1) - np.roll(S2[:, 0], -1) * S2[:, 1]))
+    if area2 < 0:
+        S2 = S2[::-1].copy()
+    su = np.outer(S2[:, 0], u) + np.outer(S2[:, 1], v)
+    sopra = su + n * q_alto
+    sotto = su + n * q_basso
+    c2 = S2.mean(axis=0)
+    cs = c2[0] * u + c2[1] * v
+    V = np.vstack([sopra, sotto, (cs + n * q_alto)[None, :], (cs + n * q_basso)[None, :]])
+    ct, cb = 2 * k, 2 * k + 1
+    Fc = []
+    for i in range(k):
+        j = (i + 1) % k
+        Fc.append([ct, i, j])                       # tappo sopra
+        Fc.append([cb, k + j, k + i])               # tappo sotto
+        Fc.append([i, k + i, k + j])                # parete
+        Fc.append([i, k + j, j])
+    return V, np.asarray(Fc, dtype=np.int64)
+
+
 def _semispazio(n, quota, taglia):
     """Blocco enorme che tiene tutto quello che sta OLTRE il piano x·n = quota
     (cioe' dalla parte di n). Serve a segare il nocciolo con una faccia piana."""
@@ -1160,14 +1257,22 @@ def _spessore_sotto(mesh, punti, n):
     return float(np.median(list(primo.values())))
 
 
-def taglia_a_nocciolo_piatto(V, F, sel, anelli, log, gioco, frazione=0.5):
+def taglia_a_nocciolo_piatto(V, F, sel, anelli, log, gioco, frazione=0.5,
+                             contorno="liscio"):
     """Nocciolo con la FACCIA DI TAGLIO PIANA.
 
     Il pezzo che si stacca e': la pelle originale davanti (intatta), una faccia
-    piatta dietro, e le pareti che scendono dritte seguendo il contorno della
-    selezione. In pratica si affetta la coscia: se la gamba li' e' spessa 4 cm,
-    il pezzo viene spesso 2 (`frazione`), togliendo materiale alla gamba. Nel
-    resto del modello si scava la sede corrispondente, un filo piu' larga.
+    piatta dietro, e le pareti che scendono dritte. In pratica si affetta la
+    coscia: se la gamba li' e' spessa 4 cm, il pezzo viene spesso 2
+    (`frazione`), togliendo materiale alla gamba. Nel resto del modello si
+    scava la sede corrispondente, un filo piu' larga.
+
+    contorno : "liscio" -> le pareti seguono un contorno semplice e arrotondato
+                           (come la tasca del coniglio di Bing). Il pezzo prende
+                           un filo di materiale in piu' di quello selezionato,
+                           ma non ha piu' il bordo a merletto ne' le alette.
+               "esatto" -> le pareti seguono il bordo della selezione, dente per
+                           dente. Massima fedelta', peggior aspetto.
     """
     import trimesh
     T = V[F[sorted(sel)]]
@@ -1180,11 +1285,30 @@ def taglia_a_nocciolo_piatto(V, F, sel, anelli, log, gioco, frazione=0.5):
     Mo.update_faces(Mo.nondegenerate_faces())
     Mo.remove_unreferenced_vertices()
     Orig = _manifold(np.asarray(Mo.vertices), np.asarray(Mo.faces))
-    Vp, Fp = _prisma_selezione(V, F, sel, anelli, n, L, 0.0)
-    Pr = _manifold(Vp, Fp)
-    if Orig.status().name != "NoError" or Pr.status().name != "NoError":
-        log.append(f"(nocciolo piatto non utilizzabile: modello {Orig.status().name}, "
-                   f"prisma {Pr.status().name})")
+
+    # il contorno della macchia, guardata da dritto
+    _pm = V[sorted({int(x) for f in F[sorted(sel)] for x in f})]
+    u_, v_, _ = _base_da_normale(n)
+    P2 = np.column_stack([_pm @ u_, _pm @ v_])
+    q_alto = float((_pm @ n).max()) + 0.05 * diag
+    q_basso = float((V @ n).min()) - 0.05 * diag
+
+    def _fustella(dil):
+        if contorno == "liscio":
+            S = _contorno_semplice(P2, dilata=dil)
+            if S is not None:
+                pf = _prisma_da_contorno(S, u_, v_, n, q_alto, q_basso)
+                if pf is not None:
+                    m = _manifold(pf[0], pf[1])
+                    if m.status().name == "NoError" and abs(float(m.volume())) > 1e-9:
+                        return m
+        Vx, Fx = _prisma_selezione(V, F, sel, anelli, n, L, dil)
+        m = _manifold(Vx, Fx)
+        return m if m.status().name == "NoError" else None
+
+    Pr = _fustella(0.0)
+    if Orig.status().name != "NoError" or Pr is None:
+        log.append(f"(nocciolo piatto non utilizzabile: modello {Orig.status().name})")
         return None
 
     Blocco = Pr ^ Orig                        # tutta la carne sotto la macchia
@@ -1218,9 +1342,8 @@ def taglia_a_nocciolo_piatto(V, F, sel, anelli, log, gioco, frazione=0.5):
     quota = alto - frazione * spess           # dove passa la faccia piatta
 
     A = _senza_briciole(Blocco ^ _semispazio(n, quota, diag))
-    Vs, Fs = _prisma_selezione(V, F, sel, anelli, n, L, gioco)
-    Sede = _manifold(Vs, Fs)
-    if Sede.status().name != "NoError":
+    Sede = _fustella(gioco)
+    if Sede is None:
         return None
     # la sede e' un filo piu' larga e un filo piu' fonda: il pezzo ci entra
     Sede = _senza_briciole((Sede ^ Orig) ^ _semispazio(n, quota - gioco, diag))
@@ -1821,7 +1944,10 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
         # Prima esisteva solo l'automatico e non c'era modo di chiederlo: chi
         # voleva l'incastro a sede su una zona un po' piu' spessa non aveva
         # nessun bottone da premere.
-        _chiesto = (incastro_modo == "nocciolo")
+        _chiesto = incastro_modo in ("nocciolo", "nocciolo_esatto")
+        # "liscio" = contorno semplice e arrotondato, come la tasca del coniglio
+        # di Bing; "esatto" = dente per dente come l'hai disegnato.
+        _cont = "esatto" if incastro_modo == "nocciolo_esatto" else "liscio"
         _vietato = incastro_modo in ("perno", "niente")
         _buccia = (_gr > 0 and _sp < 0.12 * _gr and _dir > 0.35)
         if not _vietato and (_chiesto or _buccia):
@@ -1853,7 +1979,8 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
             # del modello, dietro c'e' un piano, le pareti scendono dritte.
             # E' quello giusto da stampare, e non ha le punte che faceva il
             # vecchio (che copiava la pelle curva e incrociava le normali).
-            _pi = taglia_a_nocciolo_piatto(V, F, sel, anelli, _muto, gioco)
+            _pi = taglia_a_nocciolo_piatto(V, F, sel, anelli, _muto, gioco,
+                                           contorno=_cont)
             if _pi is not None:
                 _fu = _pi
                 _sp2 = 4.0 * abs(float(_pi[0].volume)) / (float(_pi[0].area) or 1.0)
@@ -1884,10 +2011,14 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
                     ma, mb = _fu
                     niente_perno = True
                     if _piatto:
+                        _dic = ("un contorno semplice e arrotondato (un filo piu' "
+                                "largo di quello che hai scelto, ma senza denti)"
+                                if _cont == "liscio" else
+                                "il contorno che hai scelto, dente per dente")
                         log.append(
                             f"Taglio A NOCCIOLO con la FACCIA PIATTA: davanti resta "
                             f"la pelle del modello, dietro c'e' un piano e le pareti "
-                            f"scendono dritte lungo il contorno che hai scelto. Il "
+                            f"scendono dritte seguendo {_dic}. Il "
                             f"blocchetto viene spesso {_sp2:.1f} invece di {_sp:.1f} "
                             f"(meta' dello spessore del modello li' sotto) e "
                             f"nell'altro pezzo si scava la sua sede, con {gioco:.2f} "
