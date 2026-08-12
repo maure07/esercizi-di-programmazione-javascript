@@ -72,6 +72,7 @@
     cutModeAddBtn: document.getElementById('cutModeAddBtn'),
     cutModeEraseBtn: document.getElementById('cutModeEraseBtn'),
     cutUndoBtn: document.getElementById('cutUndoBtn'),
+    soloMacchiaBtn: document.getElementById('soloMacchiaBtn'),
     cutCreateBtn: document.getElementById('cutCreateBtn'),
     cutCancelBtn: document.getElementById('cutCancelBtn'),
     selectExtras: document.getElementById('selectExtras'),
@@ -2924,6 +2925,52 @@
     el.cutUndoBtn.disabled = cutHistory.length === 0;
     refreshCutHighlight();
   });
+  // TIENI SOLO LA MACCHIA PRINCIPALE. Capita che, oltre alla zona voluta,
+  // resti attaccato un lembo staccato da un'altra parte (un pezzo di pantalone
+  // sotto la coscia). Cancellarlo a mano col pennello e' un lavoro di pazienza
+  // che non sempre riesce; qui basta un colpo. Il taglio a nocciolo lo
+  // portava fino in fondo, e sul pezzo staccato quel lembo diventava
+  // un'aletta.
+  if (el.soloMacchiaBtn) {
+    el.soloMacchiaBtn.addEventListener('click', () => {
+      if (!cutSelection || !currentResult) {
+        alert('Prima seleziona una zona sul modello.');
+        return;
+      }
+      const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
+      if (!part) return;
+      const adj = ensurePartTopology(part).adjacency;
+      const resto = new Set(cutSelection.faces);
+      let migliore = null;
+      while (resto.size) {
+        const s = resto.values().next().value;
+        resto.delete(s);
+        const isola = [s];
+        const pila = [s];
+        while (pila.length) {
+          const f = pila.pop();
+          const a = adj[f];
+          for (let i = 0; i < a.length; i++) {
+            if (resto.has(a[i])) { resto.delete(a[i]); pila.push(a[i]); isola.push(a[i]); }
+          }
+        }
+        if (!migliore || isola.length > migliore.length) migliore = isola;
+      }
+      if (!migliore) return;
+      const prima = cutSelection.faces.size;
+      if (migliore.length === prima) {
+        alert('La selezione e\' gia\' tutta attaccata: non c\'e\' niente da buttare via.');
+        return;
+      }
+      pushCutHistory();
+      cutSelection = { partId: cutSelection.partId, faces: new Set(migliore) };
+      refreshCutHighlight();
+      alert('Tolti ' + (prima - migliore.length) + ' triangoli staccati.\n\n' +
+            'Restano ' + migliore.length + ' triangoli, tutti attaccati fra loro.\n\n' +
+            'Se hai buttato via troppo, premi ↩ per tornare indietro.');
+    });
+  }
+
   el.cutRadius.addEventListener('input', updateCutRadiusLabel);
 
   // topologia per-parte (adiacenza + normali + centroidi), calcolata al primo
