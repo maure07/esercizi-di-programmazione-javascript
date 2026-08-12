@@ -198,10 +198,51 @@ La correzione del punto 3 è stata implementata e misurata.
 | pezzi chiusi | sì | sì |
 | volume perso | 0,00% | 0,00% |
 
-**Nel menu** «Come si uniscono i pezzi» ci sono adesso cinque voci: *decidi tu* /
-*a NOCCIOLO* (contorno liscio, è quello che assomiglia a Bing) / *a NOCCIOLO, contorno
-esatto* / *a PERNO* / *niente aggancio*.
+---
+
+## 5. Correzione della correzione: `nocciolo-liscio-21`
+
+Aggiungendo i log di diagnostica è saltato fuori un difetto della scelta fatta al capitolo 4.
+**L'inviluppo convesso porta via troppo materiale.** Misurato sulla stessa macchia della
+coscia, guardando l'area del contorno schiacciato sul piano di taglio:
+
+| contorno | area | denti sul bordo |
+|---|---|---|
+| grezzo (bordo vero della selezione) | 18.780 | **sì, centinaia** |
+| **smussato** (bordo vero + Chaikin) | **18.728** | no |
+| ovale (inviluppo convesso) | 48.842 | no |
+
+L'inviluppo prende **quasi il triplo** dell'area: su una coscia vuol dire mangiarsi mezzo
+fianco. Il contorno **smussato** ottiene lo stesso risultato estetico (niente denti) con la
+**stessa area** di quello che hai scelto (−0,3%).
+
+**Come si fa lo smussato**, senza nessuna libreria in più:
+
+1. si prende l'anello di bordo **vero** della selezione, messo in fila (`_ordina_anello`);
+2. lo si proietta sul piano di taglio;
+3. si controlla che non si **incroci da solo** (se lo fa — succede quando la selezione gira
+   attorno al modello — si ripiega sull'inviluppo convesso);
+4. si smussa con **Chaikin** (taglia gli angoli: a differenza della media mobile **non**
+   chiude le rientranze, quindi una mezzaluna resta una mezzaluna);
+5. si ricampiona a 128 punti e si ricontrolla che sia ancora semplice.
+
+Altra conferma dai log: il numero di corpi prodotti dalla booleana passa da **5** col
+contorno grezzo a **1** con quello smussato. Le briciole erano proprio i denti.
+
+**Nel menu** «Come si uniscono i pezzi» ci sono adesso sei voci: *decidi tu* /
+**a NOCCIOLO** (contorno smussato — il predefinito) / *a NOCCIOLO, contorno ovale* /
+*a NOCCIOLO, contorno esatto* / *a PERNO* / *niente aggancio*.
+
+**Log di diagnostica** nel resoconto di ogni taglio a nocciolo:
+
+```
+[diagnostica] macchia: 4650 triangoli, 2847 vertici; bordo proiettato: 342 punti;
+              area del contorno grezzo 18780
+[diagnostica] contorno morbido: 128 punti, area 18728
+[diagnostica] spessore stimato 196.2, piano a quota -61.6 (cioe' 98.1 sotto la pelle);
+              corpi dopo la booleana 1, dopo il filtro delle briciole 1
+```
 
 ---
 
-*Documento generato per il progetto Correggi & Segmenta — versione motore `nocciolo-liscio-20`.*
+*Documento generato per il progetto Correggi & Segmenta — versione motore `nocciolo-liscio-21`.*

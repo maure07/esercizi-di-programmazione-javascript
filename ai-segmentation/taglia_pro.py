@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "nocciolo-liscio-20"
+VERSIONE = "nocciolo-liscio-21"
 
 
 # ---------------------------------------------------------------------------
@@ -1163,6 +1163,77 @@ def _contorno_semplice(P2, lati=128, giri=8, dilata=0.0):
     return S
 
 
+def _area_poligono(P):
+    """Area (col segno) di un poligono chiuso, formula del laccio di scarpa."""
+    if P is None or len(P) < 3:
+        return 0.0
+    x, y = np.asarray(P)[:, 0], np.asarray(P)[:, 1]
+    return 0.5 * float(np.sum(x * np.roll(y, -1) - np.roll(x, -1) * y))
+
+
+def _poligono_semplice(P):
+    """Il contorno si taglia da solo? Un poligono che si incrocia non puo'
+    diventare una fustella: manifold3d lo rifiuta e si perde il taglio."""
+    k = len(P)
+    if k < 4:
+        return True
+
+    def _incrocia(a, b, c, d):
+        def _o(p, q, r):
+            w = (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+            return 0 if abs(w) < 1e-12 else (1 if w > 0 else -1)
+        return (_o(a, b, c) != _o(a, b, d)) and (_o(c, d, a) != _o(c, d, b))
+
+    for i in range(k):
+        a, b = P[i], P[(i + 1) % k]
+        for j in range(i + 2, k):
+            if i == 0 and j == k - 1:
+                continue                    # lati adiacenti attorno alla chiusura
+            if _incrocia(a, b, P[j], P[(j + 1) % k]):
+                return False
+    return True
+
+
+def _chaikin(P, giri=3):
+    """Smussa un poligono chiuso tagliandone gli angoli (Chaikin). A differenza
+    della media mobile NON schiaccia le rientranze: serve per le selezioni a
+    mezzaluna o a elle, dove l'inviluppo convesso prenderebbe troppo."""
+    Q = np.asarray(P, dtype=np.float64)
+    for _ in range(giri):
+        A = Q
+        B = np.roll(Q, -1, axis=0)
+        Q = np.empty((2 * len(A), 2), dtype=np.float64)
+        Q[0::2] = 0.75 * A + 0.25 * B
+        Q[1::2] = 0.25 * A + 0.75 * B
+        if len(Q) > 512:
+            break
+    return Q
+
+
+def _contorno_morbido(P2, lati=128, dilata=0.0):
+    """Contorno CONCAVO ammorbidito: parte dal bordo vero della selezione
+    (gia' proiettato e messo in fila) e ne toglie i denti, senza chiudere le
+    rientranze. Se il bordo proiettato si incrocia da solo — capita quando la
+    selezione gira attorno al modello — restituisce None e si ripiega
+    sull'inviluppo convesso."""
+    if P2 is None or len(P2) < 8:
+        return None
+    R = _ricampiona(np.asarray(P2, dtype=np.float64), max(lati, 32))
+    if not _poligono_semplice(R):
+        return None
+    S = _ricampiona(_chaikin(R, 3), max(lati, 32))
+    if not _poligono_semplice(S):
+        return None
+    if dilata:
+        c = S.mean(axis=0)
+        rs = np.linalg.norm(S - c, axis=1)
+        rs[rs < 1e-9] = 1.0
+        S = c + (S - c) * (1.0 + dilata / rs)[:, None]
+        if not _poligono_semplice(S):
+            return None
+    return S
+
+
 def _prisma_da_contorno(S2, u, v, n, q_alto, q_basso):
     """Fustella dritta: il contorno 2D esteso fra due quote lungo n."""
     k = len(S2)
@@ -1293,15 +1364,45 @@ def taglia_a_nocciolo_piatto(V, F, sel, anelli, log, gioco, frazione=0.5,
     q_alto = float((_pm @ n).max()) + 0.05 * diag
     q_basso = float((V @ n).min()) - 0.05 * diag
 
-    def _fustella(dil):
-        if contorno == "liscio":
+    # il bordo VERO della selezione, messo in fila e schiacciato sul piano:
+    # serve sia al contorno morbido sia al confronto di area nel resoconto
+    B2 = None
+    if anelli:
+        _giro = _ordina_anello(max(anelli, key=len))
+        if _giro and len(_giro) >= 8:
+            _bp = V[[int(x) for x in _giro]]
+            B2 = np.column_stack([_bp @ u_, _bp @ v_])
+    log.append(f"[diagnostica] macchia: {len(sel)} triangoli, {len(_pm)} vertici; "
+               f"bordo proiettato: {0 if B2 is None else len(B2)} punti; "
+               f"area del contorno grezzo {abs(_area_poligono(B2)):.0f}")
+
+    def _profilo(dil):
+        """Il contorno 2D da usare come sezione della fustella."""
+        if contorno == "morbido":
+            S = _contorno_morbido(B2, dilata=dil)
+            if S is not None:
+                return S, "morbido"
+            log.append("[diagnostica] contorno morbido scartato (il bordo "
+                       "proiettato si incrocia): passo all'inviluppo")
+        if contorno in ("liscio", "morbido"):
             S = _contorno_semplice(P2, dilata=dil)
             if S is not None:
-                pf = _prisma_da_contorno(S, u_, v_, n, q_alto, q_basso)
-                if pf is not None:
-                    m = _manifold(pf[0], pf[1])
-                    if m.status().name == "NoError" and abs(float(m.volume())) > 1e-9:
-                        return m
+                return S, "liscio"
+        return None, "esatto"
+
+    def _fustella(dil):
+        S, come = _profilo(dil)
+        if S is not None:
+            pf = _prisma_da_contorno(S, u_, v_, n, q_alto, q_basso)
+            if pf is not None:
+                m = _manifold(pf[0], pf[1])
+                if m.status().name == "NoError" and abs(float(m.volume())) > 1e-9:
+                    if dil == 0.0:
+                        log.append(f"[diagnostica] contorno {come}: {len(S)} punti, "
+                                   f"area {abs(_area_poligono(S)):.0f}")
+                    return m
+                log.append(f"[diagnostica] fustella {come} non valida "
+                           f"({m.status().name}): ripiego sul contorno grezzo")
         Vx, Fx = _prisma_selezione(V, F, sel, anelli, n, L, dil)
         m = _manifold(Vx, Fx)
         return m if m.status().name == "NoError" else None
@@ -1341,7 +1442,23 @@ def taglia_a_nocciolo_piatto(V, F, sel, anelli, log, gioco, frazione=0.5,
     alto = float((V[sorted({int(x) for f in F[sorted(sel)] for x in f})] @ n).max())
     quota = alto - frazione * spess           # dove passa la faccia piatta
 
-    A = _senza_briciole(Blocco ^ _semispazio(n, quota, diag))
+    _tagliato = Blocco ^ _semispazio(n, quota, diag)
+    _corpi = 1
+    try:
+        _corpi = len(list(_tagliato.decompose()))
+    except Exception:
+        pass
+    A = _senza_briciole(_tagliato)
+    _corpi_dopo = 1
+    try:
+        _corpi_dopo = len(list(A.decompose()))
+    except Exception:
+        pass
+    log.append(f"[diagnostica] spessore stimato {spess:.1f}, piano a quota "
+               f"{quota:.1f} (cioe' {frazione * spess:.1f} sotto la pelle); "
+               f"corpi dopo la booleana {_corpi}, dopo il filtro delle briciole "
+               f"{_corpi_dopo}")
+
     Sede = _fustella(gioco)
     if Sede is None:
         return None
@@ -1356,8 +1473,6 @@ def taglia_a_nocciolo_piatto(V, F, sel, anelli, log, gioco, frazione=0.5,
         return None
     ma = trimesh.Trimesh(vertices=va, faces=fa, process=False)
     mb = trimesh.Trimesh(vertices=vb, faces=fb, process=False)
-    log.append(f"(nocciolo piatto: li' sotto il modello e' spesso {spess:.0f}, "
-               f"il pezzo viene fondo {frazione * spess:.0f})")
     return ma, mb
 
 
@@ -1944,10 +2059,18 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
         # Prima esisteva solo l'automatico e non c'era modo di chiederlo: chi
         # voleva l'incastro a sede su una zona un po' piu' spessa non aveva
         # nessun bottone da premere.
-        _chiesto = incastro_modo in ("nocciolo", "nocciolo_esatto")
+        _chiesto = incastro_modo in ("nocciolo", "nocciolo_esatto", "nocciolo_ovale")
         # "liscio" = contorno semplice e arrotondato, come la tasca del coniglio
         # di Bing; "esatto" = dente per dente come l'hai disegnato.
-        _cont = "esatto" if incastro_modo == "nocciolo_esatto" else "liscio"
+        # Il predefinito e' il contorno SMUSSATO, non l'inviluppo convesso.
+        # Misurato sulla macchia della coscia: il contorno vero copre un'area di
+        # 18.780, quello smussato 18.728 (praticamente identico, ma senza i
+        # denti), l'inviluppo convesso 48.842 — quasi il triplo di materiale
+        # portato via al modello. L'inviluppo resta come scelta esplicita, per
+        # chi vuole una tasca semplicissima, e come ripiego automatico quando il
+        # contorno vero non si puo' usare.
+        _cont = {"nocciolo_esatto": "esatto",
+                 "nocciolo_ovale": "liscio"}.get(incastro_modo, "morbido")
         _vietato = incastro_modo in ("perno", "niente")
         _buccia = (_gr > 0 and _sp < 0.12 * _gr and _dir > 0.35)
         if not _vietato and (_chiesto or _buccia):
@@ -1979,8 +2102,14 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
             # del modello, dietro c'e' un piano, le pareti scendono dritte.
             # E' quello giusto da stampare, e non ha le punte che faceva il
             # vecchio (che copiava la pelle curva e incrociava le normali).
-            _pi = taglia_a_nocciolo_piatto(V, F, sel, anelli, _muto, gioco,
+            # La diagnostica del fondo piatto va tenuta da parte: se il nocciolo
+            # viene accettato la si rimette nel resoconto (serve a capire cosa
+            # ha deciso il motore senza dover leggere il codice), se viene
+            # scartato non deve sporcare la relazione di un taglio normale.
+            _diag = []
+            _pi = taglia_a_nocciolo_piatto(V, F, sel, anelli, _diag, gioco,
                                            contorno=_cont)
+            _muto.extend(l for l in _diag if not l.startswith("[diagnostica]"))
             if _pi is not None:
                 _fu = _pi
                 _sp2 = 4.0 * abs(float(_pi[0].volume)) / (float(_pi[0].area) or 1.0)
@@ -2011,12 +2140,20 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
                     ma, mb = _fu
                     niente_perno = True
                     if _piatto:
-                        _dic = ("un contorno semplice e arrotondato (un filo piu' "
-                                "largo di quello che hai scelto, ma senza denti)"
-                                if _cont == "liscio" else
-                                "il contorno che hai scelto, dente per dente")
+                        _tit = {
+                            "liscio": "Taglio A NOCCIOLO con la FACCIA PIATTA e CONTORNO OVALE",
+                            "morbido": "Taglio A NOCCIOLO con la FACCIA PIATTA e CONTORNO LISCIO",
+                        }.get(_cont, "Taglio A NOCCIOLO con la FACCIA PIATTA e CONTORNO ESATTO")
+                        _dic = {
+                            "liscio": "un ovale che racchiude tutta la zona scelta "
+                                      "(tasca semplicissima, ma porta via piu' materiale)",
+                            "morbido": "il tuo contorno smussato: stessa forma e "
+                                       "stessa area di quello che hai scelto, "
+                                       "senza i denti dei triangoli",
+                        }.get(_cont, "il contorno che hai scelto, dente per dente")
+                        log.extend(_diag)
                         log.append(
-                            f"Taglio A NOCCIOLO con la FACCIA PIATTA: davanti resta "
+                            f"{_tit}: davanti resta "
                             f"la pelle del modello, dietro c'e' un piano e le pareti "
                             f"scendono dritte seguendo {_dic}. Il "
                             f"blocchetto viene spesso {_sp2:.1f} invece di {_sp:.1f} "
