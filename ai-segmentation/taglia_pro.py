@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "nocciolo-solo-piatto-23"
+VERSIONE = "senza-rtree-24"
 
 
 # ---------------------------------------------------------------------------
@@ -672,7 +672,16 @@ def _controllore_pelle(V_orig, F_orig, scatola, margine):
         P = np.asarray(punti, dtype=np.float64).reshape(-1, 3)
         if not len(P):
             return 0, 0.0
-        vicino, _, tri = trimesh.proximity.closest_point(patch, P)
+        try:
+            vicino, _, tri = trimesh.proximity.closest_point(patch, P)
+        except Exception:
+            # `closest_point` si appoggia a rtree, che e' una libreria in piu' e
+            # sul PC di chi usa l'app puo' non esserci. Questo controllo e' solo
+            # una MISURA di quanto il tappo sporge: la garanzia vera che i pezzi
+            # restino dentro alla pelle la da' la booleana di ritaglio, piu'
+            # sotto. Meglio rinunciare alla misura che far saltare tutto il
+            # taglio per una libreria mancante.
+            return None
         # segno: se il punto sta dalla parte della normale, e' fuori dal solido
         fuori = np.einsum('ij,ij->i', P - vicino, normali[tri])
         pos = fuori[fuori > 0]
@@ -1295,7 +1304,7 @@ def _senza_briciole(solido, quota_minima=0.05):
     return fuso if fuso.status().name == "NoError" else solido
 
 
-def _spessore_sotto(mesh, punti, n):
+def _spessore_sotto(Vb, Fb, punti, n, eps):
     """Quanto e' spesso il modello sotto la macchia: si sparano dei raggi
     dalla pelle verso l'interno e si guarda dove escono dall'altra parte.
 
@@ -1303,29 +1312,46 @@ def _spessore_sotto(mesh, punti, n):
     misurando l'ingombro del solido tagliato si ottiene la larghezza del
     bacino (288) invece dello spessore della coscia (~100), e la faccia
     piatta finiva a meta' del corpo.
+
+    I raggi sono scritti QUI, a mano, e non chiesti a trimesh. Il suo motore
+    di raggi si appoggia a `rtree`, che e' una libreria in piu' e sul PC di chi
+    usa l'app non c'era: la misura falliva con "No module named 'rtree'", il
+    nocciolo si arrendeva in silenzio e usciva il taglio normale col perno —
+    per giorni, mentre qui i test passavano perche' rtree era installato.
+    Una funzione che sta in venti righe non vale una dipendenza che puo'
+    mancare.
+
+    Si tira contro il SOLIDO GIA' RITAGLIATO sotto la macchia (poche migliaia
+    di triangoli), non contro tutto il modello: cosi' anche a forza bruta
+    e' questione di un attimo.
     """
-    try:
-        d = np.tile(-np.asarray(n, dtype=np.float64), (len(punti), 1))
-        origini = np.asarray(punti, dtype=np.float64) - np.asarray(n) * 1e-3
-        pos, i_raggio, _ = mesh.ray.intersects_location(origini, d, multiple_hits=True)
-    except Exception:
+    Vb = np.asarray(Vb, dtype=np.float64)
+    Fb = np.asarray(Fb, dtype=np.int64)
+    if not len(Fb) or not len(punti):
         return None
-    if not len(pos):
+    d = -np.asarray(n, dtype=np.float64)
+    v0 = Vb[Fb[:, 0]]
+    e1 = Vb[Fb[:, 1]] - v0
+    e2 = Vb[Fb[:, 2]] - v0
+    # con una direzione sola questi non cambiano da raggio a raggio
+    h = np.cross(np.broadcast_to(d, e2.shape), e2)
+    a = np.einsum('ij,ij->i', e1, h)
+    vale = np.abs(a) > 1e-12
+    inv = np.zeros(len(Fb), dtype=np.float64)
+    inv[vale] = 1.0 / a[vale]
+    distanze = []
+    for p in np.asarray(punti, dtype=np.float64):
+        s = p - v0
+        u = inv * np.einsum('ij,ij->i', s, h)
+        q = np.cross(s, e1)
+        v = inv * (q @ d)
+        t = inv * np.einsum('ij,ij->i', e2, q)
+        buoni = vale & (u >= -1e-9) & (v >= -1e-9) & (u + v <= 1.0 + 1e-9) & (t > eps)
+        if buoni.any():
+            distanze.append(float(t[buoni].min()))
+    if not distanze:
         return None
-    dist = np.linalg.norm(pos - origini[i_raggio], axis=1)
-    buoni = dist > 1e-6
-    if not buoni.any():
-        return None
-    dist, i_raggio = dist[buoni], i_raggio[buoni]
-    # per ogni raggio la PRIMA uscita: e' li' che finisce la carne
-    primo = {}
-    for r, t in zip(i_raggio, dist):
-        r = int(r)
-        if r not in primo or t < primo[r]:
-            primo[r] = float(t)
-    if not primo:
-        return None
-    return float(np.median(list(primo.values())))
+    return float(np.median(distanze))
 
 
 def taglia_a_nocciolo_piatto(V, F, sel, anelli, log, gioco, frazione=0.5,
@@ -1432,12 +1458,20 @@ def taglia_a_nocciolo_piatto(V, F, sel, anelli, log, gioco, frazione=0.5,
     if len(_dritti) < 8:
         _dritti = np.arange(len(_tf))
     campione = _tf[_dritti].mean(axis=1)
-    if len(campione) > 400:
-        campione = campione[np.linspace(0, len(campione) - 1, 400).astype(int)]
-    spess = _spessore_sotto(Mo, campione, n)
+    if len(campione) > 200:
+        campione = campione[np.linspace(0, len(campione) - 1, 200).astype(int)]
+    # I raggi si tirano contro il BLOCCO gia' ritagliato sotto la macchia, non
+    # contro tutto il modello: sono qualche migliaio di triangoli invece di
+    # quattrocentomila, e la misura resta la stessa perche' il blocco e'
+    # proprio la carne che si vuole misurare.
+    _vb, _fb = _to_arrays(Blocco)
+    _eps = 1e-4 * diag
+    campione = campione - n * _eps      # stacca l'origine dalla pelle
+    spess = _spessore_sotto(_vb, _fb, campione, n, _eps)
     if spess is None or spess <= 1e-6:
-        log.append("(nocciolo piatto: non riesco a misurare quanto e' spesso il "
-                   "modello sotto la macchia)")
+        log.append(f"(nocciolo piatto: non riesco a misurare quanto e' spesso il "
+                   f"modello sotto la macchia: {len(campione)} raggi contro "
+                   f"{len(_fb)} triangoli, nessuna uscita trovata)")
         return None
     alto = float((V[sorted({int(x) for f in F[sorted(sel)] for x in f})] @ n).max())
     quota = alto - frazione * spess           # dove passa la faccia piatta
@@ -1912,7 +1946,15 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
                     migliore = (0, 0.0, q_try, fatto_k)
                     break
                 Vp = np.vstack([V, np.asarray(extra, dtype=np.float64)]) if extra else V
-                n_fuori, sporgenza = quanto_fuori(_campiona_facce(Vp, tri_b))
+                _misura = quanto_fuori(_campiona_facce(Vp, tri_b))
+                if _misura is None:
+                    # niente rtree sul PC: si rinuncia a scegliere il piano
+                    # sulla sporgenza e si tiene il primo, tanto le sporgenze le
+                    # toglie comunque la booleana di ritaglio piu' sotto
+                    quanto_fuori = None
+                    migliore = (0, 0.0, q_try, fatto_k)
+                    break
+                n_fuori, sporgenza = _misura
                 if migliore is None or n_fuori < migliore[0]:
                     migliore = (n_fuori, sporgenza, q_try, fatto_k)
                 if n_fuori == 0:
