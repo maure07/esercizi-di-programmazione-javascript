@@ -774,6 +774,46 @@
     e.appendChild(s);
   }
   mostraVersione();
+
+  // Col nocciolo la faccia di taglio piatta la fa il nocciolo stesso (il piano
+  // a meta' spessore), quindi il menu "Faccia di taglio piatta" non cambia
+  // NIENTE: misurato, i tre valori danno lo stesso identico pezzo — stesso
+  // volume (1.227.105) e stesse facce (7.622). Lasciarlo attivo vuol dire far
+  // scegliere una cosa che non conta, con due menu vicini che sembrano legati
+  // e non lo sono: e' il modo piu' rapido per far perdere fiducia nel pannello.
+  function aggiornaMenuFacciaPiatta() {
+    if (!el.incastroModo || !el.flatCutModo) return;
+    const nocciolo = /^nocciolo/.test(el.incastroModo.value);
+    el.flatCutModo.disabled = nocciolo;
+    const riga = el.flatCutModo.closest('label');
+    if (riga) riga.style.opacity = nocciolo ? '0.45' : '';
+    // e via anche la sua spiegazione lunga: leggere mezza pagina su una scelta
+    // che in quel momento non conta e' proprio quello che rende il pannello
+    // ingestibile
+    const spiega = riga && riga.nextElementSibling
+      && riga.nextElementSibling.id !== 'notaFacciaPiatta'
+      ? riga.nextElementSibling : (riga && riga.nextElementSibling
+        && riga.nextElementSibling.nextElementSibling);
+    if (spiega && spiega.id !== 'notaFacciaPiatta') {
+      spiega.style.display = nocciolo ? 'none' : '';
+    }
+    let nota = document.getElementById('notaFacciaPiatta');
+    if (!nota && riga && riga.parentNode) {
+      nota = document.createElement('div');
+      nota.id = 'notaFacciaPiatta';
+      nota.style.cssText = 'font-size:11px;color:var(--accent);margin:-4px 0 8px 0;line-height:1.4';
+      riga.parentNode.insertBefore(nota, riga.nextSibling);
+    }
+    if (nota) {
+      nota.textContent = nocciolo
+        ? 'Col nocciolo questo menu non serve: la faccia piatta la fa il nocciolo stesso, '
+          + 'tagliando a meta\' dello spessore. Lascialo dov\'e\'.'
+        : '';
+      nota.style.display = nocciolo ? '' : 'none';
+    }
+  }
+  if (el.incastroModo) el.incastroModo.addEventListener('change', aggiornaMenuFacciaPiatta);
+  aggiornaMenuFacciaPiatta();
   async function runAiSegmentation() {
     if (!currentParsed) {
       alert('Carica prima un modello.');
