@@ -176,6 +176,46 @@
     });
   })();
 
+  // ===================================================================
+  // LE SPIEGAZIONI VANNO A SINISTRA
+  // Stavano in mezzo ai bottoni: per arrivare al pulsante che serviva
+  // bisognava scorrere mezza pagina di testo, e quel testo lo si
+  // rileggeva ogni volta senza volerlo. Adesso i blocchi marcati
+  // "spiega" vengono staccati e portati nella colonna di sinistra, dove
+  // si mostrano SOLO quelli dello schermo e dello strumento in uso.
+  // Restano gli stessi elementi (stessi id), quindi il codice che ci
+  // scrive dentro continua a funzionare come prima.
+  const infoCorpo = document.getElementById('infoCorpo');
+  const infoVuoto = document.getElementById('infoVuoto');
+  const spiegazioni = [];
+  if (infoCorpo) {
+    document.querySelectorAll('.spiega').forEach((d) => {
+      const passo = d.closest('#analysisPanel, #repairPanel, #segmentPanel, #printPanel');
+      const gruppo = d.closest('#cutControls, #copertaControls, #selectExtras, #cutRow');
+      spiegazioni.push({ el: d, passo: passo ? passo.id : '', gruppo: gruppo ? gruppo.id : '' });
+      d.style.display = '';
+      infoCorpo.appendChild(d);
+    });
+  }
+  function visibileDavvero(nodo) {
+    if (!nodo) return true;
+    return !!(nodo.offsetWidth || nodo.offsetHeight || nodo.getClientRects().length);
+  }
+  function aggiornaInfo() {
+    if (!infoCorpo) return;
+    let quante = 0;
+    spiegazioni.forEach((s) => {
+      const passoOk = !s.passo || visibileDavvero(document.getElementById(s.passo));
+      const gruppoOk = !s.gruppo || visibileDavvero(document.getElementById(s.gruppo));
+      const serve = s.el.dataset.serve !== '0';
+      const mostra = passoOk && gruppoOk && serve;
+      s.el.classList.toggle('mostra', mostra);
+      if (mostra) quante++;
+    });
+    if (infoVuoto) infoVuoto.style.display = quante ? 'none' : '';
+  }
+  window.__infoVisibili = () => spiegazioni.filter((s) => s.el.classList.contains('mostra')).length;
+
   const viewer = createViewer(el.viewer);
 
   let currentParsed = null; // dati grezzi dell'ultimo modello caricato
@@ -315,6 +355,7 @@
       updateExportButtonState();
     }
     if (explodedOn && n !== 4) setExploded(false);
+    aggiornaInfo();
     // il viewer mostra cio' che riguarda lo step corrente
     if (n === 3 && currentResult) {
       renderResult(currentResult);
@@ -1881,7 +1922,7 @@
     const m = el.segMethod.value;
     const colorMatters = m === 'combined' || m === 'color';
     el.sensitivityRow.style.display = colorMatters ? 'flex' : 'none';
-    el.sensitivityHint.style.display = colorMatters ? 'block' : 'none';
+    el.sensitivityHint.dataset.serve = colorMatters ? '1' : '0';
   }
   el.frameBtn.addEventListener('click', () => viewer.frameAll());
 
@@ -1917,7 +1958,7 @@
     el.connectorRow.style.display = result.parts.length > 1 ? 'block' : 'none';
     el.scaleRow.style.display = result.parts.length > 0 ? 'flex' : 'none';
     el.cutRow.style.display = result.parts.length > 0 ? 'block' : 'none';
-    el.cutRowHint.style.display = result.parts.length > 0 ? 'block' : 'none';
+    el.cutRowHint.dataset.serve = result.parts.length > 0 ? '1' : '0';
     resetCutSelection();
     updateCutRadiusLabel();
     el.logTitle.style.display = '';
@@ -1926,7 +1967,7 @@
 
     if (result.parts.length > 0) {
       const maxMm = computeOverallMaxDimension(result.parts);
-      el.scaleHint.style.display = '';
+      el.scaleHint.dataset.serve = '1';
       el.scaleHint.textContent = `Dimensione massima rilevata: ${fmt(maxMm, 0)} mm. Se non corrisponde alla realtà, inserisci l'altezza vera sopra e tocca "Applica scala".`;
     }
 
@@ -1988,6 +2029,7 @@
       el.warnings.appendChild(box);
     }
 
+    aggiornaInfo();
     el.partsTitle.textContent = `Parti rilevate (${result.parts.length})`;
 
     result.parts.forEach((part) => addPartToScene(part));
@@ -2352,6 +2394,7 @@
   function setCutMode(active) {
     cutMode = active;
     el.cutToggleBtn.classList.toggle('active', active);
+    aggiornaInfo();
     el.cutToggleBtn.textContent = active ? 'Ritaglio attivo — dipingi sul modello' : 'Ritaglio manuale';
     el.cutControls.style.display = active ? 'block' : 'none';
     if (active) setCutTool(cutTool); // imposta il messaggio d'aiuto giusto
@@ -2444,6 +2487,8 @@
   }
 
   function setCutTool(tool) {
+    // ogni strumento ha le sue spiegazioni: quelle degli altri spariscono
+    setTimeout(aggiornaInfo, 0);
     // Passare al "Taglio dritto" (o alla coperta) BUTTA VIA la selezione
     // dipinta: sono strumenti che non la usano. Chi aveva appena cerchiato una
     // cintura e poi premeva il taglio col piano si ritrovava un taglio dritto
