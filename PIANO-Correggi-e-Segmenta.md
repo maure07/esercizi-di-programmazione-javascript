@@ -254,6 +254,47 @@ toglie di mezzo una costante da tarare a mano. Mai millimetri fissi: le unità d
 non sono millimetri di stampa (su un Goku da 1899 unità ce ne vogliono quasi dieci per un
 millimetro stampato).
 
+### Il nocciolo a FONDO PIATTO (questo è quello buono)
+
+Spostare la pelle lungo la normale di ogni vertice ha due difetti che si vedono sul pezzo
+stampato: il fondo **ripete le gobbe della pelle** invece di essere piano, e dove le normali
+convergono si **incrociano**, producendo punte e bavette. Non si stampa e non si incolla.
+
+Costruzione giusta, tutta con booleane esatte:
+
+1. `n` = somma delle normali dei triangoli selezionati, normalizzata — la direzione verso cui
+   la macchia guarda.
+2. **Prisma** = la pelle selezionata trascinata lungo `-n` di uno spostamento **uguale per
+   tutti** (3 × la diagonale del modello: deve uscire dall'altra parte). Davanti la pelle
+   originale, dietro la stessa pelle traslata, di lato le pareti sul contorno.
+3. `Blocco = Prisma ∩ Originale` — tutta la carne sotto la macchia.
+4. **Il piano**: `A = Blocco ∩ semispazio(x·n > alto − d)`, dove `alto` è il punto più esterno
+   della macchia e `d` la profondità voluta.
+5. `Sede` = lo stesso, dal prisma **allargato di lato** di `gioco` e con il piano più fondo di
+   `gioco`; `B = Originale − Sede`.
+
+**La profondità `d` si misura con dei raggi, non con l'ingombro.** Il prisma attraversa tutto
+il personaggio: misurando l'estensione di `Blocco` lungo `n` si ottiene la larghezza del
+bacino (288) invece dello spessore della coscia (~100), e la faccia piatta finiva a metà del
+corpo. Spara qualche centinaio di raggi dalla pelle verso l'interno e prendi la **prima
+uscita**, poi la mediana. E sparali **solo dai triangoli che guardano dritti come la macchia**
+(prodotto scalare con `n` sopra 0,7): quelli sul fianco rasentano la pelle, escono subito e
+tirano giù la mediana — con tutti i raggi il pezzo veniva fondo 8 invece di 32.
+Poi `d = 0,5 × spessore`: **la gamba è profonda 4 cm, il pezzo viene 2**.
+
+**Butta via le briciole.** Il prisma sfiora la pelle di striscio lungo il contorno e produce
+decine di schegge (misurato: 117 tocchi, uno da 6,5 milioni di volume e tutti gli altri sotto
+700). Sono loro le bavette. Dopo ogni booleana, `decompose()` e tieni solo i tocchi che
+valgono almeno il 5% del più grosso — così una selezione fatta apposta in due parti resta in
+due parti.
+
+**Prova tutti e due e tieni il più spesso.** Su una selezione che *gira attorno* al modello il
+fondo piatto viene sottile e il vecchio nocciolo a guscio fa meglio. Non scegliere a priori:
+calcolali entrambi e confronta `4·volume/superficie`.
+
+Misura di collaudo: la faccia di taglio del nocciolo sta in una fetta spessa **0,000013
+unità** (piano esatto); col taglio normale la faccia più piana del pezzo è spessa 72.
+
 ### La scelta dell'incastro — anche questa è dell'utente
 
 Il nocciolo era **solo automatico**, e il primo utente che l'ha voluto non ha trovato nessun

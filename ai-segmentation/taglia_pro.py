@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "incastro-a-scelta-18"
+VERSIONE = "nocciolo-piatto-19"
 
 
 # ---------------------------------------------------------------------------
@@ -1049,6 +1049,195 @@ def _nocciolo(V, F, sel, anelli, profondita, ritiro, normali_v):
     return Vn, np.asarray(Fn, dtype=np.int64)
 
 
+def _prisma_selezione(V, F, sel, anelli, n, lunghezza, dilata=0.0):
+    """Solido ottenuto TRASCINANDO la pelle selezionata lungo -n, dritto.
+
+    E' il pezzo chiave del nocciolo a fondo piatto. Rispetto al vecchio
+    nocciolo (che copiava la pelle spostandola lungo la normale di ogni
+    vertice) qui lo spostamento e' UGUALE per tutti: la faccia di dietro nasce
+    dritta invece di ripetere le gobbe della pelle, e soprattutto le normali
+    non si incrociano piu' — erano loro a produrre quelle punte sul fondo.
+
+    dilata : allarga il contorno di lato (per scavare la sede un filo piu'
+             larga del pezzo che ci deve entrare). La pelle davanti NON si
+             tocca mai: quella e' la superficie del modello.
+    """
+    facce = [F[f] for f in sorted(sel)]
+    usati = sorted({int(x) for f in facce for x in f})
+    idx = {v: i for i, v in enumerate(usati)}
+    nu = len(usati)
+    P = V[usati].astype(np.float64).copy()
+    if dilata > 0:
+        bordo = {int(a) for anello in anelli for e in anello for a in e}
+        centro = P.mean(axis=0)
+        for v in usati:
+            if v not in bordo:
+                continue
+            d = V[v] - centro
+            d = d - n * float(d @ n)        # solo di lato, non lungo il trascinamento
+            ln = float(np.linalg.norm(d))
+            if ln > 1e-9:
+                P[idx[v]] = V[v] + d * (dilata / ln)
+    Vn = np.vstack([P, P - n * lunghezza])
+    Fn = []
+    for f in facce:
+        a, b, c = idx[int(f[0])], idx[int(f[1])], idx[int(f[2])]
+        Fn.append([a, b, c])
+        Fn.append([nu + c, nu + b, nu + a])      # fondo, al rovescio
+    for anello in anelli:
+        for a, b in anello:
+            ia, ib = idx[int(a)], idx[int(b)]
+            Fn.append([ib, ia, nu + ia])
+            Fn.append([ib, nu + ia, nu + ib])
+    return Vn, np.asarray(Fn, dtype=np.int64)
+
+
+def _semispazio(n, quota, taglia):
+    """Blocco enorme che tiene tutto quello che sta OLTRE il piano x·n = quota
+    (cioe' dalla parte di n). Serve a segare il nocciolo con una faccia piana."""
+    u, v, nn = _base_da_normale(n)
+    w = 4.0 * taglia
+    return _cubo([w, w, w], np.asarray(n, dtype=np.float64) * (quota + w * 0.5), u, v, nn)
+
+
+def _senza_briciole(solido, quota_minima=0.05):
+    """Butta via i tocchi minuscoli di una booleana.
+
+    Il prisma che scende dalla selezione sfiora la pelle di striscio lungo il
+    contorno e produce decine di schegge da pochi millesimi di volume (su una
+    coscia: 117 tocchi, di cui uno da 6,5 milioni e tutti gli altri sotto
+    settecento). Sono loro le bavette e le punte che si vedevano sul pezzo.
+    Si tengono solo i tocchi che valgono almeno una frazione del piu' grosso,
+    cosi' una selezione fatta apposta in due parti resta in due parti.
+    """
+    try:
+        pezzi = [p for p in solido.decompose() if p.status().name == "NoError"]
+    except Exception:
+        pezzi = []
+    if len(pezzi) <= 1:
+        return solido
+    voli = [abs(float(p.volume())) for p in pezzi]
+    massimo = max(voli) or 1.0
+    tenuti = [p for p, v in zip(pezzi, voli) if v >= quota_minima * massimo]
+    if not tenuti:
+        return solido
+    fuso = tenuti[0]
+    for p in tenuti[1:]:
+        fuso = fuso + p
+    return fuso if fuso.status().name == "NoError" else solido
+
+
+def _spessore_sotto(mesh, punti, n):
+    """Quanto e' spesso il modello sotto la macchia: si sparano dei raggi
+    dalla pelle verso l'interno e si guarda dove escono dall'altra parte.
+
+    Serve perche' il prisma della selezione ATTRAVERSA tutto il personaggio:
+    misurando l'ingombro del solido tagliato si ottiene la larghezza del
+    bacino (288) invece dello spessore della coscia (~100), e la faccia
+    piatta finiva a meta' del corpo.
+    """
+    try:
+        d = np.tile(-np.asarray(n, dtype=np.float64), (len(punti), 1))
+        origini = np.asarray(punti, dtype=np.float64) - np.asarray(n) * 1e-3
+        pos, i_raggio, _ = mesh.ray.intersects_location(origini, d, multiple_hits=True)
+    except Exception:
+        return None
+    if not len(pos):
+        return None
+    dist = np.linalg.norm(pos - origini[i_raggio], axis=1)
+    buoni = dist > 1e-6
+    if not buoni.any():
+        return None
+    dist, i_raggio = dist[buoni], i_raggio[buoni]
+    # per ogni raggio la PRIMA uscita: e' li' che finisce la carne
+    primo = {}
+    for r, t in zip(i_raggio, dist):
+        r = int(r)
+        if r not in primo or t < primo[r]:
+            primo[r] = float(t)
+    if not primo:
+        return None
+    return float(np.median(list(primo.values())))
+
+
+def taglia_a_nocciolo_piatto(V, F, sel, anelli, log, gioco, frazione=0.5):
+    """Nocciolo con la FACCIA DI TAGLIO PIANA.
+
+    Il pezzo che si stacca e': la pelle originale davanti (intatta), una faccia
+    piatta dietro, e le pareti che scendono dritte seguendo il contorno della
+    selezione. In pratica si affetta la coscia: se la gamba li' e' spessa 4 cm,
+    il pezzo viene spesso 2 (`frazione`), togliendo materiale alla gamba. Nel
+    resto del modello si scava la sede corrispondente, un filo piu' larga.
+    """
+    import trimesh
+    T = V[F[sorted(sel)]]
+    nf = np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0])
+    n = _normalizza(nf.sum(axis=0))          # da che parte "guarda" la macchia
+    diag = float(np.linalg.norm(V.max(axis=0) - V.min(axis=0))) or 1.0
+    L = 3.0 * diag                            # abbastanza per uscire dall'altra parte
+
+    Mo = trimesh.Trimesh(vertices=V, faces=F, process=True)
+    Mo.update_faces(Mo.nondegenerate_faces())
+    Mo.remove_unreferenced_vertices()
+    Orig = _manifold(np.asarray(Mo.vertices), np.asarray(Mo.faces))
+    Vp, Fp = _prisma_selezione(V, F, sel, anelli, n, L, 0.0)
+    Pr = _manifold(Vp, Fp)
+    if Orig.status().name != "NoError" or Pr.status().name != "NoError":
+        log.append(f"(nocciolo piatto non utilizzabile: modello {Orig.status().name}, "
+                   f"prisma {Pr.status().name})")
+        return None
+
+    Blocco = Pr ^ Orig                        # tutta la carne sotto la macchia
+    if Blocco.status().name != "NoError":
+        return None
+
+    # QUANTO FONDO. Non si puo' misurare l'ingombro del blocco: il prisma esce
+    # dall'altra parte del personaggio e quello che si misura e' la larghezza
+    # del bacino, non lo spessore della coscia. Si spara una manciata di raggi
+    # dalla macchia verso l'interno e si prende la prima uscita.
+    # ...e i raggi si sparano SOLO dai triangoli che guardano dritti come la
+    # macchia. Quelli sul fianco escono subito perche' rasentano la pelle, e
+    # tirano giu' la misura: sulla coscia facevano venire il pezzo fondo 8
+    # invece di una quarantina.
+    _tf = V[F[sorted(sel)]]
+    _nfv = np.cross(_tf[:, 1] - _tf[:, 0], _tf[:, 2] - _tf[:, 0])
+    _ln = np.linalg.norm(_nfv, axis=1)
+    _ln[_ln < 1e-12] = 1.0
+    _dritti = np.where((_nfv / _ln[:, None]) @ n > 0.7)[0]
+    if len(_dritti) < 8:
+        _dritti = np.arange(len(_tf))
+    campione = _tf[_dritti].mean(axis=1)
+    if len(campione) > 400:
+        campione = campione[np.linspace(0, len(campione) - 1, 400).astype(int)]
+    spess = _spessore_sotto(Mo, campione, n)
+    if spess is None or spess <= 1e-6:
+        log.append("(nocciolo piatto: non riesco a misurare quanto e' spesso il "
+                   "modello sotto la macchia)")
+        return None
+    alto = float((V[sorted({int(x) for f in F[sorted(sel)] for x in f})] @ n).max())
+    quota = alto - frazione * spess           # dove passa la faccia piatta
+
+    A = _senza_briciole(Blocco ^ _semispazio(n, quota, diag))
+    Vs, Fs = _prisma_selezione(V, F, sel, anelli, n, L, gioco)
+    Sede = _manifold(Vs, Fs)
+    if Sede.status().name != "NoError":
+        return None
+    # la sede e' un filo piu' larga e un filo piu' fonda: il pezzo ci entra
+    Sede = _senza_briciole((Sede ^ Orig) ^ _semispazio(n, quota - gioco, diag))
+    B = Orig - Sede
+    if A.status().name != "NoError" or B.status().name != "NoError":
+        return None
+    va, fa = _to_arrays(A)
+    vb, fb = _to_arrays(B)
+    if not len(fa) or not len(fb):
+        return None
+    ma = trimesh.Trimesh(vertices=va, faces=fa, process=False)
+    mb = trimesh.Trimesh(vertices=vb, faces=fb, process=False)
+    log.append(f"(nocciolo piatto: li' sotto il modello e' spesso {spess:.0f}, "
+               f"il pezzo viene fondo {frazione * spess:.0f})")
+    return ma, mb
+
+
 def taglia_a_nocciolo(V, F, sel, anelli, log, profondita, gioco, normali_v):
     """Stacca la zona selezionata come nocciolo e ne scava la sede nel resto."""
     import trimesh
@@ -1658,16 +1847,31 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
             # Quindi se ne provano poche, ben distanziate, e si tiene quella che
             # da' il blocchetto piu' spesso. Costa qualche secondo in piu' e
             # toglie di mezzo una costante da tarare a mano.
-            _fu, _sp2, _pv = None, -1.0, 0.0
+            _fu, _sp2, _pv, _piatto = None, -1.0, 0.0, False
             _muto = []          # i tentativi non devono riempire il resoconto
-            for _k in (0.05, 0.10, 0.18, 0.30):
-                _p = _k * _gr
-                _try = taglia_a_nocciolo(V, F, sel, anelli, _muto, _p, gioco, normali_v)
-                if _try is None:
-                    continue
-                _s = 4.0 * abs(float(_try[0].volume)) / (float(_try[0].area) or 1.0)
-                if _s > _sp2:
-                    _fu, _sp2, _pv = _try, _s, _p
+            # PRIMA il nocciolo a FONDO PIATTO: la pelle davanti resta quella
+            # del modello, dietro c'e' un piano, le pareti scendono dritte.
+            # E' quello giusto da stampare, e non ha le punte che faceva il
+            # vecchio (che copiava la pelle curva e incrociava le normali).
+            _pi = taglia_a_nocciolo_piatto(V, F, sel, anelli, _muto, gioco)
+            if _pi is not None:
+                _fu = _pi
+                _sp2 = 4.0 * abs(float(_pi[0].volume)) / (float(_pi[0].area) or 1.0)
+                _piatto = True
+            # Il fondo piatto e' quello giusto da stampare, ma su una selezione
+            # che GIRA attorno al modello viene sottile: li' il vecchio nocciolo
+            # a guscio fa meglio. Invece di scegliere a priori si provano tutti
+            # e due e si tiene il piu' spesso — l'unica cosa che si puo'
+            # misurare senza chiedere niente a chi sta tagliando.
+            if _fu is None or _sp2 <= _sp:
+                for _k in (0.05, 0.10, 0.18, 0.30):
+                    _p = _k * _gr
+                    _try = taglia_a_nocciolo(V, F, sel, anelli, _muto, _p, gioco, normali_v)
+                    if _try is None:
+                        continue
+                    _s = 4.0 * abs(float(_try[0].volume)) / (float(_try[0].area) or 1.0)
+                    if _s > _sp2:
+                        _fu, _sp2, _pv, _piatto = _try, _s, _p, False
             if _fu is not None:
                 # Se l'hai chiesto tu si tiene comunque, purche' i due pezzi
                 # siano chiusi: sei tu a sapere come lo vuoi stampare. In
@@ -1679,12 +1883,23 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
                 if _ok:
                     ma, mb = _fu
                     niente_perno = True
-                    log.append(
-                        f"Taglio A NOCCIOLO: la zona scelta diventa un blocchetto "
-                        f"spesso {_sp2:.1f} mm invece di {_sp:.1f} (affondato "
-                        f"{_pv:.1f} mm, profondita' scelta provandone quattro) e "
-                        f"nell'altro pezzo si scava la sua sede, con {gioco:.2f} mm "
-                        f"di gioco. Si incastra da solo: niente perno.")
+                    if _piatto:
+                        log.append(
+                            f"Taglio A NOCCIOLO con la FACCIA PIATTA: davanti resta "
+                            f"la pelle del modello, dietro c'e' un piano e le pareti "
+                            f"scendono dritte lungo il contorno che hai scelto. Il "
+                            f"blocchetto viene spesso {_sp2:.1f} invece di {_sp:.1f} "
+                            f"(meta' dello spessore del modello li' sotto) e "
+                            f"nell'altro pezzo si scava la sua sede, con {gioco:.2f} "
+                            f"di gioco. Si incastra da solo: niente perno. "
+                            f"Stampa il pezzo con la faccia piatta appoggiata al piatto.")
+                    else:
+                        log.append(
+                            f"Taglio A NOCCIOLO: la zona scelta diventa un blocchetto "
+                            f"spesso {_sp2:.1f} mm invece di {_sp:.1f} (affondato "
+                            f"{_pv:.1f} mm, profondita' scelta provandone quattro) e "
+                            f"nell'altro pezzo si scava la sua sede, con {gioco:.2f} mm "
+                            f"di gioco. Si incastra da solo: niente perno.")
                     if _sp2 < _sp:
                         # Succede quando la selezione AVVOLGE il pezzo invece di
                         # essere una macchia su un lato: il nocciolo e' un guscio

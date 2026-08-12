@@ -749,7 +749,7 @@
   }
   // deve corrispondere a VERSIONE in ai-segmentation/taglia_pro.py: serve a
   // capire se sul PC gira ancora un companion vecchio (senza taglio locale)
-  const TAGLIA_PRO_VERSIONE_ATTESA = 'incastro-a-scelta-18';
+  const TAGLIA_PRO_VERSIONE_ATTESA = 'nocciolo-piatto-19';
   // Versione scritta in chiaro sotto al titolo. Serve a capire al volo, da uno
   // screenshot, se il file aperto e' quello aggiornato: senza, quando qualcosa
   // non va non si sa nemmeno quale versione si sta guardando.
@@ -3774,6 +3774,91 @@
     cutSelection = scelta;
     refreshCutHighlight();
     return scelta.faces.size;
+  };
+  // Come __smartDaPunto, ma la selezione la APPLICA davvero: serve a provare
+  // nei test il giro che fa l'utente vero (clic magico e poi taglio), che con
+  // la sola sonda non si poteva riprodurre.
+  window.__selSmart = (punto, estensione) => {
+    if (!currentResult) return 0;
+    let part = null, best = -1, bestD = Infinity;
+    for (const p of currentResult.parts) {
+      const topo = ensurePartTopology(p);
+      const nT = p.indices.length / 3;
+      for (let t = 0; t < nT; t++) {
+        const d = Math.hypot(topo.centroids[t * 3] - punto[0],
+          topo.centroids[t * 3 + 1] - punto[1], topo.centroids[t * 3 + 2] - punto[2]);
+        if (d < bestD) { bestD = d; best = t; part = p; }
+      }
+    }
+    if (!part) return 0;
+    const sel = pulisciSelezione(part, smartSelect(part, best, estensione, 0.85));
+    if (!sel || sel.size === 0) return 0;
+    cutSelection = { partId: part.id, faces: sel };
+    refreshCutHighlight();
+    return sel.size;
+  };
+  // Quanto e' piana la faccia di taglio di un pezzo. Si prende la direzione
+  // verso cui guarda piu' superficie (la faccia di taglio e' la piu' grande
+  // superficie piana del pezzo), si sommano le aree dei triangoli che guardano
+  // esattamente di la', e si guarda se stanno tutti su una quota sola.
+  window.__facciaPiatta = (nome) => {
+    if (!currentResult) return null;
+    const p = currentResult.parts.find((x) => x.name === nome);
+    if (!p) return null;
+    const nT = p.indices.length / 3;
+    const nx = new Float64Array(nT), ny = new Float64Array(nT), nz = new Float64Array(nT);
+    const area = new Float64Array(nT);
+    for (let f = 0; f < nT; f++) {
+      const a = p.indices[f * 3], b = p.indices[f * 3 + 1], c = p.indices[f * 3 + 2];
+      const ux = p.positions[b * 3] - p.positions[a * 3];
+      const uy = p.positions[b * 3 + 1] - p.positions[a * 3 + 1];
+      const uz = p.positions[b * 3 + 2] - p.positions[a * 3 + 2];
+      const vx = p.positions[c * 3] - p.positions[a * 3];
+      const vy = p.positions[c * 3 + 1] - p.positions[a * 3 + 1];
+      const vz = p.positions[c * 3 + 2] - p.positions[a * 3 + 2];
+      const cx = uy * vz - uz * vy, cy = uz * vx - ux * vz, cz = ux * vy - uy * vx;
+      const L = Math.hypot(cx, cy, cz) || 1;
+      nx[f] = cx / L; ny[f] = cy / L; nz[f] = cz / L; area[f] = L / 2;
+    }
+    // direzione dominante: quella del triangolo con piu' area attorno
+    let mi = 0, mA = -1;
+    for (let f = 0; f < nT; f++) {
+      if (area[f] > mA) { mA = area[f]; mi = f; }
+    }
+    let dx = nx[mi], dy = ny[mi], dz = nz[mi], areaMax = -1;
+    for (let giro = 0; giro < 3; giro++) {
+      let sx = 0, sy = 0, sz = 0, sa = 0;
+      for (let f = 0; f < nT; f++) {
+        if (nx[f] * dx + ny[f] * dy + nz[f] * dz > 0.98) {
+          sx += nx[f] * area[f]; sy += ny[f] * area[f]; sz += nz[f] * area[f]; sa += area[f];
+        }
+      }
+      if (sa <= 0) break;
+      const L = Math.hypot(sx, sy, sz) || 1;
+      dx = sx / L; dy = sy / L; dz = sz / L; areaMax = sa;
+    }
+    let qmin = Infinity, qmax = -Infinity, areaTot = 0;
+    for (let f = 0; f < nT; f++) {
+      areaTot += area[f];
+      if (nx[f] * dx + ny[f] * dy + nz[f] * dz <= 0.98) continue;
+      for (let k = 0; k < 3; k++) {
+        const v = p.indices[f * 3 + k];
+        const q = p.positions[v * 3] * dx + p.positions[v * 3 + 1] * dy + p.positions[v * 3 + 2] * dz;
+        if (q < qmin) qmin = q;
+        if (q > qmax) qmax = q;
+      }
+    }
+    const ing = MeshCore.computeStats(p.positions, p.indices);
+    const diag = Math.hypot(ing.bboxMax[0] - ing.bboxMin[0],
+      ing.bboxMax[1] - ing.bboxMin[1], ing.bboxMax[2] - ing.bboxMin[2]) || 1;
+    return {
+      direzione: [dx, dy, dz],
+      areaPiana: areaMax, areaTotale: areaTot,
+      quota: areaMax > 0 ? qmax - qmin : null,
+      // spessore della fetta in cui sta la faccia piana, in millesimi
+      // dell'ingombro del pezzo: sotto l'1% e' un piano vero
+      spessoreRelativo: areaMax > 0 ? (qmax - qmin) / diag : null,
+    };
   };
   window.__pianoTest = () => {
     if (!cutSelection || !currentResult) return null;
