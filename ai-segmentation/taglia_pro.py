@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "nocciolo-liscio-22"
+VERSIONE = "nocciolo-solo-piatto-23"
 
 
 # ---------------------------------------------------------------------------
@@ -2110,16 +2110,32 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
             _pi = taglia_a_nocciolo_piatto(V, F, sel, anelli, _diag, gioco,
                                            contorno=_cont)
             _muto.extend(l for l in _diag if not l.startswith("[diagnostica]"))
+            # Se il nocciolo l'hai chiesto TU, la diagnostica va nel resoconto
+            # comunque, riuscito o no: e' l'unico modo per capire da lontano
+            # perche' e' venuto quello che e' venuto.
+            if _chiesto:
+                log.extend(_diag)
             if _pi is not None:
                 _fu = _pi
                 _sp2 = 4.0 * abs(float(_pi[0].volume)) / (float(_pi[0].area) or 1.0)
                 _piatto = True
-            # Il fondo piatto e' quello giusto da stampare, ma su una selezione
-            # che GIRA attorno al modello viene sottile: li' il vecchio nocciolo
-            # a guscio fa meglio. Invece di scegliere a priori si provano tutti
-            # e due e si tiene il piu' spesso — l'unica cosa che si puo'
-            # misurare senza chiedere niente a chi sta tagliando.
-            if _fu is None or _sp2 <= _sp:
+            # QUANDO LO CHIEDI TU, NIENTE RIPIEGHI DI NASCOSTO.
+            # Il vecchio nocciolo a guscio (pelle copiata e spinta in dentro
+            # lungo le normali) e' proprio quello che faceva le costine radiali
+            # sul bordo e il fondo ondulato. Prima veniva ripescato ogni volta
+            # che il fondo piatto usciva piu' sottile del taglio normale: chi
+            # sceglieva "a NOCCIOLO" nel menu si ritrovava in mano il pezzo
+            # vecchio senza che niente glielo dicesse, e sembrava che la
+            # correzione non fosse mai stata fatta.
+            # Adesso il guscio resta solo per la scelta AUTOMATICA. Se lo hai
+            # chiesto tu: o esce il fondo piatto, o te lo dico e si fa il taglio
+            # normale col perno.
+            if _fu is None and _chiesto:
+                log.append("Il nocciolo a faccia piatta non e' riuscito su questa "
+                           "selezione (vedi le righe di diagnostica qui sopra). "
+                           "NON ripiego sul vecchio nocciolo a guscio, che darebbe "
+                           "il bordo a costine: faccio il taglio normale col perno.")
+            elif not _chiesto and (_fu is None or _sp2 <= _sp):
                 for _k in (0.05, 0.10, 0.18, 0.30):
                     _p = _k * _gr
                     _try = taglia_a_nocciolo(V, F, sel, anelli, _muto, _p, gioco, normali_v)
@@ -2151,7 +2167,8 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
                                        "stessa area di quello che hai scelto, "
                                        "senza i denti dei triangoli",
                         }.get(_cont, "il contorno che hai scelto, dente per dente")
-                        log.extend(_diag)
+                        if not _chiesto:
+                            log.extend(_diag)     # se l'hai chiesto tu e' gia' scritta sopra
                         log.append(
                             f"{_tit}: davanti resta "
                             f"la pelle del modello, dietro c'e' un piano e le pareti "
