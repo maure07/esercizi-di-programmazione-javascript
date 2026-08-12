@@ -11,7 +11,7 @@ const path = require('path');
   await page.goto('http://127.0.0.1:8973/index.html');
   await page.waitForTimeout(300);
 
-  const fixtureDir = '/home/user/esercizi-di-programmazione-javascript/stl-obj-fixer-webapp/esempio';
+  const fixtureDir = require('path').join(__dirname, '..', 'esempio');
   const objPath = path.join(fixtureDir, 'funko_esempio.obj');
   const mtlPath = path.join(fixtureDir, 'funko_esempio.mtl');
 

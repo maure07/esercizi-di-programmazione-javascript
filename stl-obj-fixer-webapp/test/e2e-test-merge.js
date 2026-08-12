@@ -10,7 +10,7 @@ const { chromium } = require('/opt/node22/lib/node_modules/playwright');
   await page.goto('http://127.0.0.1:8973/index.html');
   await page.waitForTimeout(300);
 
-  const fixtureDir = '/home/user/esercizi-di-programmazione-javascript/stl-obj-fixer-webapp/esempio';
+  const fixtureDir = require('path').join(__dirname, '..', 'esempio');
   await page.setInputFiles('#fileInput', [`${fixtureDir}/funko_esempio.obj`, `${fixtureDir}/funko_esempio.mtl`]);
   await page.waitForSelector('#toSegmentBtn', { timeout: 30000 });
   await page.click('#toSegmentBtn', { timeout: 120000, noWaitAfter: true });
