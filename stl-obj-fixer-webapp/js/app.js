@@ -800,7 +800,7 @@
     if (companion === undefined) return;
     const ok = companion === TAGLIA_PRO_VERSIONE_ATTESA;
     const s = document.createElement('span');
-    s.textContent = ' companion ' + (companion || 'non raggiungibile');
+    s.textContent = ' \u00b7 companion ' + (companion || 'non raggiungibile');
     s.style.color = ok ? '' : '#ff6b6b';
     s.style.fontWeight = ok ? '' : '700';
     s.title = ok ? 'i due pezzi combaciano'
