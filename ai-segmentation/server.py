@@ -216,6 +216,7 @@ def taglia_selezione():
             scala_connettore=float(data.get("scala_connettore", 1.0)),
             appiattisci=data.get("appiattisci", True),
             incastro_modo=str(data.get("incastro", "auto")),
+            profondita_nocciolo=float(data.get("profondita_nocciolo", 0.5)),
         )
     except Exception as e:
         print("taglio sulla selezione fallito:", e, file=sys.stderr)

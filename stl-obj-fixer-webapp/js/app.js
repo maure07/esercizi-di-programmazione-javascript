@@ -140,7 +140,41 @@
     partsList: document.getElementById('partsList'),
     exportRow: document.getElementById('exportRow'),
     exportZipBtn: document.getElementById('exportZipBtn'),
+    profNocciolo: document.getElementById('profNocciolo'),
+    profNoccioloValue: document.getElementById('profNoccioloValue'),
+    profNoccioloRow: document.getElementById('profNoccioloRow'),
   };
+
+  // COMANDI TOLTI dal pannello perche' facevano doppione:
+  //  - la segmentazione sul PC (bastano quella nel browser e il taglio a mano);
+  //  - "Chiudi mantenendo i dettagli" e "Ricostruisci solido", che stanno gia'
+  //    nel menu della riparazione;
+  //  - lo strumento connettori a se' stante: perno e foro li mette il taglio.
+  // Il codice che li pilotava serve ancora al resto, quindi al posto degli
+  // elementi spariti si mette un segnaposto inerte che assorbe le chiamate.
+  // L'elenco e' esplicito apposta: un id scritto male da un'altra parte
+  // continua a dare errore, come deve.
+  const COMANDI_TOLTI = [
+    'segmentAiBtn', 'aiHint', 'dettagliChk', 'dettagliSens', 'dettagliSensValue',
+    'solidRow', 'closeLightBtn', 'solidifyAllBtn', 'solidQuality',
+    'connectorRow', 'connectorToggleBtn', 'connectorControls', 'connectorHint',
+    'connTypePegBtn', 'connTypePinBtn', 'connDiam', 'connDiamValue',
+    'connDepth', 'connDepthValue', 'connQuality', 'connUndoBtn', 'connDoneBtn',
+  ];
+  (function segnapostoInerti() {
+    const nulla = () => {};
+    COMANDI_TOLTI.forEach((id) => {
+      if (el[id]) return;
+      el[id] = {
+        tolto: true, value: '', checked: false, textContent: '', disabled: true,
+        style: {},
+        classList: { add: nulla, remove: nulla, toggle: nulla, contains: () => false },
+        addEventListener: nulla, removeEventListener: nulla,
+        appendChild: nulla, setAttribute: nulla, focus: nulla, click: nulla,
+        closest: () => null, querySelector: () => null,
+      };
+    });
+  })();
 
   const viewer = createViewer(el.viewer);
 
@@ -320,20 +354,20 @@
         <span class="dim">${i + 1}.</span>
         <span style="width:14px;height:14px;border-radius:4px;background:${sw};border:1px solid rgba(255,255,255,0.2);flex-shrink:0"></span>
         <b>${cname}</b>
-        <span class="dim">· ${g.parts.length} ${g.parts.length === 1 ? 'pezzo' : 'pezzi'} · ~${fmt(g.grams, 1)} g</span>
+        <span class="dim">${g.parts.length} ${g.parts.length === 1 ? 'pezzo' : 'pezzi'} ~${fmt(g.grams, 1)} g</span>
       </div>`;
     }).join('');
     el.filamentSummary.innerHTML = `
       <div class="dim" style="margin-bottom:6px">Bobine da caricare (ordine consigliato: una alla volta, tutti i pezzi di quel colore):</div>
       ${html}
-      <div style="margin-top:6px"><span class="dim">Totale:</span> ~${fmt(totalG, 1)} g PLA · ${currentResult.parts.filter((p) => p.included).length} pezzi</div>
+      <div style="margin-top:6px"><span class="dim">Totale:</span> ~${fmt(totalG, 1)} g PLA ${currentResult.parts.filter((p) => p.included).length} pezzi</div>
     `;
   }
 
   function setExploded(on) {
     explodedOn = on;
     el.explodeBtn.classList.toggle('active', on);
-    el.explodeBtn.textContent = on ? '💥 Vista esplosa attiva' : '💥 Vista esplosa';
+    el.explodeBtn.textContent = on ? 'Vista esplosa attiva' : 'Vista esplosa';
     if (!currentResult) return;
     const parts = currentResult.parts;
     if (parts.length === 0) return;
@@ -581,12 +615,12 @@
     currentAnalysis = { positions, indices, nTris, nDegenerate, nonManifold, boundary, components: comp.componentCount, size, tol };
 
     const issues = [];
-    if (nDegenerate > 0) issues.push(`<div class="issue">⚠ ${fmt(nDegenerate, 0)} triangoli degeneri (senza area)</div>`);
-    if (nonManifold > 0) issues.push(`<div class="issue">⚠ ${fmt(nonManifold, 0)} spigoli non-manifold (geometria doppia o difettosa)</div>`);
-    if (boundary.totalBoundaryEdges > 0) issues.push(`<div class="issue">⚠ ${fmt(boundary.loops.length, 0)} buchi (${fmt(boundary.totalBoundaryEdges, 0)} spigoli di bordo): la superficie è aperta, non stampabile così</div>`);
+    if (nDegenerate > 0) issues.push(`<div class="issue">Attenzione: ${fmt(nDegenerate, 0)} triangoli degeneri (senza area)</div>`);
+    if (nonManifold > 0) issues.push(`<div class="issue">Attenzione: ${fmt(nonManifold, 0)} spigoli non-manifold (geometria doppia o difettosa)</div>`);
+    if (boundary.totalBoundaryEdges > 0) issues.push(`<div class="issue">Attenzione: ${fmt(boundary.loops.length, 0)} buchi (${fmt(boundary.totalBoundaryEdges, 0)} spigoli di bordo): la superficie è aperta, non stampabile così</div>`);
     const issuesHtml = issues.length > 0
       ? issues.join('') + '<div class="dim" style="margin-top:6px">Consiglio: passa da "Ripara e solidifica" prima di segmentare.</div>'
-      : '<div class="ok">✔ Nessun problema rilevato: la mesh è già chiusa e pulita.</div>';
+      : '<div class="ok">Nessun problema rilevato: la mesh è già chiusa e pulita.</div>';
 
     // stato colori/texture, mostrato subito allo step 1 (e' qui che l'utente
     // si accorge se il modello e' "grigio")
@@ -594,13 +628,13 @@
     const cp = currentParsed;
     if (cp) {
       if (cp.textureError) {
-        colorHtml = `<div class="issue" style="margin-top:6px">⚠ Non sono riuscito a leggere l'immagine texture: ${cp.textureError}. Il modello resta grigio.</div>`;
+        colorHtml = `<div class="issue" style="margin-top:6px">Attenzione: Non sono riuscito a leggere l'immagine texture: ${cp.textureError}. Il modello resta grigio.</div>`;
       } else if (cp.textureApplied) {
-        colorHtml = '<div class="ok" style="margin-top:6px">✔ Texture caricata: il modello è mostrato con i suoi colori.</div>';
+        colorHtml = '<div class="ok" style="margin-top:6px">Texture caricata: il modello è mostrato con i suoi colori.</div>';
       } else if (cp.hasTextureInfo) {
-        colorHtml = '<div class="issue" style="margin-top:6px">⚠ Questo .obj usa una texture ma non hai selezionato il file immagine (.png/.jpg). Per vedere i colori ricarica <b>insieme</b> .obj + .mtl + immagine (selezionali tutti nella stessa finestra).</div>';
+        colorHtml = '<div class="issue" style="margin-top:6px">Attenzione: Questo .obj usa una texture ma non hai selezionato il file immagine (.png/.jpg). Per vedere i colori ricarica <b>insieme</b> .obj + .mtl + immagine (selezionali tutti nella stessa finestra).</div>';
       } else if (cp.hasColorInfo) {
-        colorHtml = '<div class="ok" style="margin-top:6px">✔ Colori del modello caricati.</div>';
+        colorHtml = '<div class="ok" style="margin-top:6px">Colori del modello caricati.</div>';
       } else {
         colorHtml = '<div class="dim" style="margin-top:6px">Modello senza colori: verrà mostrato in grigio (normale per gli STL). Per i colori serve un .obj con texture.</div>';
       }
@@ -633,9 +667,9 @@
       currentRepaired = repaired;
       const size = [0, 1, 2].map((i) => repaired.stats.bboxMax[i] - repaired.stats.bboxMin[i]);
       el.repairReport.innerHTML = `
-        ${repaired.log.map((l) => `<div>${/Attenzione|ancora aperta/.test(l) ? '<span class="issue">⚠ ' + l + '</span>' : '· ' + l}</div>`).join('')}
-        <div style="margin-top:6px">${repaired.watertight ? '<span class="ok">✔ Modello chiuso e stampabile (watertight)</span>' : '<span class="issue">⚠ Restano bordi aperti: la stampa potrebbe comunque riuscire, lo slicer chiude i difetti piccoli</span>'}</div>
-        <div class="dim" style="margin-top:4px">${fmt(repaired.indices.length / 3, 0)} triangoli · ${fmt(size[0], 1)}×${fmt(size[1], 1)}×${fmt(size[2], 1)}</div>
+        ${repaired.log.map((l) => `<div>${/Attenzione|ancora aperta/.test(l) ? '<span class="issue">Attenzione: ' + l + '</span>' : '' + l}</div>`).join('')}
+        <div style="margin-top:6px">${repaired.watertight ? '<span class="ok">Modello chiuso e stampabile (watertight)</span>' : '<span class="issue">Attenzione: Restano bordi aperti: la stampa potrebbe comunque riuscire, lo slicer chiude i difetti piccoli</span>'}</div>
+        <div class="dim" style="margin-top:4px">${fmt(repaired.indices.length / 3, 0)} triangoli ${fmt(size[0], 1)}×${fmt(size[1], 1)}×${fmt(size[2], 1)}</div>
       `;
       el.downloadRepairedBtn.style.display = 'block';
       // se il modello ha colori (texture/materiali), mostralo a colori anche
@@ -736,7 +770,7 @@
     if (ultimo) {
       // il numero dice quanti passi indietro restano: ogni clic ne toglie UNO,
       // non riporta tutto all'inizio
-      el.undoPartiBtn.textContent = `↩ Annulla (${storiaParti.length})`;
+      el.undoPartiBtn.textContent = `Annulla (${storiaParti.length})`;
       el.undoPartiBtn.title = `Annulla "${ultimo.etichetta}" (${storiaParti.length} passi indietro disponibili)`;
     }
   }
@@ -750,7 +784,7 @@
   }
   // deve corrispondere a VERSIONE in ai-segmentation/taglia_pro.py: serve a
   // capire se sul PC gira ancora un companion vecchio (senza taglio locale)
-  const TAGLIA_PRO_VERSIONE_ATTESA = 'sede-dal-pezzo-26';
+  const TAGLIA_PRO_VERSIONE_ATTESA = 'pannello-sobrio-27';
   // Versione scritta in chiaro sotto al titolo. Serve a capire al volo, da uno
   // screenshot, se il file aperto e' quello aggiornato: senza, quando qualcosa
   // non va non si sa nemmeno quale versione si sta guardando.
@@ -766,7 +800,7 @@
     if (companion === undefined) return;
     const ok = companion === TAGLIA_PRO_VERSIONE_ATTESA;
     const s = document.createElement('span');
-    s.textContent = ' · companion ' + (companion || 'non raggiungibile');
+    s.textContent = ' companion ' + (companion || 'non raggiungibile');
     s.style.color = ok ? '' : '#ff6b6b';
     s.style.fontWeight = ok ? '' : '700';
     s.title = ok ? 'i due pezzi combaciano'
@@ -813,8 +847,27 @@
       nota.style.display = nocciolo ? '' : 'none';
     }
   }
-  if (el.incastroModo) el.incastroModo.addEventListener('change', aggiornaMenuFacciaPiatta);
+  // Il cursore della profondita' ha senso SOLO col nocciolo: col perno non
+  // vuol dire niente, e un cursore che non fa niente e' un cursore che fa
+  // perdere tempo.
+  function aggiornaProfNocciolo() {
+    if (!el.profNocciolo || !el.incastroModo) return;
+    if (el.profNoccioloValue) el.profNoccioloValue.textContent = el.profNocciolo.value + '%';
+    const nocciolo = /^nocciolo/.test(el.incastroModo.value) || el.incastroModo.value === 'auto';
+    if (el.profNoccioloRow) {
+      el.profNoccioloRow.style.opacity = nocciolo ? '' : '0.45';
+      const nota = el.profNoccioloRow.nextElementSibling;
+      if (nota) nota.style.display = nocciolo ? '' : 'none';
+    }
+    el.profNocciolo.disabled = !nocciolo;
+  }
+  if (el.profNocciolo) el.profNocciolo.addEventListener('input', aggiornaProfNocciolo);
+  if (el.incastroModo) el.incastroModo.addEventListener('change', () => {
+    aggiornaMenuFacciaPiatta();
+    aggiornaProfNocciolo();
+  });
   aggiornaMenuFacciaPiatta();
+  aggiornaProfNocciolo();
   async function runAiSegmentation() {
     if (!currentParsed) {
       alert('Carica prima un modello.');
@@ -951,10 +1004,10 @@
       };
       const size = [0, 1, 2].map((i) => stats.bboxMax[i] - stats.bboxMin[i]);
       el.repairReport.innerHTML = `
-        <div style="color:#6be3ac;margin-bottom:4px">🛠️ Riparazione PRO (motore MeshLab + solido esatto)</div>
-        ${(out.log || []).map((l) => `<div>· ${l}</div>`).join('')}
-        <div style="margin-top:6px">${out.watertight ? '<span class="ok">✔ Solido chiuso ed esatto: pronto per booleane e stampa</span>' : '<span class="issue">⚠ Restano bordi aperti</span>'}</div>
-        <div class="dim" style="margin-top:4px">${fmt(indices.length / 3, 0)} triangoli · ${fmt(size[0], 1)}×${fmt(size[1], 1)}×${fmt(size[2], 1)}</div>
+        <div style="color:#6be3ac;margin-bottom:4px"> Riparazione PRO (motore MeshLab + solido esatto)</div>
+        ${(out.log || []).map((l) => `<div>${l}</div>`).join('')}
+        <div style="margin-top:6px">${out.watertight ? '<span class="ok">Solido chiuso ed esatto: pronto per booleane e stampa</span>' : '<span class="issue">Attenzione: Restano bordi aperti</span>'}</div>
+        <div class="dim" style="margin-top:4px">${fmt(indices.length / 3, 0)} triangoli ${fmt(size[0], 1)}×${fmt(size[1], 1)}×${fmt(size[2], 1)}</div>
       `;
       el.downloadRepairedBtn.style.display = 'block';
       if (!showMeshWithModelColors(currentParsed, positions, indices)) {
@@ -984,7 +1037,7 @@
         'Questo pulsante taglia DRITTO col piano rosso: la forma della selezione NON viene ' +
         'seguita, e quello che il piano incontra viene tranciato.\n\n' +
         'Per staccare esattamente la zona che hai scelto, annulla e usa in fondo al pannello ' +
-        '"✂️ Taglia SULLA SELEZIONE + connettore".\n\n' +
+        '"Taglia SULLA SELEZIONE + connettore".\n\n' +
         'Vuoi comunque tagliare dritto col piano?');
       if (!ok) return;
     }
@@ -1253,7 +1306,7 @@
     el.connectorControls.style.display = on ? 'block' : 'none';
     el.viewerHint.textContent = on
       ? 'Connettori: tocca dove due pezzi si uniscono. (Trascina per ruotare)'
-      : 'Touch: 1 dito ruota · 2 dita zoom/sposta   ·   Mouse: sinistro/centrale ruota · rotellina zoom (verso il cursore) · destro o Shift sposta';
+      : 'Touch: 1 dito ruota 2 dita zoom/sposta     Mouse: sinistro/centrale ruota rotellina zoom (verso il cursore) destro o Shift sposta';
   }
   function setConnType(t) {
     connType = t;
@@ -1593,8 +1646,8 @@
       // versione vecchia e' quella dell'ALTRO pezzo, la cartella sul PC.
       const continua = confirm(
         'I due pezzi dell\'app non combaciano.\n\n' +
-        '  · questo file HTML vuole:   ' + TAGLIA_PRO_VERSIONE_ATTESA + '\n' +
-        '  · la cartella "ai-segmentation" sul PC e\':   ' +
+        '  questo file HTML vuole:   ' + TAGLIA_PRO_VERSIONE_ATTESA + '\n' +
+        '  la cartella "ai-segmentation" sul PC e\':   ' +
         (health.taglia_pro_versione || 'cosi\' vecchia che non lo dice') + '\n\n' +
         'Il taglio lo fa la CARTELLA, non l\'HTML: finche\' resta quella vecchia il risultato ' +
         'sara\' quello di prima, anche se sotto al titolo leggi la versione nuova.\n\n' +
@@ -1668,6 +1721,9 @@
             : (el.flatCutChk && el.flatCutChk.checked ? 'auto' : 'mai');
           // 'auto' | 'nocciolo' | 'perno' | 'niente'
           bodySel.incastro = el.incastroModo ? el.incastroModo.value : 'auto';
+          // quanto affonda il nocciolo, in frazione dello spessore li' sotto
+          bodySel.profondita_nocciolo = el.profNocciolo
+            ? parseInt(el.profNocciolo.value, 10) / 100 : 0.5;
         try {
           const r1 = await fetch(AI_URL + '/taglia_selezione', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1724,7 +1780,7 @@
               'Motivo: ' + motivoRipiego + '\n\n' +
               'Ho ripiegato sul taglio col PIANO, che taglia dritto e quindi ignora ' +
               'la forma della zona che avevi scelto. Se il risultato non va bene, ' +
-              'annulla con "↩ Annulla" e ritocca la selezione.');
+              'annulla con "Annulla" e ritocca la selezione.');
       } else {
         alert('Taglio piatto riuscito: le due facce che si toccano sono piane e combaciano.' +
               (out.connettore ? `\n\nConnettore: lato ${out.connettore.lato.toFixed(1)} mm, gioco ${out.connettore.gioco.toFixed(2)} mm.` : ''));
@@ -1890,18 +1946,23 @@
       ai: 'Segmentazione dal companion locale sul PC (motore per forma / AI su GPU).',
     }[result.mode];
 
-    const infoWarn = document.createElement('div');
-    infoWarn.className = 'warning-box';
-    infoWarn.style.background = 'rgba(91,140,255,0.12)';
-    infoWarn.style.borderColor = 'rgba(91,140,255,0.4)';
-    infoWarn.style.color = '#9db6ff';
-    infoWarn.textContent = modeLabel;
-    el.warnings.appendChild(infoWarn);
+    // La riga informativa si disegna SOLO se ha qualcosa da dire. Per certi
+    // modi (per esempio "salta la segmentazione") la frase non esiste, e
+    // usciva una barra azzurra vuota: sembrava un difetto dell'app.
+    if (modeLabel) {
+      const infoWarn = document.createElement('div');
+      infoWarn.className = 'warning-box';
+      infoWarn.style.background = 'rgba(76,141,255,0.10)';
+      infoWarn.style.borderColor = 'rgba(76,141,255,0.35)';
+      infoWarn.style.color = '#9fbaff';
+      infoWarn.textContent = modeLabel;
+      el.warnings.appendChild(infoWarn);
+    }
 
     result.warnings.forEach((w) => {
       const box = document.createElement('div');
       box.className = 'warning-box';
-      box.textContent = '⚠️ ' + w;
+      box.textContent = 'Attenzione: ' + w;
       el.warnings.appendChild(box);
     });
 
@@ -1910,12 +1971,12 @@
     } else if (currentParsed && currentParsed.textureError) {
       const box = document.createElement('div');
       box.className = 'warning-box';
-      box.textContent = '⚠️ Non sono riuscito a leggere la texture: ' + currentParsed.textureError;
+      box.textContent = 'Attenzione: Non sono riuscito a leggere la texture: ' + currentParsed.textureError;
       el.warnings.appendChild(box);
     } else if (currentParsed && currentParsed.hasTextureInfo && !currentParsed.textureApplied) {
       const box = document.createElement('div');
       box.className = 'warning-box';
-      box.textContent = '💡 Questo modello ha una texture (mappa UV) ma non hai selezionato il file immagine insieme a .obj e .mtl: caricali di nuovo tutti e tre insieme per segmentare per colore.';
+      box.textContent = 'Questo modello ha una texture (mappa UV) ma non hai selezionato il file immagine insieme a .obj e .mtl: caricali di nuovo tutti e tre insieme per segmentare per colore.';
       el.warnings.appendChild(box);
     } else if (currentParsed && currentParsed.textureApplied) {
       const box = document.createElement('div');
@@ -1923,7 +1984,7 @@
       box.style.background = 'rgba(63,208,138,0.12)';
       box.style.borderColor = 'rgba(63,208,138,0.4)';
       box.style.color = '#6be3ac';
-      box.textContent = '✔ Colori letti dalla texture del modello.';
+      box.textContent = 'Colori letti dalla texture del modello.';
       el.warnings.appendChild(box);
     }
 
@@ -1954,6 +2015,22 @@
     return [0, 1, 2].map((i) => part.stats.bboxMax[i] - part.stats.bboxMin[i]);
   }
 
+  // Allunga o stringe un pezzo sui tre assi, tenendo fermo il suo centro.
+  // Fattori diversi fra loro deformano il pezzo: e' voluto (serve per esempio
+  // a compensare il ritiro della stampa su un asse), ma se il pezzo ha un
+  // incastro l'accoppiamento non torna piu' — per quello si avvisa prima.
+  function ridimensionaParte(part, f) {
+    const c = [0, 1, 2].map((i) => (part.stats.bboxMin[i] + part.stats.bboxMax[i]) / 2);
+    const P = part.positions;
+    for (let i = 0; i < P.length; i += 3) {
+      P[i] = c[0] + (P[i] - c[0]) * f[0];
+      P[i + 1] = c[1] + (P[i + 1] - c[1]) * f[1];
+      P[i + 2] = c[2] + (P[i + 2] - c[2]) * f[2];
+    }
+    part.stats = MeshCore.computeStats(part.positions, part.indices);
+    part._topo = null;   // la topologia del ritaglio non vale piu'
+  }
+
   function buildPartCard(part) {
     const card = document.createElement('div');
     card.className = 'part-card';
@@ -1974,7 +2051,12 @@
 
     const visBtn = document.createElement('button');
     visBtn.className = 'visibility-toggle active';
-    visBtn.textContent = '👁';
+    // occhio disegnato, non una lettera a caso: si capisce a colpo d'occhio
+    // che quel bottone mostra e nasconde
+    visBtn.innerHTML = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" '
+      + 'stroke-width="1.6"><path d="M1.5 10S4.5 4.5 10 4.5 18.5 10 18.5 10 15.5 15.5 10 15.5 '
+      + '1.5 10 1.5 10Z"/><circle cx="10" cy="10" r="2.6"/></svg>';
+    visBtn.title = 'Mostra o nascondi questo pezzo';
     visBtn.addEventListener('click', () => {
       part.visible = part.visible === false ? true : false;
       visBtn.classList.toggle('active', part.visible !== false);
@@ -1988,8 +2070,8 @@
     stats.className = 'part-stats';
     const size = bboxSizeMm(part);
     const watertightBadge = part.watertight
-      ? '<span>✔ solido chiuso</span>'
-      : '<span class="bad">⚠ non completamente chiuso</span>';
+      ? '<span>solido chiuso</span>'
+      : '<span class="bad">Attenzione: non completamente chiuso</span>';
     stats.innerHTML = `
       <span>${fmt(part.stats.volume / 1000, 1)} cm³</span>
       <span>~${fmt(weightGrams(part), 1)} g PLA</span>
@@ -1998,6 +2080,85 @@
       ${watertightBadge}
     `;
     card.appendChild(stats);
+
+    // MISURE: si scrivono i millimetri che si vogliono e il pezzo ci si adatta.
+    // E' quello che serve davvero prima di stampare — non un fattore di scala
+    // astratto, ma "questo pezzo deve essere alto tanto".
+    {
+      const box = document.createElement('details');
+      box.className = 'part-misure';
+      const capo = document.createElement('summary');
+      capo.textContent = 'Misure (mm)';
+      box.appendChild(capo);
+      const riga = document.createElement('div');
+      riga.className = 'misure-riga';
+      const campi = [];
+      ['X', 'Y', 'Z'].forEach((asse, i) => {
+        const et = document.createElement('label');
+        et.textContent = asse;
+        const inp = document.createElement('input');
+        inp.type = 'number';
+        inp.step = '0.1';
+        inp.min = '0.1';
+        inp.value = bboxSizeMm(part)[i].toFixed(1);
+        campi.push(inp);
+        et.appendChild(inp);
+        riga.appendChild(et);
+      });
+      box.appendChild(riga);
+      const legame = document.createElement('label');
+      legame.className = 'misure-legame';
+      const chk = document.createElement('input');
+      chk.type = 'checkbox';
+      chk.checked = true;
+      legame.appendChild(chk);
+      legame.appendChild(document.createTextNode(' mantieni le proporzioni'));
+      box.appendChild(legame);
+      // con le proporzioni legate, toccarne una muove le altre due
+      campi.forEach((inp, i) => {
+        inp.addEventListener('input', () => {
+          if (!chk.checked) return;
+          const ora = bboxSizeMm(part);
+          const nuovo = parseFloat(inp.value);
+          if (!(nuovo > 0) || !(ora[i] > 0)) return;
+          const k = nuovo / ora[i];
+          campi.forEach((altro, j) => {
+            if (j !== i) altro.value = (ora[j] * k).toFixed(1);
+          });
+        });
+      });
+      const riga2 = document.createElement('div');
+      riga2.className = 'part-actions';
+      const applica = document.createElement('button');
+      applica.textContent = 'Applica misure';
+      applica.addEventListener('click', () => {
+        const ora = bboxSizeMm(part);
+        const f = campi.map((inp, i) => {
+          const v = parseFloat(inp.value);
+          return (v > 0 && ora[i] > 0) ? v / ora[i] : 1;
+        });
+        if (f.every((x) => Math.abs(x - 1) < 1e-6)) return;
+        const storto = Math.max.apply(null, f) / Math.min.apply(null, f) > 1.001;
+        if (storto && !confirm(
+          'Stai allungando il pezzo in modo diverso sui tre assi.\n\n' +
+          'Il pezzo si deforma, e se ha un incastro (nocciolo o perno) non ' +
+          'combaciera\' piu\' con l\'altro pezzo: quello va ridimensionato ' +
+          'nello stesso identico modo.\n\nVado avanti?')) return;
+        pushStoriaParti('misure');
+        ridimensionaParte(part, f);
+        renderResult(currentResult);
+      });
+      riga2.appendChild(applica);
+      const ripristina = document.createElement('button');
+      ripristina.textContent = 'Rimetti quelle di adesso';
+      ripristina.addEventListener('click', () => {
+        const ora = bboxSizeMm(part);
+        campi.forEach((inp, i) => { inp.value = ora[i].toFixed(1); });
+      });
+      riga2.appendChild(ripristina);
+      box.appendChild(riga2);
+      card.appendChild(box);
+    }
 
     const actions = document.createElement('div');
     actions.className = 'part-actions';
@@ -2015,7 +2176,7 @@
     actions.appendChild(excludeBtn);
 
     const downloadBtn = document.createElement('button');
-    downloadBtn.textContent = '⬇️ STL';
+    downloadBtn.textContent = 'Scarica STL';
     downloadBtn.addEventListener('click', () => downloadPart(part));
     actions.appendChild(downloadBtn);
 
@@ -2031,7 +2192,8 @@
       const box = document.createElement('details');
       box.style.cssText = 'margin-top:8px;font-size:11.5px;color:var(--text-dim)';
       const capo = document.createElement('summary');
-      capo.textContent = '📋 Resoconto del taglio (' + part.log.length + ' righe)';
+      capo.textContent = 'Resoconto del taglio (' + part.log.length
+        + (part.log.length === 1 ? ' riga)' : ' righe)');
       capo.style.cssText = 'cursor:pointer;color:var(--accent);font-size:12px';
       box.appendChild(capo);
       const testo = document.createElement('pre');
@@ -2040,13 +2202,13 @@
         + 'background:var(--panel2);border-radius:8px;padding:8px;max-height:220px;overflow:auto';
       box.appendChild(testo);
       const copia = document.createElement('button');
-      copia.textContent = '📋 Copia il resoconto';
+      copia.textContent = 'Copia il resoconto';
       copia.style.cssText = 'margin-top:6px;font-size:12px';
       copia.addEventListener('click', async () => {
         const t = part.log.join('\n');
         try {
           await navigator.clipboard.writeText(t);
-          copia.textContent = '✔ copiato';
+          copia.textContent = 'copiato';
         } catch (e) {
           // file:// senza permessi: si ripiega sulla selezione manuale
           const r = document.createRange();
@@ -2055,28 +2217,17 @@
           s.removeAllRanges(); s.addRange(r);
           copia.textContent = 'selezionato: premi Ctrl+C';
         }
-        setTimeout(() => { copia.textContent = '📋 Copia il resoconto'; }, 2500);
+        setTimeout(() => { copia.textContent = 'Copia il resoconto'; }, 2500);
       });
       box.appendChild(copia);
       card.appendChild(box);
     }
 
-    // Connettore AUTOMATICO: si sceglie il pezzo dall'elenco e basta. Il punto
-    // dove mettere perno e foro lo trova da solo (dove i due pezzi si toccano),
-    // e la booleana e' esatta: il resto della mesh non viene toccato.
-    if (currentResult && currentResult.parts.length > 1) {
-      const connRow = document.createElement('div');
-      connRow.className = 'part-actions';
-      connRow.style.marginTop = '8px';
-      const connBtn = document.createElement('button');
-      connBtn.textContent = '🔩 Aggiungi perno e foro (automatico)';
-      connBtn.style.background = 'linear-gradient(90deg,#3fd08a,#2f9bd0)';
-      connBtn.style.color = '#fff';
-      connBtn.style.border = 'none';
-      connBtn.addEventListener('click', () => connettoreAutomatico(part));
-      connRow.appendChild(connBtn);
-      card.appendChild(connRow);
-    }
+    // Qui c'era "Aggiungi perno e foro (automatico)". Tolto: l'aggancio lo
+    // sceglie e lo mette il taglio, col menu "Come si uniscono i pezzi".
+    // Rifarlo dopo, su un pezzo gia' tagliato, voleva dire due strade per la
+    // stessa cosa, e su un pezzo col nocciolo avrebbe aggiunto un perno che
+    // non c'entra niente.
 
     const isMainPart = currentResult && currentResult.parts.length > 0 && currentResult.parts[0] === part;
     if (currentResult && currentResult.parts.length > 1 && !isMainPart) {
@@ -2084,7 +2235,7 @@
       mergeRow.className = 'part-actions';
       mergeRow.style.marginTop = '8px';
       const mergeBtn = document.createElement('button');
-      mergeBtn.textContent = '🔗 Unisci con la parte principale';
+      mergeBtn.textContent = 'Unisci con la parte principale';
       mergeBtn.addEventListener('click', () => mergePartIntoMain(part));
       mergeRow.appendChild(mergeBtn);
       card.appendChild(mergeRow);
@@ -2201,7 +2352,7 @@
   function setCutMode(active) {
     cutMode = active;
     el.cutToggleBtn.classList.toggle('active', active);
-    el.cutToggleBtn.textContent = active ? '✂️ Ritaglio attivo — dipingi sul modello' : '✂️ Ritaglio manuale';
+    el.cutToggleBtn.textContent = active ? 'Ritaglio attivo — dipingi sul modello' : 'Ritaglio manuale';
     el.cutControls.style.display = active ? 'block' : 'none';
     if (active) setCutTool(cutTool); // imposta il messaggio d'aiuto giusto
     else { resetCutSelection(); viewer.hideCutPlane(); }
@@ -2226,7 +2377,7 @@
     let label = (pct < 1 ? pct.toFixed(2) : pct.toFixed(1)) + '%';
     if (currentResult && currentResult.parts.length > 0) {
       const mm = computeOverallMaxDimension(currentResult.parts) * (pct / 100);
-      label += ' · ⌀' + (mm * 2 < 1 ? (mm * 2).toFixed(2) : fmt(mm * 2, 1)) + ' mm';
+      label += ' diam. ' + (mm * 2 < 1 ? (mm * 2).toFixed(2) : fmt(mm * 2, 1)) + ' mm';
     }
     el.cutRadiusValue.textContent = label;
   }
@@ -2305,7 +2456,7 @@
         + 'Il "Taglio dritto" taglia col piano e NON segue il contorno che hai disegnato: '
         + 'passando a questo strumento la selezione viene persa.\n\n'
         + 'Se volevi staccare proprio quella zona, annulla e usa in fondo al pannello '
-        + '"✂️ Taglia SULLA SELEZIONE + connettore".\n\n'
+        + '"Taglia SULLA SELEZIONE + connettore".\n\n'
         + 'Vuoi passare comunque al taglio dritto?');
       if (!ok) return;
     }
@@ -2331,7 +2482,7 @@
     copertaPosiziona = false;
     if (el.copertaPosizionaBtn) {
       el.copertaPosizionaBtn.classList.remove('active');
-      el.copertaPosizionaBtn.textContent = '📍 Metti dove clicco';
+      el.copertaPosizionaBtn.textContent = 'Metti dove clicco';
     }
     if (isCoperta) { popolaCopertaParti(); creaCoperta(); }
     else viewer.nascondiCoperta();
@@ -2342,7 +2493,7 @@
           ? 'Coperta: trascina i pallini per piegare il telo e stringerne il contorno. Il telo taglia SOLO dove passa, quindi puoi staccare un polso senza toccare il resto. Verdi = bordo, gialli = interno.'
         : tool === 'plane'
           ? 'Taglio dritto: scegli il pezzo, l\'asse e la posizione del piano rosso, poi "Taglia qui". Le due facce vengono PIATTE e identiche, così i pezzi si incastrano perfettamente. Aggiungi poi i connettori per bloccarli.'
-          : 'Pennello: TRASCINA il dito/mouse sul modello per dipingere la selezione (giallo) esattamente dove passi. Ruoti la vista trascinando fuori dal modello (sfondo). Regola il Raggio; ➖ Rimuovi fa da gomma.';
+          : 'Pennello: TRASCINA il dito/mouse sul modello per dipingere la selezione (giallo) esattamente dove passi. Ruoti la vista trascinando fuori dal modello (sfondo). Regola il Raggio; Rimuovi fa da gomma.';
   }
 
 
@@ -2454,7 +2605,7 @@
     copertaPosiziona = !copertaPosiziona;
     el.copertaPosizionaBtn.classList.toggle('active', copertaPosiziona);
     el.copertaPosizionaBtn.textContent = copertaPosiziona
-      ? '📍 Clicca sul modello…' : '📍 Metti dove clicco';
+      ? 'Clicca sul modello…' : 'Metti dove clicco';
   });
   el.copertaPart.addEventListener('change', () => creaCoperta());
   el.copertaScala.addEventListener('input', () => {
@@ -2855,6 +3006,11 @@
     } else {
       cutSelection = sel;
     }
+    // anche il lazo lascia un bordo a denti: si smussa come col pennello
+    if (cutSelection && cutSelection.faces.size > 8) {
+      const _p = currentResult.parts.find((x) => x.id === cutSelection.partId);
+      if (_p) arrotondaSelezione(_p, cutSelection.faces, 3);
+    }
     refreshCutHighlight();
     if (sel.altriPezzi && sel.altriPezzi.length) {
       const mio = (currentResult.parts.find((p) => p.id === sel.partId) || {}).name || 'il pezzo';
@@ -2967,7 +3123,7 @@
       refreshCutHighlight();
       alert('Tolti ' + (prima - migliore.length) + ' triangoli staccati.\n\n' +
             'Restano ' + migliore.length + ' triangoli, tutti attaccati fra loro.\n\n' +
-            'Se hai buttato via troppo, premi ↩ per tornare indietro.');
+            'Se hai buttato via troppo, premi Annulla: per tornare indietro.');
     });
   }
 
@@ -3352,7 +3508,7 @@
           spostaCopertaSu(hit.point);
           copertaPosiziona = false;
           el.copertaPosizionaBtn.classList.remove('active');
-          el.copertaPosizionaBtn.textContent = '📍 Metti dove clicco';
+          el.copertaPosizionaBtn.textContent = 'Metti dove clicco';
           return true;
         }
       }
@@ -3413,12 +3569,51 @@
     const hit = viewer.raycastAt(e.clientX, e.clientY);
     if (hit && hit.partId === paintPartId) paintAt(hit);
   });
+  // ARROTONDA il bordo della selezione, senza allargarla.
+  // Due regole che si bilanciano, ripetute qualche volta:
+  //   - un triangolo FUORI con due vicini dentro sta in un'intaccatura: entra;
+  //   - un triangolo DENTRO con un solo vicino dentro e' una linguetta: esce.
+  // Su un bordo dritto non succede niente (uno appena fuori ha un solo vicino
+  // dentro, uno appena dentro ne ha due), quindi la macchia non cresce: si
+  // smussano solo i denti. La prima regola da sola, senza il taglio delle
+  // linguette, contagerebbe invece tutto il pezzo.
+  function arrotondaSelezione(part, sel, giri) {
+    const topo = ensurePartTopology(part);
+    const nTris = part.indices.length / 3;
+    for (let giro = 0; giro < (giri || 3); giro++) {
+      let mosse = 0;
+      const dentro = [];
+      for (let f = 0; f < nTris; f++) {
+        if (sel.has(f)) continue;
+        const adj = topo.adjacency[f];
+        if (adj.length < 3) continue;
+        let n = 0;
+        for (let i = 0; i < adj.length; i++) if (sel.has(adj[i])) n++;
+        if (n >= 2) dentro.push(f);
+      }
+      for (const f of dentro) { sel.add(f); mosse++; }
+      const fuori = [];
+      sel.forEach((f) => {
+        const adj = topo.adjacency[f];
+        if (adj.length < 3) return;
+        let n = 0;
+        for (let i = 0; i < adj.length; i++) if (sel.has(adj[i])) n++;
+        if (n <= 1) fuori.push(f);
+      });
+      for (const f of fuori) { sel.delete(f); mosse++; }
+      if (mosse === 0) break;
+    }
+    return sel;
+  }
+
   function chiudiTratto() {
-    // fine del tratto a pennello: ripulisci i triangolini sfuggiti
+    // fine del tratto a pennello: ripulisci i triangolini sfuggiti e smussa il
+    // bordo, cosi' la selezione a mano non arriva al taglio tutta a denti
     if (painting && cutSelection && currentResult) {
       const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
       if (part && cutSelection.faces.size > 8) {
         pulisciSelezione(part, cutSelection.faces);
+        arrotondaSelezione(part, cutSelection.faces, 3);
         refreshCutHighlight();
       }
     }
@@ -4026,6 +4221,46 @@
       // dell'ingombro del pezzo: sotto l'1% e' un piano vero
       spessoreRelativo: areaMax > 0 ? (qmax - qmin) / diag : null,
     };
+  };
+  // Quanto e' frastagliato il bordo della selezione: quanti triangoli di
+  // bordo hanno UN SOLO vicino dentro (i denti) sul totale di quelli di bordo.
+  window.__denti = () => {
+    if (!cutSelection || !currentResult) return null;
+    const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
+    if (!part) return null;
+    const adj = ensurePartTopology(part).adjacency;
+    let bordo = 0, denti = 0;
+    cutSelection.faces.forEach((f) => {
+      const a = adj[f];
+      if (a.length < 3) return;
+      let n = 0;
+      for (let i = 0; i < a.length; i++) if (cutSelection.faces.has(a[i])) n++;
+      if (n < 3) bordo++;
+      if (n <= 1) denti++;
+    });
+    return { facce: cutSelection.faces.size, bordo, denti,
+      frazioneDenti: bordo ? denti / bordo : 0 };
+  };
+  window.__arrotonda = (giri) => {
+    if (!cutSelection || !currentResult) return null;
+    const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
+    if (!part) return null;
+    arrotondaSelezione(part, cutSelection.faces, giri || 3);
+    refreshCutHighlight();
+    return cutSelection.faces.size;
+  };
+  window.__misureParte = (nome) => {
+    if (!currentResult) return null;
+    const p = currentResult.parts.find((x) => x.name === nome);
+    return p ? bboxSizeMm(p) : null;
+  };
+  window.__ridimensiona = (nome, f) => {
+    if (!currentResult) return null;
+    const p = currentResult.parts.find((x) => x.name === nome);
+    if (!p) return null;
+    ridimensionaParte(p, f);
+    renderResult(currentResult);
+    return bboxSizeMm(p);
   };
   window.__pianoTest = () => {
     if (!cutSelection || !currentResult) return null;

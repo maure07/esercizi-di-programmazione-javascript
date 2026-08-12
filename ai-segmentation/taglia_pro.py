@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "sede-dal-pezzo-26"
+VERSIONE = "pannello-sobrio-27"
 
 
 # ---------------------------------------------------------------------------
@@ -1608,7 +1608,8 @@ def taglia_a_nocciolo(V, F, sel, anelli, log, profondita, gioco, normali_v):
 
 def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.20,
                            lato=None, profondita=None, scala_connettore=1.0,
-                           appiattisci=True, incastro_modo="auto"):
+                           appiattisci=True, incastro_modo="auto",
+                           profondita_nocciolo=0.5):
     """Stacca ESATTAMENTE i triangoli selezionati, chiudendo entrambi i pezzi
     con un tappo sull'anello di bordo.
 
@@ -1625,6 +1626,10 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
                              e nell'altro pezzo se ne scava la sede;
                   "perno"    mai nocciolo, sempre e solo il perno quadro;
                   "niente"   nessun aggancio, i pezzi si incollano.
+    profondita_nocciolo : quanto affonda il nocciolo, come frazione dello
+                  spessore del modello sotto la macchia. 0,5 = meta' (il
+                  predefinito: gamba spessa 4 cm, pezzo spesso 2). Piu' basso
+                  = pezzo piu' sottile e sede meno profonda.
     """
     log = [f"[{VERSIONE}] taglio esattamente sulla selezione"]
     import trimesh
@@ -2216,6 +2221,7 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
             # scartato non deve sporcare la relazione di un taglio normale.
             _diag = []
             _pi = taglia_a_nocciolo_piatto(V, F, sel, anelli, _diag, gioco,
+                                           frazione=float(profondita_nocciolo),
                                            contorno=_cont)
             _muto.extend(l for l in _diag if not l.startswith("[diagnostica]"))
             # Se il nocciolo l'hai chiesto TU, la diagnostica va nel resoconto

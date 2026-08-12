@@ -8,16 +8,17 @@
 <style>
   :root {
     color-scheme: dark;
-    --bg: #14161c;
-    --panel: #1c1f27;
-    --panel2: #242833;
-    --border: #323644;
-    --text: #eef0f4;
-    --text-dim: #9aa0ae;
-    --accent: #5b8cff;
-    --accent2: #3fd08a;
-    --warn: #ffb648;
-    --danger: #ff6b6b;
+    --bg: #0e1013;
+    --panel: #151920;
+    --panel2: #1b2029;
+    --border: #2b313b;
+    --border-forte: #3a424f;
+    --text: #e4e7ec;
+    --text-dim: #8b93a1;
+    --accent: #4c8dff;
+    --accent2: #34a97b;
+    --warn: #d3a03f;
+    --danger: #d8595c;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { height: 100%; margin: 0; }
@@ -51,7 +52,7 @@
     color: white;
     border: none;
     padding: 9px 14px;
-    border-radius: 10px;
+    border-radius: 4px;
     font-size: 13px;
     font-weight: 600;
     white-space: nowrap;
@@ -80,7 +81,7 @@
     color: var(--text-dim);
     background: rgba(0,0,0,0.35);
     padding: 4px 8px;
-    border-radius: 8px;
+    border-radius: 4px;
     pointer-events: none;
   }
   /* Annulla sta accanto a Inquadra, sopra il modello: e' li' che serve,
@@ -91,7 +92,7 @@
     background: var(--panel2);
     color: var(--text);
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 4px;
     padding: 8px 10px;
     font-size: 12px;
   }
@@ -101,7 +102,7 @@
     background: var(--panel2);
     color: var(--text);
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 4px;
     padding: 8px 10px;
     font-size: 12px;
   }
@@ -161,7 +162,7 @@
     font-size: 12px;
     color: var(--text-dim);
     background: var(--panel2);
-    border-radius: 10px;
+    border-radius: 4px;
     padding: 8px 10px;
     max-height: 110px;
     overflow-y: auto;
@@ -176,7 +177,7 @@
     align-items: center;
     gap: 10px;
     background: var(--panel2);
-    border-radius: 10px;
+    border-radius: 4px;
     padding: 8px 10px;
   }
   #controlsRow label { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
@@ -186,7 +187,7 @@
     background: var(--panel);
     color: var(--text);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 4px;
     padding: 7px 10px;
     font-size: 12px;
   }
@@ -196,7 +197,7 @@
     align-items: center;
     gap: 10px;
     background: var(--panel2);
-    border-radius: 10px;
+    border-radius: 4px;
     padding: 8px 10px;
     margin-bottom: 10px;
   }
@@ -207,7 +208,7 @@
     background: var(--panel);
     color: var(--text);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 4px;
     padding: 8px;
     font-size: 13px;
   }
@@ -217,7 +218,7 @@
     align-items: center;
     gap: 10px;
     background: var(--panel2);
-    border-radius: 10px;
+    border-radius: 4px;
     padding: 8px 10px;
     margin-top: 10px;
   }
@@ -228,7 +229,7 @@
     background: var(--panel);
     color: var(--text);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 4px;
     padding: 7px 8px;
     font-size: 13px;
   }
@@ -236,7 +237,7 @@
     background: var(--panel);
     color: var(--text);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 4px;
     padding: 7px 10px;
     font-size: 12px;
     white-space: nowrap;
@@ -249,7 +250,7 @@
 
   #sensitivityRow {
     display: flex; align-items: center; gap: 10px;
-    background: var(--panel2); border-radius: 10px; padding: 8px 10px; margin-top: 10px;
+    background: var(--panel2); border-radius: 4px; padding: 8px 10px; margin-top: 10px;
   }
   #sensitivityRow label { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
   #colorSensitivity { flex: 1; }
@@ -258,7 +259,7 @@
     font-size: 11.5px; color: var(--text-dim); margin-top: 6px; line-height: 1.4;
   }
   #solidRow {
-    background: var(--panel2); border-radius: 10px; padding: 10px; margin-top: 12px;
+    background: var(--panel2); border-radius: 4px; padding: 10px; margin-top: 12px;
   }
   #solidifyAllBtn { flex: 1; }
 
@@ -268,7 +269,7 @@
     background: var(--panel2);
     color: var(--text-dim);
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 4px;
     padding: 8px 4px;
     font-size: 11.5px;
     font-weight: 600;
@@ -279,7 +280,7 @@
   .report-box {
     background: var(--panel2);
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 4px;
     padding: 10px 12px;
     font-size: 12.5px;
     line-height: 1.6;
@@ -295,7 +296,7 @@
     background: var(--panel2);
     color: var(--text);
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 4px;
     padding: 10px;
     font-size: 13px;
     font-weight: 600;
@@ -305,20 +306,20 @@
     margin-top: 8px;
     background: var(--panel2);
     border: 1px solid var(--warn);
-    border-radius: 10px;
+    border-radius: 4px;
     padding: 10px;
   }
   #cutHint { font-size: 12px; color: var(--text-dim); line-height: 1.45; margin-bottom: 8px; }
   #connectorRow { margin-top: 10px; }
   #connectorToggleBtn {
     width: 100%; background: var(--panel2); color: var(--text);
-    border: 1px solid var(--border); border-radius: 10px; padding: 10px;
+    border: 1px solid var(--border); border-radius: 4px; padding: 10px;
     font-size: 13px; font-weight: 600;
   }
   #connectorToggleBtn.active { border-color: var(--accent2); color: var(--accent2); }
   #connectorControls {
     margin-top: 8px; background: var(--panel2);
-    border: 1px solid var(--accent2); border-radius: 10px; padding: 10px;
+    border: 1px solid var(--accent2); border-radius: 4px; padding: 10px;
   }
   #connectorHint { font-size: 12px; color: var(--text-dim); line-height: 1.45; margin-bottom: 8px; }
   .cut-slider-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
@@ -335,7 +336,7 @@
     background: var(--panel);
     border: 1px solid var(--border);
     color: var(--text);
-    border-radius: 8px;
+    border-radius: 4px;
     padding: 9px 8px;
     font-size: 12.5px;
   }
@@ -346,11 +347,11 @@
   .part-card {
     background: var(--panel2);
     border: 1px solid var(--border);
-    border-radius: 12px;
+    border-radius: 3px;
     padding: 10px;
   }
   .part-card-top { display: flex; align-items: center; gap: 8px; }
-  .swatch { width: 18px; height: 18px; border-radius: 5px; flex-shrink: 0; border: 1px solid rgba(255,255,255,0.15); }
+  .swatch { width: 18px; height: 18px; border-radius: 3px; flex-shrink: 0; border: 1px solid rgba(255,255,255,0.15); }
   .part-name {
     flex: 1;
     background: transparent;
@@ -364,7 +365,7 @@
   .part-name:focus { outline: 1px solid var(--accent); border-radius: 4px; }
   .visibility-toggle {
     width: 30px; height: 30px;
-    border-radius: 8px;
+    border-radius: 4px;
     border: 1px solid var(--border);
     background: var(--panel);
     color: var(--text-dim);
@@ -387,7 +388,7 @@
     background: var(--panel);
     border: 1px solid var(--border);
     color: var(--text);
-    border-radius: 8px;
+    border-radius: 4px;
     padding: 7px 8px;
     font-size: 12px;
   }
@@ -400,7 +401,7 @@
     color: #08331e;
     font-weight: 700;
     border: none;
-    border-radius: 10px;
+    border-radius: 4px;
     padding: 12px;
     font-size: 14px;
   }
@@ -413,7 +414,7 @@
     color: var(--warn);
     font-size: 12px;
     padding: 8px 10px;
-    border-radius: 10px;
+    border-radius: 4px;
     line-height: 1.4;
   }
 
@@ -435,12 +436,91 @@
     animation: spin 0.8s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ---------------------------------------------------------------
+     RIFINITURA: un solo colore d'accento, angoli appena smussati,
+     spaziature regolari. Serve a far sembrare l'app uno strumento di
+     lavoro invece che un giocattolo: bottoni piatti e squadrati,
+     testo che non urla, e il colore usato solo dove indica qualcosa.
+     -------------------------------------------------------------- */
+  button {
+    font-family: inherit;
+    letter-spacing: 0.01em;
+    cursor: pointer;
+    transition: background .12s, border-color .12s, color .12s;
+  }
+  button:hover:not(:disabled) { border-color: var(--border-forte); }
+  button:active:not(:disabled) { transform: translateY(1px); }
+  button:disabled { cursor: default; }
+  input[type="text"], input[type="number"], select, textarea {
+    font-family: inherit;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 6px 8px;
+    font-size: 12.5px;
+  }
+  input[type="range"] { accent-color: var(--accent); }
+  input[type="checkbox"] { accent-color: var(--accent); }
+  select:focus, input:focus { outline: none; border-color: var(--accent); }
+
+  header { padding: 12px 16px; }
+  header h1 { font-size: 14px; letter-spacing: 0.01em; }
+  header h1 small { font-size: 10.5px; letter-spacing: 0.02em; margin-top: 2px; }
+  #fileBtn { border-radius: 3px; font-weight: 500; font-size: 12.5px; padding: 8px 14px; }
+  #fileBtn:hover { filter: brightness(1.12); }
+
+  .section-title {
+    font-size: 10.5px;
+    letter-spacing: 0.09em;
+    color: var(--text-dim);
+    margin: 18px 0 8px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid var(--border);
+  }
+  .cut-actions button, .part-actions button {
+    border-radius: 3px;
+    font-weight: 500;
+    background: var(--panel2);
+  }
+  .cut-actions button.active {
+    background: var(--panel2);
+    border-color: var(--accent);
+    color: var(--accent);
+    font-weight: 500;
+  }
+  .part-card { border-radius: 4px; padding: 12px; }
+  .swatch { border-radius: 2px; }
+  .step-chip { border-radius: 3px; font-weight: 500; letter-spacing: 0.02em; }
+
+  /* le misure del pezzo: tre caselle in fila, sobrie */
+  .part-misure { margin-top: 10px; font-size: 11.5px; color: var(--text-dim); }
+  .part-misure > summary {
+    cursor: pointer; color: var(--text-dim); font-size: 11px;
+    letter-spacing: 0.05em; text-transform: uppercase; padding: 2px 0;
+  }
+  .part-misure > summary:hover { color: var(--text); }
+  .misure-riga { display: flex; gap: 8px; margin: 8px 0 6px; }
+  .misure-riga label {
+    flex: 1; display: flex; align-items: center; gap: 6px;
+    font-size: 11px; color: var(--text-dim);
+  }
+  .misure-riga input { width: 100%; min-width: 0; text-align: right; }
+  .misure-legame {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11.5px; color: var(--text-dim); margin-bottom: 8px;
+  }
+  .misure-legame input { width: 14px; height: 14px; }
+  .visibility-toggle svg { width: 15px; height: 15px; display: block; margin: auto; }
+  .visibility-toggle { color: var(--text-dim); }
+  .visibility-toggle.active { color: var(--accent); }
 </style>
 </head>
 <body>
 
 <header>
-  <h1>Correggi &amp; Segmenta<small>STL / OBJ per stampa 3D multi-parte · <span id="versioneApp"></span></small></h1>
+  <h1>Correggi &amp; Segmenta<small>STL / OBJ per stampa 3D multi-parte &middot; <span id="versioneApp"></span></small></h1>
   <button id="fileBtn">Apri modello</button>
   <input id="fileInput" type="file" accept=".stl,.obj,.mtl,.png,.jpg,.jpeg,.webp,.json" multiple />
 </header>
@@ -448,11 +528,11 @@
 <div id="viewerWrap">
   <canvas id="viewer"></canvas>
   <canvas id="lassoOverlay"></canvas>
-  <div id="viewerHint" style="display:none">Mouse: sinistro/centrale ruota · rotellina zoom (verso il cursore) · destro o Shift sposta · <b>doppio clic centra sul punto</b> &nbsp;·&nbsp; Tasti: <b>1</b> fronte <b>2</b> retro <b>3</b>/<b>4</b> lati <b>7</b> sopra <b>9</b> sotto <b>F</b> inquadra &nbsp;·&nbsp; Touch: 1 dito ruota · 2 dita zoom/sposta</div>
-  <button id="undoPartiBtn" style="display:none" title="Annulla l'ultima operazione sui pezzi">↩ Annulla</button>
+  <div id="viewerHint" style="display:none">Mouse: sinistro/centrale ruota rotellina zoom (verso il cursore) destro o Shift sposta <b>doppio clic centra sul punto</b> &nbsp;·&nbsp; Tasti: <b>1</b> fronte <b>2</b> retro <b>3</b>/<b>4</b> lati <b>7</b> sopra <b>9</b> sotto <b>F</b> inquadra &nbsp;·&nbsp; Touch: 1 dito ruota 2 dita zoom/sposta</div>
+  <button id="undoPartiBtn" style="display:none" title="Annulla l'ultima operazione sui pezzi">Annulla</button>
   <button id="frameBtn" style="display:none">Inquadra</button>
   <div id="emptyState">
-    <div class="big">🗿</div>
+    <div class="big"></div>
     <p>Carica un file <b>.stl</b> oppure un <b>.obj</b> + il suo <b>.mtl</b> (e la <b>texture</b> .png/.jpg se il modello ne ha una: selezionali tutti insieme).<br>Il modello verrà riparato, reso solido e diviso automaticamente in parti stampabili separate.</p>
   </div>
   <div id="loadingOverlay"><div class="spinner"></div><div id="loadingText">Elaborazione in corso…</div></div>
@@ -469,15 +549,15 @@
   <div id="analysisPanel" style="display:none">
     <div class="section-title">Analisi del modello</div>
     <div id="analysisReport" class="report-box"></div>
-    <div id="modelScaleRow" style="display:flex;align-items:center;gap:10px;background:var(--panel2);border-radius:10px;padding:8px 10px;margin-top:10px">
+    <div id="modelScaleRow" style="display:flex;align-items:center;gap:10px;background:var(--panel2);border-radius:4px;padding:8px 10px;margin-top:10px">
       <label for="modelHeight" style="font-size:12px;color:var(--text-dim);white-space:nowrap">Altezza reale (cm)</label>
       <input type="number" id="modelHeight" inputmode="decimal" min="0" step="0.1" placeholder="es. 15"
-        style="flex:1;min-width:0;background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 8px;font-size:13px" />
-      <button id="applyModelScaleBtn" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:12px;white-space:nowrap">Applica</button>
+        style="flex:1;min-width:0;background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:7px 8px;font-size:13px" />
+      <button id="applyModelScaleBtn" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:7px 10px;font-size:12px;white-space:nowrap">Applica</button>
     </div>
     <div class="cut-actions" style="margin-top:10px">
-      <button id="repairBtn">🔧 Ripara e solidifica</button>
-      <button id="toSegmentBtn">✂️ Segmentazione</button>
+      <button id="repairBtn">Ripara e solidifica</button>
+      <button id="toSegmentBtn">Segmentazione</button>
     </div>
   </div>
 
@@ -485,12 +565,12 @@
     <div class="section-title">Riparazione</div>
     <div id="repairReport" class="report-box">Premi "Ripara adesso" per correggere gli errori trovati e chiudere i buchi.</div>
     <div class="cut-actions" style="margin-top:10px">
-      <button id="runRepairBtn">🔧 Ripara adesso</button>
-      <button id="downloadRepairedBtn" style="display:none">⬇️ STL riparato</button>
-      <button id="toSegmentBtn2">✂️ Segmentazione</button>
+      <button id="runRepairBtn">Ripara adesso</button>
+      <button id="downloadRepairedBtn" style="display:none">STL riparato</button>
+      <button id="toSegmentBtn2">Segmentazione</button>
     </div>
     <div class="cut-actions" style="margin-top:8px">
-      <button id="repairProBtn" style="background:linear-gradient(90deg,#3fd08a,#2f9bd0);color:#fff;border:none">🛠️ Riparazione PRO (PC locale)</button>
+      <button id="repairProBtn" style="background:var(--accent);color:#fff;border:none"> Riparazione PRO (PC locale)</button>
     </div>
     <div id="proHint" style="font-size:11.5px;color:var(--text-dim);margin-top:6px;line-height:1.4">
       Motore MeshLab + booleane esatte sul tuo PC: salda i micro-triangoli aperti, ripara i non-manifold,
@@ -500,40 +580,16 @@
 
   <div id="segmentPanel" style="display:none">
   <div class="cut-actions" style="margin-bottom:10px">
-    <button id="segmentBtn">▶️ Segmenta il modello (automatico)</button>
+    <button id="segmentBtn">Segmenta il modello (automatico)</button>
   </div>
   <div class="cut-actions" style="margin-bottom:10px">
-    <button id="saltaSegmBtn" style="background:#2a2d36;color:var(--text);border:1px solid var(--border)">✋ Salta: taglio tutto a mano io</button>
+    <button id="saltaSegmBtn" style="background:#2a2d36;color:var(--text);border:1px solid var(--border)">Salta: taglio tutto a mano io</button>
   </div>
   <div style="font-size:11.5px;color:var(--text-dim);margin-bottom:10px;line-height:1.4">
     La segmentazione automatica non è obbligatoria: con <b>“Salta”</b> il modello resta
     <b>un pezzo solo</b> e si aprono subito gli strumenti di ritaglio manuale (pennello, lazo,
     piano). Conviene quando le parti che ti servono non coincidono con quelle che il programma
     troverebbe da solo.
-  </div>
-  <div class="cut-actions" style="margin-bottom:10px">
-    <button id="segmentAiBtn" style="background:linear-gradient(90deg,#5b8cff,#8b5bff);color:#fff;border:none">🧠 Segmenta sul PC (trova i dettagli)</button>
-  </div>
-  <div id="aiHint" style="font-size:11.5px;color:var(--text-dim);margin-bottom:10px;line-height:1.4">
-    Usa il companion sul tuo PC (cartella <b>ai-segmentation</b>, avvia <b>avvia.bat</b>).
-    Oltre alle parti grosse trova anche i <b>dettagli in rilievo</b> (occhi, bottoni, placche)
-    che qui nel browser sfuggono perché non hanno spigoli netti. Funziona anche senza colori.
-  </div>
-  <div style="margin-bottom:12px;padding:10px;border:1px solid var(--border);border-radius:10px">
-    <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text);cursor:pointer">
-      <input type="checkbox" id="dettagliChk" checked style="width:16px;height:16px;accent-color:var(--accent2)" />
-      Cerca anche i dettagli in rilievo
-    </label>
-    <div class="cut-slider-row" style="margin-top:6px">
-      <label for="dettagliSens">Sensibilità</label>
-      <input type="range" id="dettagliSens" min="1" max="10" step="1" value="5" />
-      <span id="dettagliSensValue">5</span>
-    </div>
-    <div style="font-size:11px;color:var(--text-dim);line-height:1.4">
-      Bassa = solo i rilievi ben marcati (prudente). Alta = prende anche quelli appena accennati,
-      ma sui modelli con la superficie ondulata rischia di selezionare il rumore.
-      <b>Se ti riempie il modello di macchie, abbassala.</b>
-    </div>
   </div>
 
   <div id="warnings"></div>
@@ -569,32 +625,32 @@
   <div id="scaleHint" style="display:none"></div>
 
   <div id="cutRow" style="display:none">
-    <button id="cutToggleBtn">✂️ Ritaglio manuale e Taglio PRO</button>
+    <button id="cutToggleBtn">Ritaglio manuale e Taglio PRO</button>
   </div>
   <div id="cutRowHint" style="display:none;font-size:11.5px;color:var(--text-dim);margin:6px 0 10px;line-height:1.4">
     Ci sono <b>due tagli diversi</b>, non sceglierli a caso:
-    <b>✂️ Taglia SULLA SELEZIONE</b> (in fondo) stacca esattamente la zona che hai dipinto o
+    <b>Taglia SULLA SELEZIONE</b> (in fondo) stacca esattamente la zona che hai dipinto o
     cerchiato, seguendone il contorno — è quello per mani, ciocche, cinture.
-    <b>📐 Taglia col PIANO</b> taglia invece dritto e ignora la forma della selezione.
+    <b>Taglia col PIANO</b> taglia invece dritto e ignora la forma della selezione.
     Tutti e due mettono da soli l'aggancio fra i due pezzi (perno e foro, oppure
     blocchetto e sede: lo scegli tu qui sotto in <b>“Come si uniscono i pezzi”</b>).
   </div>
   <div id="cutControls" style="display:none">
-    <div id="cutHint">Tocca il modello per selezionare (giallo). Raggio piccolo = tocchi precisi. ➖ Rimuovi cancella dove tocchi, ↩ annulla l'ultimo tocco.</div>
+    <div id="cutHint">Tocca il modello per selezionare (giallo). Raggio piccolo = tocchi precisi. Rimuovi cancella dove tocchi, Annulla: annulla l'ultimo tocco.</div>
     <div class="cut-slider-row" id="brushRadiusRow">
       <label for="cutRadius">Raggio</label>
       <input type="range" id="cutRadius" min="0" max="1000" step="1" value="580" />
       <span id="cutRadiusValue">8%</span>
     </div>
     <div class="cut-actions" style="margin-bottom:8px">
-      <button id="cutToolWandBtn" class="active">🖌 Pennello</button>
-      <button id="cutToolLassoBtn">⭕ Lazo</button>
-      <button id="cutToolPlaneBtn">📏 Taglio dritto</button>
+      <button id="cutToolWandBtn" class="active">Pennello</button>
+      <button id="cutToolLassoBtn">Lazo</button>
+      <button id="cutToolPlaneBtn">Taglio dritto</button>
       <!-- Coperta messa da parte su richiesta: troppo macchinosa da usare.
            Il codice resta (motore e maniglie), basta rimettere il pulsante. -->
-      <button id="cutToolCopertaBtn" style="display:none">🧣 Coperta</button>
+      <button id="cutToolCopertaBtn" style="display:none">Coperta</button>
     </div>
-    <div id="smartSelBox" style="margin:8px 0;padding:10px;border:1px solid var(--border);border-radius:10px">
+    <div id="smartSelBox" style="margin:8px 0;padding:10px;border:1px solid var(--border);border-radius:4px">
       <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text);cursor:pointer">
         <input type="checkbox" id="smartSelChk" checked style="width:16px;height:16px;accent-color:var(--accent2)" />
         <b>Un clic = tutta la zona</b> (si ferma sulle pieghe)
@@ -615,12 +671,12 @@
     </div>
     <div id="selectExtras">
     <div class="cut-actions" style="margin-bottom:8px">
-      <button id="cutModeAddBtn" class="active">➕ Aggiungi</button>
-      <button id="cutModeEraseBtn">➖ Rimuovi</button>
-      <button id="cutUndoBtn" disabled>↩</button>
+      <button id="cutModeAddBtn" class="active">Aggiungi</button>
+      <button id="cutModeEraseBtn">Rimuovi</button>
+      <button id="cutUndoBtn" disabled>Annulla</button>
     </div>
     <div class="cut-actions" style="margin-bottom:8px">
-      <button id="soloMacchiaBtn">🧹 Tieni solo la macchia principale</button>
+      <button id="soloMacchiaBtn">Tieni solo la macchia principale</button>
     </div>
     <div style="font-size:11px;color:var(--text-dim);margin:-4px 0 8px 0;line-height:1.4">
       Se oltre alla zona che vuoi è rimasto attaccato un <b>pezzetto staccato</b> da un'altra
@@ -635,15 +691,15 @@
       <span>Come si uniscono i pezzi:</span>
       <select id="incastroModo" style="flex:1;min-width:120px">
         <option value="auto" selected>decidi tu (consigliato)</option>
-        <option value="nocciolo">★ a NOCCIOLO — blocchetto + sede scavata (è QUESTO, tipo muso di Bing)</option>
-        <option value="nocciolo_ovale">· a NOCCIOLO, contorno ovale — solo se vuoi la tasca semplicissima (prende il triplo di materiale)</option>
-        <option value="nocciolo_esatto">· a NOCCIOLO, contorno esatto — solo se vuoi la massima fedeltà (bordo sporco)</option>
+        <option value="nocciolo">a NOCCIOLO — blocchetto + sede scavata (è QUESTO, tipo muso di Bing)</option>
+        <option value="nocciolo_ovale">a NOCCIOLO, contorno ovale — solo se vuoi la tasca semplicissima (prende il triplo di materiale)</option>
+        <option value="nocciolo_esatto">a NOCCIOLO, contorno esatto — solo se vuoi la massima fedeltà (bordo sporco)</option>
         <option value="perno">a PERNO (spinotto quadro + foro)</option>
         <option value="niente">niente aggancio (solo colla)</option>
       </select>
     </label>
     <div style="font-size:11px;color:var(--text-dim);margin:-4px 0 8px 0;line-height:1.4">
-      <b>Nel dubbio scegli ★ a NOCCIOLO</b>: la zona che hai selezionato diventa un blocchetto
+      <b>Nel dubbio scegli a NOCCIOLO</b>: la zona che hai selezionato diventa un blocchetto
       spesso metà del modello, con una <b>faccia piatta</b> dietro su cui appoggiarlo al piatto
       della stampante, e nell'altro pezzo si scava la sua sede. Entra in un verso solo e si
       posiziona da sé, come il muso del coniglio. Le altre due voci col puntino servono in casi
@@ -652,6 +708,16 @@
       <details style="margin-top:5px"><summary style="cursor:pointer">Come sceglie «decidi tu»</summary>
       Guarda com'è venuto il pezzo: se sarebbe una buccia sottile mette il nocciolo, altrimenti
       il perno. Te lo scrive sempre nel resoconto.</details>
+    </div>
+    <div class="cut-slider-row" id="profNoccioloRow">
+      <label for="profNocciolo">Profondit&agrave; nocciolo</label>
+      <input type="range" id="profNocciolo" min="15" max="85" step="5" value="50" />
+      <span id="profNoccioloValue">50%</span>
+    </div>
+    <div style="font-size:11px;color:var(--text-dim);margin:-2px 0 8px 0;line-height:1.4">
+      Quanto affonda il blocchetto, in percentuale dello spessore del modello l&igrave; sotto.
+      <b>50%</b> = se la gamba &egrave; profonda 4 cm il pezzo viene 2. Abbassala se il pezzo
+      ti sembra troppo invadente, alzala se ti serve un incastro pi&ugrave; profondo.
     </div>
     <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:12px;color:var(--text-dim)">
       <input type="checkbox" id="flatCutChk" checked style="display:none" />
@@ -674,7 +740,7 @@
     <div id="copertaControls" style="display:none">
       <div class="cut-slider-row">
         <label>Pezzo</label>
-        <select id="copertaPart" style="flex:1;background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 8px;font-size:13px"></select>
+        <select id="copertaPart" style="flex:1;background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:7px 8px;font-size:13px"></select>
       </div>
       <div style="font-size:12px;color:var(--muted);margin:6px 0 8px;line-height:1.5">
         <b>Pallino blu al centro = sposta tutto il telo</b> senza deformarlo:
@@ -684,13 +750,13 @@
         del modello non viene toccato. Ruoti la vista trascinando fuori dai pallini.
       </div>
       <div class="cut-actions" style="margin-bottom:8px">
-        <button id="copertaPosizionaBtn">📍 Metti dove clicco</button>
+        <button id="copertaPosizionaBtn">Metti dove clicco</button>
       </div>
       <div class="cut-actions" style="margin-bottom:8px">
-        <button id="copertaAxisX">↔ X</button>
-        <button id="copertaAxisY">↕ Y</button>
-        <button id="copertaAxisZ" class="active">⬍ Z</button>
-        <button id="copertaResetBtn">↺ Rimetti a posto</button>
+        <button id="copertaAxisX">X</button>
+        <button id="copertaAxisY">Y</button>
+        <button id="copertaAxisZ" class="active">Z</button>
+        <button id="copertaResetBtn">Rimetti a posto</button>
       </div>
       <div class="cut-slider-row">
         <label for="copertaScala">Grandezza telo</label>
@@ -698,19 +764,19 @@
         <span id="copertaScalaValue">40%</span>
       </div>
       <div class="cut-actions">
-        <button id="copertaCutBtn" style="background:linear-gradient(90deg,#3fd08a,#2f9bd0);color:#fff;border:none">🧣 Taglia con la coperta (PC locale)</button>
+        <button id="copertaCutBtn" style="background:var(--accent);color:#fff;border:none">Taglia con la coperta (PC locale)</button>
       </div>
     </div>
 
     <div id="planeControls" style="display:none">
       <div class="cut-slider-row">
         <label>Pezzo</label>
-        <select id="planePart" style="flex:1;background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 8px;font-size:13px"></select>
+        <select id="planePart" style="flex:1;background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:7px 8px;font-size:13px"></select>
       </div>
       <div class="cut-actions" style="margin-bottom:8px">
-        <button id="planeAxisX">↔ X</button>
-        <button id="planeAxisY">↕ Y</button>
-        <button id="planeAxisZ" class="active">⬍ Z (altezza)</button>
+        <button id="planeAxisX">X</button>
+        <button id="planeAxisY">Y</button>
+        <button id="planeAxisZ" class="active">Z (altezza)</button>
       </div>
       <div class="cut-slider-row">
         <label for="planePos">Posizione</label>
@@ -733,7 +799,7 @@
         <button id="planeResetBtn" style="margin-left:6px;padding:2px 8px;font-size:11px">azzera</button>
       </div>
       <div class="cut-actions">
-        <button id="planeCutBtn">✂️ Taglia qui (facce piatte)</button>
+        <button id="planeCutBtn">Taglia qui (facce piatte)</button>
       </div>
       <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
         <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text);cursor:pointer">
@@ -751,24 +817,24 @@
           <span id="connScalaValue">100%</span>
         </div>
         <div class="cut-actions">
-          <button id="planeCutProBtn" style="background:#2a2d36;color:var(--text);border:1px solid var(--border)">📐 Taglia col PIANO qui sopra + connettore</button>
+          <button id="planeCutProBtn" style="background:#2a2d36;color:var(--text);border:1px solid var(--border)">Taglia col PIANO qui sopra + connettore</button>
         </div>
         <div style="font-size:11.5px;color:var(--text-dim);margin-top:6px;line-height:1.4">
           <b>Taglia DRITTO col piano rosso</b>: la forma della zona che hai selezionato non viene
           guardata. Serve quando vuoi una fetta netta (per esempio dividere in due un pezzo troppo
           alto per il piatto). Se invece vuoi staccare proprio la zona che hai dipinto, usa
-          <b>“✂️ Taglia SULLA SELEZIONE”</b> in fondo al pannello.
+          <b>“Taglia SULLA SELEZIONE”</b> in fondo al pannello.
         </div>
       </div>
     </div>
     <div class="cut-actions" id="selectFinalRow">
-      <button id="cutFlatProBtn" style="background:linear-gradient(90deg,#3fd08a,#2f9bd0);color:#fff;border:none;font-weight:700">✂️ Taglia SULLA SELEZIONE + connettore (PC)</button>
+      <button id="cutFlatProBtn" style="background:var(--accent);color:#fff;border:none;font-weight:700">Taglia SULLA SELEZIONE + connettore (PC)</button>
     </div>
     <div style="font-size:11px;color:var(--text-dim);margin:0 0 8px;line-height:1.4">
       <b>È questo il taglio sagomato</b>: stacca esattamente la zona che hai dipinto o cerchiato,
       seguendone il contorno, e mette l'aggancio scelto qui sopra in <b>“Come si uniscono i
       pezzi”</b>. Usa questo per una mano, una ciocca di capelli,
-      una cintura. (Il pulsante “📐 Taglia col PIANO” più sopra taglia invece dritto e non guarda
+      una cintura. (Il pulsante “Taglia col PIANO” più sopra taglia invece dritto e non guarda
       la forma della selezione.)
     </div>
     <div class="cut-actions">
@@ -777,58 +843,8 @@
     </div>
   </div>
 
-  <div id="connectorRow" style="display:none">
-    <button id="connectorToggleBtn">🔩 Connettori (perni / fori)</button>
-  </div>
-  <div id="connectorControls" style="display:none">
-    <div id="connectorHint">Tocca il punto dove due pezzi si uniscono: creo il connettore tra quel pezzo e il più vicino. La booleana è perfetta (voxel). Conviene prima impostare la scala reale (mm).</div>
-    <div class="cut-actions" style="margin:8px 0">
-      <button id="connTypePegBtn" class="active">🔩 Perno + foro</button>
-      <button id="connTypePinBtn">📍 Fori per spillo</button>
-    </div>
-    <div class="cut-slider-row">
-      <label for="connDiam">Diametro</label>
-      <input type="range" id="connDiam" min="1" max="8" step="0.5" value="3" />
-      <span id="connDiamValue">3 mm</span>
-    </div>
-    <div class="cut-slider-row">
-      <label for="connDepth">Profondità</label>
-      <input type="range" id="connDepth" min="2" max="20" step="1" value="6" />
-      <span id="connDepthValue">6 mm</span>
-    </div>
-    <div class="cut-slider-row">
-      <label for="connQuality">Qualità</label>
-      <select id="connQuality" style="flex:1;background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 8px;font-size:13px">
-        <option value="90">Bassa (veloce)</option>
-        <option value="130" selected>Media</option>
-        <option value="180">Alta (lenta)</option>
-      </select>
-    </div>
-    <div class="cut-actions">
-      <button id="connUndoBtn" disabled>↩ Annulla ultimo</button>
-      <button id="connDoneBtn">Fine</button>
-    </div>
   </div>
 
-  <div id="solidRow" style="display:none">
-    <div id="solidHint">Se un pezzo è «non completamente chiuso», hai due modi per renderlo stampabile:</div>
-    <div class="cut-actions" style="margin-top:8px">
-      <button id="closeLightBtn">🩹 Chiudi mantenendo i dettagli</button>
-    </div>
-    <div id="solidHint2" style="font-size:11.5px;color:var(--text-dim);margin-top:6px;line-height:1.4">Consigliato: tiene <b>tutti i dettagli originali</b> e tappa solo i buchi. Prova sempre prima questo.</div>
-    <div class="cut-slider-row" style="margin-top:12px">
-      <label for="solidQuality">Qualità voxel</label>
-      <select id="solidQuality" style="flex:1;background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 8px;font-size:13px">
-        <option value="90">Bassa (veloce)</option>
-        <option value="140" selected>Media</option>
-        <option value="200">Alta (lenta)</option>
-      </select>
-    </div>
-    <div class="cut-actions" style="margin-top:8px">
-      <button id="solidifyAllBtn">🧊 Ricostruisci solido (voxel)</button>
-    </div>
-    <div id="solidHint3" style="font-size:11.5px;color:var(--text-dim);margin-top:6px;line-height:1.4">Forza bruta per i casi disperati (gusci molto rotti/compenetrati): chiude <b>sempre</b>, ma ricostruisce la superficie e perde un po' di dettaglio fine. Necessario per i connettori.</div>
-  </div>
 
   <div class="section-title" id="logTitle" style="display:none">Registro riparazione</div>
   <div id="log"></div>
@@ -837,7 +853,7 @@
   <div id="partsList"></div>
 
   <div class="cut-actions" style="margin-top:12px">
-    <button id="toPrintBtn">🖨 Vai a Stampa</button>
+    <button id="toPrintBtn">Vai a Stampa</button>
   </div>
   </div><!-- /segmentPanel -->
 
@@ -845,15 +861,15 @@
     <div class="section-title">Stampa</div>
     <div id="filamentSummary" class="report-box"></div>
     <div class="cut-actions" style="margin-top:10px">
-      <button id="explodeBtn">💥 Vista esplosa</button>
-      <button id="saveProjectBtn">💾 Salva progetto</button>
+      <button id="explodeBtn">Vista esplosa</button>
+      <button id="saveProjectBtn">Salva progetto</button>
     </div>
     <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12.5px;color:var(--text-dim)">
       <input type="checkbox" id="layFlatChk" checked style="width:18px;height:18px;accent-color:var(--accent2)" />
       Appoggia ogni parte sul piano di stampa (faccia di taglio in basso)
     </label>
     <div id="exportRow" style="display:none">
-      <button id="exportZipBtn">⬇️ Scarica tutte le parti (ZIP)</button>
+      <button id="exportZipBtn">Scarica tutte le parti (ZIP)</button>
     </div>
   </div><!-- /printPanel -->
 </div>
