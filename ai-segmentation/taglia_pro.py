@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "nocciolo-liscio-21"
+VERSIONE = "nocciolo-liscio-22"
 
 
 # ---------------------------------------------------------------------------

@@ -749,14 +749,31 @@
   }
   // deve corrispondere a VERSIONE in ai-segmentation/taglia_pro.py: serve a
   // capire se sul PC gira ancora un companion vecchio (senza taglio locale)
-  const TAGLIA_PRO_VERSIONE_ATTESA = 'nocciolo-liscio-21';
+  const TAGLIA_PRO_VERSIONE_ATTESA = 'nocciolo-liscio-22';
   // Versione scritta in chiaro sotto al titolo. Serve a capire al volo, da uno
   // screenshot, se il file aperto e' quello aggiornato: senza, quando qualcosa
   // non va non si sa nemmeno quale versione si sta guardando.
-  (function mostraVersione() {
+  // ...ma la versione dell'HTML da sola non basta e ha ingannato: il taglio lo
+  // fa la CARTELLA sul PC, e vedere scritta la versione nuova sotto al titolo
+  // faceva credere di essere a posto mentre il companion era rimasto indietro.
+  // Quindi si scrivono TUTTE E DUE, e quella della cartella si colora di rosso
+  // quando non combacia.
+  function mostraVersione(companion) {
     const e = document.getElementById('versioneApp');
-    if (e) e.textContent = 'app ' + TAGLIA_PRO_VERSIONE_ATTESA;
-  })();
+    if (!e) return;
+    e.textContent = 'app ' + TAGLIA_PRO_VERSIONE_ATTESA;
+    if (companion === undefined) return;
+    const ok = companion === TAGLIA_PRO_VERSIONE_ATTESA;
+    const s = document.createElement('span');
+    s.textContent = ' · companion ' + (companion || 'non raggiungibile');
+    s.style.color = ok ? '' : '#ff6b6b';
+    s.style.fontWeight = ok ? '' : '700';
+    s.title = ok ? 'i due pezzi combaciano'
+      : 'La cartella "ai-segmentation" sul PC e\' vecchia: e\' lei che fa il taglio. '
+        + 'Chiudi la finestra nera, sostituisci la cartella, riapri avvia.bat.';
+    e.appendChild(s);
+  }
+  mostraVersione();
   async function runAiSegmentation() {
     if (!currentParsed) {
       alert('Carica prima un modello.');
@@ -767,6 +784,7 @@
     try {
       const h = await fetch(AI_URL + '/health', { method: 'GET' });
       health = await h.json();
+      mostraVersione(health && health.taglia_pro_versione ? health.taglia_pro_versione : '');
     } catch (e) {
       alert('Companion non raggiungibile.\n\nApri la cartella "ai-segmentation" sul PC e fai doppio clic su "avvia.bat" (lascia la finestra nera aperta), poi riprova.');
       return;
@@ -818,8 +836,13 @@
   async function companionHealth(silenzioso) {
     try {
       const h = await fetch(AI_URL + '/health', { method: 'GET' });
-      return await h.json();
+      const dati = await h.json();
+      // ogni volta che si sente il companion si aggiorna la scritta sotto al
+      // titolo: cosi' basta uno screenshot per sapere quale dei due e' indietro
+      mostraVersione(dati && dati.taglia_pro_versione ? dati.taglia_pro_versione : '');
+      return dati;
     } catch (e) {
+      mostraVersione('');
       if (!silenzioso) {
         alert('Companion non raggiungibile.\n\nApri la cartella "ai-segmentation" sul PC e fai doppio clic su "avvia.bat" (lascia la finestra nera aperta), poi riprova.');
       }
@@ -1523,10 +1546,24 @@
     // tranciare tutto il pezzo, ma senza errori — e' silenzioso. Meglio
     // avvisare subito invece di far scoprire il problema dal risultato.
     if (health.taglia_pro_versione !== TAGLIA_PRO_VERSIONE_ATTESA) {
+      // Il messaggio DEVE dire quali due versioni non combaciano. Senza, chi
+      // legge vede "app nocciolo-liscio-21" scritto sotto al titolo, legge
+      // "versione vecchia" e conclude che l'avviso sia sbagliato — mentre la
+      // versione vecchia e' quella dell'ALTRO pezzo, la cartella sul PC.
       const continua = confirm(
-        'Il companion sul PC sembra una versione VECCHIA di "taglia_pro" (il taglio potrebbe tagliare tutto il pezzo invece che solo la zona selezionata).\n\n' +
-        'Chiudi la finestra nera del companion, sostituisci la cartella "ai-segmentation" con quella nuova e riavvia "avvia.bat" prima di continuare.\n\n' +
-        'Vuoi provare comunque il taglio adesso?'
+        'I due pezzi dell\'app non combaciano.\n\n' +
+        '  · questo file HTML vuole:   ' + TAGLIA_PRO_VERSIONE_ATTESA + '\n' +
+        '  · la cartella "ai-segmentation" sul PC e\':   ' +
+        (health.taglia_pro_versione || 'cosi\' vecchia che non lo dice') + '\n\n' +
+        'Il taglio lo fa la CARTELLA, non l\'HTML: finche\' resta quella vecchia il risultato ' +
+        'sara\' quello di prima, anche se sotto al titolo leggi la versione nuova.\n\n' +
+        'Cosa fare, in ordine:\n' +
+        '  1. chiudi la finestra nera del companion (la X, non basta ridurla a icona);\n' +
+        '  2. sostituisci la cartella "ai-segmentation" con quella nuova;\n' +
+        '  3. riapri "avvia.bat";\n' +
+        '  4. per controllare, apri in una scheda:  http://127.0.0.1:8760/health\n' +
+        '     deve dire  "taglia_pro_versione":"' + TAGLIA_PRO_VERSIONE_ATTESA + '"\n\n' +
+        'Vuoi provare comunque il taglio adesso (con la cartella vecchia)?'
       );
       if (!continua) return;
     }
