@@ -530,18 +530,34 @@
     font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase;
     color: var(--text-dim);
   }
-  #infoCorpo .spiega {
-    display: none;
-    font-size: 12px; line-height: 1.6; color: var(--text-dim);
+  .mesh-gruppo {
     background: var(--panel2);
     border: 1px solid var(--border);
-    border-left: 2px solid var(--accent-bordo);
     border-radius: 5px;
-    padding: 10px 12px;
-    margin: 0 0 9px;
+    padding: 9px 11px 4px;
+    margin-bottom: 10px;
   }
-  #infoCorpo .spiega.mostra { display: block; }
-  #infoCorpo .spiega b { color: var(--text); font-weight: 600; }
+  .mesh-titolo {
+    font-size: 9.5px; letter-spacing: 0.11em; text-transform: uppercase;
+    color: var(--text-dim); margin-bottom: 7px;
+    padding-bottom: 5px; border-bottom: 1px solid var(--border);
+  }
+  .mesh-riga {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 10px; padding: 4px 0; font-size: 12px;
+  }
+  .mesh-et { color: var(--text-dim); }
+  .mesh-val {
+    color: var(--text); font-weight: 600;
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  .mesh-riga.ok .mesh-val { color: #6fbf8f; }
+  .mesh-riga.guai .mesh-val { color: var(--accent); }
+  .mesh-nota {
+    font-size: 11px; line-height: 1.55; color: var(--text-dim);
+    padding: 2px 2px 0;
+  }
+  .mesh-nota b { color: var(--text); }
   #infoVuoto {
     font-size: 12px; line-height: 1.6; color: var(--text-dim);
     border: 1px dashed var(--border-forte);
@@ -813,10 +829,10 @@
 <aside id="infoPanel">
   <div class="info-testa">
     <span class="info-badge">i</span>
-    <span id="infoTitolo">Informazioni</span>
+    <span id="infoTitolo">Dati del modello</span>
   </div>
   <div id="infoCorpo"></div>
-  <div id="infoVuoto">Le spiegazioni dello strumento che stai usando compaiono qui.</div>
+  <div id="infoVuoto">I dati del modello compaiono qui appena ne apri uno.</div>
 </aside>
 
 <div id="sheet">

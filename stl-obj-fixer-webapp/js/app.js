@@ -177,44 +177,96 @@
   })();
 
   // ===================================================================
-  // LE SPIEGAZIONI VANNO A SINISTRA
-  // Stavano in mezzo ai bottoni: per arrivare al pulsante che serviva
-  // bisognava scorrere mezza pagina di testo, e quel testo lo si
-  // rileggeva ogni volta senza volerlo. Adesso i blocchi marcati
-  // "spiega" vengono staccati e portati nella colonna di sinistra, dove
-  // si mostrano SOLO quelli dello schermo e dello strumento in uso.
-  // Restano gli stessi elementi (stessi id), quindi il codice che ci
-  // scrive dentro continua a funzionare come prima.
+  // COLONNA DI SINISTRA: I DATI DELLA MESH
+  // Triangoli, ingombro, volume, e soprattutto i DIFETTI (buchi, spigoli
+  // aperti, triangoli senza area). Prima stavano schiacciati nel riquadro
+  // dell'analisi, che sparisce appena si passa al passo dopo: li' servono
+  // proprio mentre si taglia, per sapere con che roba si ha a che fare.
   const infoCorpo = document.getElementById('infoCorpo');
   const infoVuoto = document.getElementById('infoVuoto');
-  const spiegazioni = [];
-  if (infoCorpo) {
-    document.querySelectorAll('.spiega').forEach((d) => {
-      const passo = d.closest('#analysisPanel, #repairPanel, #segmentPanel, #printPanel');
-      const gruppo = d.closest('#cutControls, #copertaControls, #selectExtras, #cutRow');
-      spiegazioni.push({ el: d, passo: passo ? passo.id : '', gruppo: gruppo ? gruppo.id : '' });
-      d.style.display = '';
-      infoCorpo.appendChild(d);
-    });
+
+  function rigaInfo(etichetta, valore, tono) {
+    return '<div class="mesh-riga' + (tono ? ' ' + tono : '') + '">'
+      + '<span class="mesh-et">' + etichetta + '</span>'
+      + '<span class="mesh-val">' + valore + '</span></div>';
   }
-  function visibileDavvero(nodo) {
-    if (!nodo) return true;
-    return !!(nodo.offsetWidth || nodo.offsetHeight || nodo.getClientRects().length);
+  function gruppoInfo(titolo, righe) {
+    if (!righe) return '';
+    return '<div class="mesh-gruppo"><div class="mesh-titolo">' + titolo + '</div>' + righe + '</div>';
   }
-  function aggiornaInfo() {
+
+  function aggiornaInfoMesh() {
     if (!infoCorpo) return;
-    let quante = 0;
-    spiegazioni.forEach((s) => {
-      const passoOk = !s.passo || visibileDavvero(document.getElementById(s.passo));
-      const gruppoOk = !s.gruppo || visibileDavvero(document.getElementById(s.gruppo));
-      const serve = s.el.dataset.serve !== '0';
-      const mostra = passoOk && gruppoOk && serve;
-      s.el.classList.toggle('mostra', mostra);
-      if (mostra) quante++;
-    });
-    if (infoVuoto) infoVuoto.style.display = quante ? 'none' : '';
+    const a = currentAnalysis;
+    if (!a) {
+      infoCorpo.innerHTML = '';
+      if (infoVuoto) infoVuoto.style.display = '';
+      return;
+    }
+    if (infoVuoto) infoVuoto.style.display = 'none';
+
+    // dopo la riparazione e dopo il taglio i numeri cambiano: si mostra
+    // sempre l'ultimo stato, non quello di quando il file e' stato aperto
+    let nTris = a.nTris, size = a.size, chiusa = null, quantiPezzi = 0;
+    let volume = null;
+    if (currentResult && currentResult.parts.length) {
+      nTris = currentResult.parts.reduce((k, p) => k + p.indices.length / 3, 0);
+      quantiPezzi = currentResult.parts.length;
+      chiusa = currentResult.parts.every((p) => p.watertight);
+      volume = currentResult.parts.reduce((k, p) => k + Math.abs(p.stats.volume), 0);
+      const mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+      currentResult.parts.forEach((p) => {
+        for (let i = 0; i < 3; i++) {
+          if (p.stats.bboxMin[i] < mn[i]) mn[i] = p.stats.bboxMin[i];
+          if (p.stats.bboxMax[i] > mx[i]) mx[i] = p.stats.bboxMax[i];
+        }
+      });
+      size = [0, 1, 2].map((i) => mx[i] - mn[i]);
+    } else if (currentRepaired) {
+      nTris = currentRepaired.indices.length / 3;
+      chiusa = currentRepaired.watertight;
+      volume = Math.abs(currentRepaired.stats.volume);
+      size = [0, 1, 2].map((i) => currentRepaired.stats.bboxMax[i] - currentRepaired.stats.bboxMin[i]);
+    }
+
+    let html = '';
+    let r = '';
+    r += rigaInfo('Triangoli', fmt(nTris, 0));
+    r += rigaInfo('Larghezza (X)', fmt(size[0], 1) + ' mm');
+    r += rigaInfo('Profondit&agrave; (Y)', fmt(size[1], 1) + ' mm');
+    r += rigaInfo('Altezza (Z)', fmt(size[2], 1) + ' mm');
+    if (volume !== null) {
+      r += rigaInfo('Volume', fmt(volume / 1000, 1) + ' cm&sup3;');
+      r += rigaInfo('Peso in PLA', '~' + fmt(volume / 1000 * 1.24, 0) + ' g');
+    }
+    html += gruppoInfo('Misure', r);
+
+    r = '';
+    if (quantiPezzi) r += rigaInfo('Pezzi tagliati', fmt(quantiPezzi, 0));
+    r += rigaInfo('Pezzi nel file', fmt(a.components, 0));
+    if (chiusa === true) r += rigaInfo('Superficie', 'chiusa', 'ok');
+    else if (chiusa === false) r += rigaInfo('Superficie', 'non chiusa', 'guai');
+    html += gruppoInfo('Composizione', r);
+
+    // i difetti: sempre elencati, anche a zero, cosi' si vede che sono stati
+    // guardati invece di dover indovinare se il controllo e' stato fatto
+    r = '';
+    const buchi = a.boundary ? a.boundary.loops.length : 0;
+    const bordi = a.boundary ? a.boundary.totalBoundaryEdges : 0;
+    r += rigaInfo('Buchi', fmt(buchi, 0), buchi ? 'guai' : 'ok');
+    r += rigaInfo('Spigoli aperti', fmt(bordi, 0), bordi ? 'guai' : 'ok');
+    r += rigaInfo('Triangoli senza area', fmt(a.nDegenerate, 0), a.nDegenerate ? 'guai' : 'ok');
+    r += rigaInfo('Spigoli doppi', fmt(a.nonManifold, 0), a.nonManifold ? 'guai' : 'ok');
+    html += gruppoInfo('Difetti al caricamento', r);
+
+    if (currentRepaired || currentResult) {
+      html += '<div class="mesh-nota">I difetti qui sopra sono quelli trovati quando hai '
+        + 'aperto il file. La riparazione li ha gi&agrave; affrontati: guarda la riga '
+        + '<b>Superficie</b> per sapere com&rsquo;&egrave; adesso.</div>';
+    }
+    infoCorpo.innerHTML = html;
   }
-  window.__infoVisibili = () => spiegazioni.filter((s) => s.el.classList.contains('mostra')).length;
+  window.__infoMesh = () => (infoCorpo ? infoCorpo.textContent.replace(/\s+/g, ' ').trim() : null);
 
   const viewer = createViewer(el.viewer);
 
@@ -355,7 +407,7 @@
       updateExportButtonState();
     }
     if (explodedOn && n !== 4) setExploded(false);
-    aggiornaInfo();
+    aggiornaInfoMesh();
     // il viewer mostra cio' che riguarda lo step corrente
     if (n === 3 && currentResult) {
       renderResult(currentResult);
@@ -693,6 +745,7 @@
     el.viewerHint.style.display = '';
     el.frameBtn.style.display = '';
     el.stepper.style.display = 'flex';
+    aggiornaInfoMesh();
     goToStep(1);
     setLoading(false);
   }
@@ -1922,7 +1975,7 @@
     const m = el.segMethod.value;
     const colorMatters = m === 'combined' || m === 'color';
     el.sensitivityRow.style.display = colorMatters ? 'flex' : 'none';
-    el.sensitivityHint.dataset.serve = colorMatters ? '1' : '0';
+    el.sensitivityHint.style.display = colorMatters ? 'block' : 'none';
   }
   el.frameBtn.addEventListener('click', () => viewer.frameAll());
 
@@ -1958,7 +2011,7 @@
     el.connectorRow.style.display = result.parts.length > 1 ? 'block' : 'none';
     el.scaleRow.style.display = result.parts.length > 0 ? 'flex' : 'none';
     el.cutRow.style.display = result.parts.length > 0 ? 'block' : 'none';
-    el.cutRowHint.dataset.serve = result.parts.length > 0 ? '1' : '0';
+    el.cutRowHint.style.display = result.parts.length > 0 ? 'block' : 'none';
     resetCutSelection();
     updateCutRadiusLabel();
     el.logTitle.style.display = '';
@@ -1967,7 +2020,7 @@
 
     if (result.parts.length > 0) {
       const maxMm = computeOverallMaxDimension(result.parts);
-      el.scaleHint.dataset.serve = '1';
+      el.scaleHint.style.display = '';
       el.scaleHint.textContent = `Dimensione massima rilevata: ${fmt(maxMm, 0)} mm. Se non corrisponde alla realtà, inserisci l'altezza vera sopra e tocca "Applica scala".`;
     }
 
@@ -2029,7 +2082,7 @@
       el.warnings.appendChild(box);
     }
 
-    aggiornaInfo();
+    aggiornaInfoMesh();
     el.partsTitle.textContent = `Parti rilevate (${result.parts.length})`;
 
     result.parts.forEach((part) => addPartToScene(part));
@@ -2394,7 +2447,6 @@
   function setCutMode(active) {
     cutMode = active;
     el.cutToggleBtn.classList.toggle('active', active);
-    aggiornaInfo();
     el.cutToggleBtn.textContent = active ? 'Ritaglio attivo — dipingi sul modello' : 'Ritaglio manuale';
     el.cutControls.style.display = active ? 'block' : 'none';
     if (active) setCutTool(cutTool); // imposta il messaggio d'aiuto giusto
@@ -2487,8 +2539,6 @@
   }
 
   function setCutTool(tool) {
-    // ogni strumento ha le sue spiegazioni: quelle degli altri spariscono
-    setTimeout(aggiornaInfo, 0);
     // Passare al "Taglio dritto" (o alla coperta) BUTTA VIA la selezione
     // dipinta: sono strumenti che non la usano. Chi aveva appena cerchiato una
     // cintura e poi premeva il taglio col piano si ritrovava un taglio dritto
