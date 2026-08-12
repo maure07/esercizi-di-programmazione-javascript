@@ -36,8 +36,9 @@ non ci sono.
    Poi due pulsanti: **Taglia col PIANO** (taglio dritto, ignora la forma della selezione,
    giusto per dividere in due un arto) e **Taglia SULLA SELEZIONE** (segue esattamente il
    contorno che hai disegnato).
-5. **Come si uniscono i pezzi** → menu a quattro voci: *decidi tu* / *a NOCCIOLO* /
-   *a PERNO* / *niente aggancio*.
+5. **Come si uniscono i pezzi** → menu a sei voci: *decidi tu* / *a NOCCIOLO* /
+   *a NOCCIOLO, contorno ovale* / *a NOCCIOLO, contorno esatto* / *a PERNO* /
+   *niente aggancio*.
 6. **Stampa** → riepilogo filamenti, vista esplosa, appoggio sul piano, export ZIP con uno
    STL per pezzo.
 
@@ -57,7 +58,7 @@ Nella foto del coniglio: hanno preso il muso, ne hanno fatto **un solido pieno**
 Tu vuoi la stessa cosa sulla coscia: la macchia che selezioni diventa un blocco spesso metà
 gamba, con una **faccia piatta** su cui appoggiarlo al piatto della stampante.
 
-### 2.2 Cosa fa l'app adesso (versione `nocciolo-piatto-19`)
+### 2.2 Cosa faceva l'app quando è nato questo documento (versione `nocciolo-piatto-19`)
 
 1. Calcola `n` = la direzione verso cui **guarda** la macchia (somma delle normali dei
    triangoli selezionati).
@@ -125,9 +126,11 @@ si vede proprio il lato pelle.
 Due controlli da dieci secondi, perché se il companion è vecchio il motore è quello di prima
 e nessuna di queste spiegazioni vale:
 
-1. **Sotto il titolo** dell'app deve esserci scritto `app nocciolo-piatto-19`.
+1. **Sotto il titolo** dell'app deve esserci scritto `app nocciolo-liscio-21`
+   (era `nocciolo-piatto-19` quando questo documento è nato: i capitoli 4 e 5 raccontano
+   cosa è cambiato da allora).
 2. **Nel resoconto del pezzo** deve comparire la riga
-   *"Taglio A NOCCIOLO con la **FACCIA PIATTA**"*.
+   *"Taglio A NOCCIOLO con la **FACCIA PIATTA e CONTORNO LISCIO**"*.
    Se invece leggi *"la zona scelta diventa un blocchetto spesso … (affondato …)"* senza
    "FACCIA PIATTA", stai usando il **vecchio nocciolo a guscio** — quello che copiava la pelle
    curva, ed è normale che venga ondulato.
