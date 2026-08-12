@@ -2020,6 +2020,46 @@
 
     card.appendChild(actions);
 
+    // IL RESOCONTO DEL TAGLIO. Il motore scrive riga per riga cosa ha deciso e
+    // perche' (che incastro ha messo, quanto e' spesso il pezzo, se ha dovuto
+    // ripiegare e su cosa), ma finora quelle righe non comparivano da nessuna
+    // parte: restavano in memoria. Chiedere "mandami le righe di diagnostica"
+    // era chiedere una cosa impossibile. Qui si aprono con un clic e si
+    // copiano con un altro, per poterle incollare a chi puo' leggerle.
+    if (part.log && part.log.length) {
+      const box = document.createElement('details');
+      box.style.cssText = 'margin-top:8px;font-size:11.5px;color:var(--text-dim)';
+      const capo = document.createElement('summary');
+      capo.textContent = '📋 Resoconto del taglio (' + part.log.length + ' righe)';
+      capo.style.cssText = 'cursor:pointer;color:var(--accent);font-size:12px';
+      box.appendChild(capo);
+      const testo = document.createElement('pre');
+      testo.textContent = part.log.join('\n');
+      testo.style.cssText = 'white-space:pre-wrap;word-break:break-word;margin:6px 0 0;'
+        + 'background:var(--panel2);border-radius:8px;padding:8px;max-height:220px;overflow:auto';
+      box.appendChild(testo);
+      const copia = document.createElement('button');
+      copia.textContent = '📋 Copia il resoconto';
+      copia.style.cssText = 'margin-top:6px;font-size:12px';
+      copia.addEventListener('click', async () => {
+        const t = part.log.join('\n');
+        try {
+          await navigator.clipboard.writeText(t);
+          copia.textContent = '✔ copiato';
+        } catch (e) {
+          // file:// senza permessi: si ripiega sulla selezione manuale
+          const r = document.createRange();
+          r.selectNodeContents(testo);
+          const s = window.getSelection();
+          s.removeAllRanges(); s.addRange(r);
+          copia.textContent = 'selezionato: premi Ctrl+C';
+        }
+        setTimeout(() => { copia.textContent = '📋 Copia il resoconto'; }, 2500);
+      });
+      box.appendChild(copia);
+      card.appendChild(box);
+    }
+
     // Connettore AUTOMATICO: si sceglie il pezzo dall'elenco e basta. Il punto
     // dove mettere perno e foro lo trova da solo (dove i due pezzi si toccano),
     // e la booleana e' esatta: il resto della mesh non viene toccato.
