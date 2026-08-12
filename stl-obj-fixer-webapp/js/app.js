@@ -3759,7 +3759,10 @@
     });
   };
   window.__lassoCount = () => lassoPoints.length;
-  window.__partsInfo = () => currentResult ? currentResult.parts.map((p) => ({ name: p.name, tris: p.indices.length / 3, wt: !!p.watertight, log: p.log })) : null;
+  // il volume serve a controllare nei test che tagliando non SPARISCA
+  // materiale: e' successo davvero, la sede scavava un pezzo che al pezzo
+  // staccato non corrispondeva e quella roba non finiva da nessuna parte
+  window.__partsInfo = () => currentResult ? currentResult.parts.map((p) => ({ name: p.name, tris: p.indices.length / 3, wt: !!p.watertight, vol: p.stats ? p.stats.volume : null, log: p.log })) : null;
   window.__partsBBox = () => currentResult ? currentResult.parts.map((p) => ({ name: p.name, bboxMin: p.stats.bboxMin, bboxMax: p.stats.bboxMax, vol: p.stats.volume })) : null;
   window.__sceneInfo = () => {
     const out = [];
