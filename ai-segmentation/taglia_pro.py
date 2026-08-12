@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "taglio-nocciolo-17"
+VERSIONE = "incastro-a-scelta-18"
 
 
 # ---------------------------------------------------------------------------
@@ -1074,15 +1074,14 @@ def taglia_a_nocciolo(V, F, sel, anelli, log, profondita, gioco, normali_v):
         return None
     ma = trimesh.Trimesh(vertices=va, faces=fa, process=False)
     mb = trimesh.Trimesh(vertices=vb, faces=fb, process=False)
-    log.append(f"Taglio A NOCCIOLO: la zona scelta diventa un blocchetto spesso "
-               f"{profondita:.1f} mm e nell'altro pezzo si scava la sua sede "
-               f"(gioco {gioco:.2f} mm). Si incastra da solo: niente perno.")
+    # Il resoconto lo scrive chi chiama: qui si prova piu' di una profondita' e
+    # una riga per tentativo sarebbe solo confusione.
     return ma, mb
 
 
 def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.20,
                            lato=None, profondita=None, scala_connettore=1.0,
-                           appiattisci=True):
+                           appiattisci=True, incastro_modo="auto"):
     """Stacca ESATTAMENTE i triangoli selezionati, chiudendo entrambi i pezzi
     con un tappo sull'anello di bordo.
 
@@ -1092,6 +1091,13 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
                   spostamento e' identico sui due pezzi, quindi combaciano
                   comunque. Se l'anello e' molto storto si rinuncia, per non
                   deformare il modello.
+    incastro_modo : come si uniscono i due pezzi.
+                  "auto"     decide l'app (nocciolo dove il pezzo verrebbe una
+                             buccia, perno altrove);
+                  "nocciolo" lo chiedi tu: la zona scelta diventa un blocchetto
+                             e nell'altro pezzo se ne scava la sede;
+                  "perno"    mai nocciolo, sempre e solo il perno quadro;
+                  "niente"   nessun aggancio, i pezzi si incollano.
     """
     log = [f"[{VERSIONE}] taglio esattamente sulla selezione"]
     import trimesh
@@ -1621,26 +1627,87 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
         _T = V[F[sorted(sel)]]
         _nf = np.cross(_T[:, 1] - _T[:, 0], _T[:, 2] - _T[:, 0])
         _dir = float(np.linalg.norm(_nf.sum(axis=0)) / (np.linalg.norm(_nf, axis=1).sum() or 1.0))
-        if _gr > 0 and _sp < 0.12 * _gr and _dir > 0.35:
-            log.append(f"Il pezzo verrebbe una buccia (spessa {_sp:.1f} mm su "
-                       f"{_gr:.0f} mm di larghezza, selezione tutta da un lato "
-                       f"{_dir:.2f}): rifaccio il taglio a fustella")
-            # Spessore del nocciolo: proporzionato alla macchia, ma sempre
-            # stampabile e mai piu' di un quarto della sua larghezza.
-            # Tutto in proporzione alla macchia, MAI in millimetri fissi: le
-            # unita' del modello non sono millimetri di stampa (su questo Goku
-            # ce ne vogliono quasi dieci per un millimetro stampato), e un
-            # numero fisso dava un nocciolo spesso un millimetro e mezzo.
-            _p = 0.22 * _gr
-            _fu = taglia_a_nocciolo(V, F, sel, anelli, log, _p, gioco, normali_v)
+        # Il nocciolo puo' essere CHIESTO ("nocciolo") o VIETATO ("perno",
+        # "niente"). In automatico parte solo dove il pezzo verrebbe una buccia.
+        # Prima esisteva solo l'automatico e non c'era modo di chiederlo: chi
+        # voleva l'incastro a sede su una zona un po' piu' spessa non aveva
+        # nessun bottone da premere.
+        _chiesto = (incastro_modo == "nocciolo")
+        _vietato = incastro_modo in ("perno", "niente")
+        _buccia = (_gr > 0 and _sp < 0.12 * _gr and _dir > 0.35)
+        if not _vietato and (_chiesto or _buccia):
+            if _chiesto:
+                log.append("Incastro A NOCCIOLO richiesto da te: la zona scelta "
+                           "diventa un blocchetto e nell'altro pezzo se ne scava "
+                           "la sede.")
+            else:
+                log.append(f"Il pezzo verrebbe una buccia (spessa {_sp:.1f} mm su "
+                           f"{_gr:.0f} mm di larghezza, selezione tutta da un lato "
+                           f"{_dir:.2f}): rifaccio il taglio a nocciolo")
+            # PROFONDITA' DEL NOCCIOLO: non si indovina, si prova.
+            # Prima era un numero solo (0,22 volte la larghezza della macchia) e
+            # su una macchia larga sbagliava di brutto: spingendo la pelle verso
+            # l'interno di mezza larghezza, su una superficie curva la pelle
+            # spostata si incrocia con se' stessa e quel che resta dopo il
+            # ritaglio dentro al modello e' piu' SOTTILE del taglio normale
+            # (misurato sulla coscia: 10,6 mm invece di 17,0, cioe' il nocciolo
+            # veniva scartato proprio dove serviva).
+            # Anche in millimetri fissi sarebbe sbagliato: le unita' del modello
+            # non sono millimetri di stampa (su questo Goku ce ne vogliono quasi
+            # dieci per un millimetro stampato).
+            # Quindi se ne provano poche, ben distanziate, e si tiene quella che
+            # da' il blocchetto piu' spesso. Costa qualche secondo in piu' e
+            # toglie di mezzo una costante da tarare a mano.
+            _fu, _sp2, _pv = None, -1.0, 0.0
+            _muto = []          # i tentativi non devono riempire il resoconto
+            for _k in (0.05, 0.10, 0.18, 0.30):
+                _p = _k * _gr
+                _try = taglia_a_nocciolo(V, F, sel, anelli, _muto, _p, gioco, normali_v)
+                if _try is None:
+                    continue
+                _s = 4.0 * abs(float(_try[0].volume)) / (float(_try[0].area) or 1.0)
+                if _s > _sp2:
+                    _fu, _sp2, _pv = _try, _s, _p
             if _fu is not None:
-                _sp2 = 4.0 * abs(float(_fu[0].volume)) / (float(_fu[0].area) or 1.0)
-                if _sp2 > _sp:
+                # Se l'hai chiesto tu si tiene comunque, purche' i due pezzi
+                # siano chiusi: sei tu a sapere come lo vuoi stampare. In
+                # automatico invece si tiene solo se migliora DAVVERO (non per
+                # un pelo: rifare il taglio in un altro modo per guadagnare
+                # mezzo millimetro non vale il rischio).
+                _sano = bool(_fu[0].is_watertight and _fu[1].is_watertight)
+                _ok = (_sp2 > 1.05 * _sp) if not _chiesto else _sano
+                if _ok:
                     ma, mb = _fu
                     niente_perno = True
-                    log.append(f"Nocciolo accettato: spessore da {_sp:.1f} a {_sp2:.1f} mm")
+                    log.append(
+                        f"Taglio A NOCCIOLO: la zona scelta diventa un blocchetto "
+                        f"spesso {_sp2:.1f} mm invece di {_sp:.1f} (affondato "
+                        f"{_pv:.1f} mm, profondita' scelta provandone quattro) e "
+                        f"nell'altro pezzo si scava la sua sede, con {gioco:.2f} mm "
+                        f"di gioco. Si incastra da solo: niente perno.")
+                    if _sp2 < _sp:
+                        # Succede quando la selezione AVVOLGE il pezzo invece di
+                        # essere una macchia su un lato: il nocciolo e' un guscio
+                        # spinto in dentro, e su un anello diventa un manicotto
+                        # vuoto. Misurato sulla coscia: 32 mm invece di 106.
+                        log.append(
+                            "ATTENZIONE: qui il nocciolo SVUOTA il pezzo, non lo "
+                            "ingrossa. La zona che hai scelto gira attorno al "
+                            "modello, e per una zona cosi' va meglio il perno: "
+                            "rimetti \"decidi tu\" e rifai il taglio.")
+                elif _chiesto:
+                    log.append(f"Nocciolo scartato: i due pezzi non venivano chiusi "
+                               f"({_fu[0].is_watertight}/{_fu[1].is_watertight}). "
+                               f"Taglio normale col perno.")
                 else:
-                    log.append(f"Nocciolo scartato: non migliora ({_sp2:.1f} mm invece di {_sp:.1f})")
+                    log.append(f"Nocciolo scartato: non migliora ({_sp2:.1f} mm "
+                               f"invece di {_sp:.1f}). Taglio normale col perno.")
+            elif _chiesto:
+                if _muto:
+                    log.append(_muto[0])
+                log.append("Nocciolo non riuscito su questa selezione: taglio "
+                           "normale col perno. Se la zona scelta e' un anello "
+                           "attorno a un arto il nocciolo non serve, serve il perno.")
             else:
                 # ripiego: la vecchia fustella
                 _fu2 = taglia_a_fustella(V, F, sel, anelli, log)
@@ -1695,7 +1762,10 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
                 f"anelli={[len(x) for x in anelli]}; selezione={len(sel)}/{len(F)} triangoli"
             )
 
-    if not connettore:
+    if not connettore or incastro_modo == "niente":
+        if incastro_modo == "niente":
+            log.append("Nessun aggancio (l'hai chiesto tu): le due facce "
+                       "combaciano, si uniscono con la colla.")
         return {"a": _pack(np.asarray(ma.vertices), np.asarray(ma.faces)),
                 "b": _pack(np.asarray(mb.vertices), np.asarray(mb.faces)), "log": log}
 

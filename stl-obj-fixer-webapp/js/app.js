@@ -114,6 +114,7 @@
     lassoThroughChk: document.getElementById('lassoThroughChk'),
     flatCutChk: document.getElementById('flatCutChk'),
     flatCutModo: document.getElementById('flatCutModo'),
+    incastroModo: document.getElementById('incastroModo'),
     analysisPanel: document.getElementById('analysisPanel'),
     analysisReport: document.getElementById('analysisReport'),
     modelHeight: document.getElementById('modelHeight'),
@@ -748,7 +749,7 @@
   }
   // deve corrispondere a VERSIONE in ai-segmentation/taglia_pro.py: serve a
   // capire se sul PC gira ancora un companion vecchio (senza taglio locale)
-  const TAGLIA_PRO_VERSIONE_ATTESA = 'taglio-nocciolo-17';
+  const TAGLIA_PRO_VERSIONE_ATTESA = 'incastro-a-scelta-18';
   // Versione scritta in chiaro sotto al titolo. Serve a capire al volo, da uno
   // screenshot, se il file aperto e' quello aggiornato: senza, quando qualcosa
   // non va non si sa nemmeno quale versione si sta guardando.
@@ -952,7 +953,7 @@
         return {
           id: 'part_pro_' + Date.now() + '_' + suff.replace(/\W/g, ''),
           name: part.name + ' ' + suff,
-          color: /perno|sopra|\(A\)/.test(suff) ? coloreNuovo() : part.color.slice(),
+          color: /perno|nocciolo|sopra|\(A\)/.test(suff) ? coloreNuovo() : part.color.slice(),
           sourceTriangleCount: indices.length / 3,
           positions, indices,
           log: out.log || [], watertight: !!p.watertight,
@@ -1587,6 +1588,8 @@
         // 'auto' | 'sempre' | 'mai' (la vecchia casella resta per i test)
           bodySel.appiattisci = el.flatCutModo ? el.flatCutModo.value
             : (el.flatCutChk && el.flatCutChk.checked ? 'auto' : 'mai');
+          // 'auto' | 'nocciolo' | 'perno' | 'niente'
+          bodySel.incastro = el.incastroModo ? el.incastroModo.value : 'auto';
         try {
           const r1 = await fetch(AI_URL + '/taglia_selezione', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1613,7 +1616,7 @@
         return {
           id: 'part_piatto_' + Date.now() + '_' + suff.replace(/\W/g, ''),
           name: part.name + ' ' + suff,
-          color: /perno|sopra|\(A\)/.test(suff) ? coloreNuovo() : part.color.slice(),
+          color: /perno|nocciolo|sopra|\(A\)/.test(suff) ? coloreNuovo() : part.color.slice(),
           sourceTriangleCount: m.indices.length / 3,
           positions: m.positions, indices: m.indices,
           log: (motivoRipiego
@@ -1624,7 +1627,14 @@
           included: true,
         };
       };
-      currentResult.parts.splice(idx, 1, mk(out.b, conn ? '(foro)' : '(B)'), mk(out.a, conn ? '(perno)' : '(A)'));
+      // I nomi devono dire com'e' venuto DAVVERO l'incastro, non com'era stato
+      // chiesto: col nocciolo non c'e' nessun perno da cercare sul pezzo, e
+      // chiamarlo "(perno)" mandava a cercare uno spinotto che non esiste.
+      const fattoNocciolo = (out.log || []).some((l) => /Taglio A NOCCIOLO/.test(l));
+      const senzaAggancio = (out.log || []).some((l) => /Nessun aggancio|niente perno \(|niente perno$/.test(l));
+      const nomeA = fattoNocciolo ? '(nocciolo)' : (conn && !senzaAggancio ? '(perno)' : '(A)');
+      const nomeB = fattoNocciolo ? '(sede)' : (conn && !senzaAggancio ? '(foro)' : '(B)');
+      currentResult.parts.splice(idx, 1, mk(out.b, nomeB), mk(out.a, nomeA));
       currentResult.parts.sort((a, b) => b.stats.volume - a.stats.volume);
       cutSelection = null;
       renderResult(currentResult);
@@ -2365,7 +2375,7 @@
         return {
           id: 'part_coperta_' + Date.now() + '_' + suff.replace(/\W/g, ''),
           name: part.name + ' ' + suff,
-          color: /perno|sopra|\(A\)/.test(suff) ? coloreNuovo() : part.color.slice(),
+          color: /perno|nocciolo|sopra|\(A\)/.test(suff) ? coloreNuovo() : part.color.slice(),
           sourceTriangleCount: m.indices.length / 3,
           positions: m.positions, indices: m.indices,
           log: out.log || [], watertight: !!p.watertight,
@@ -2518,7 +2528,7 @@
         const mk = (rep, suff) => ({
           id: 'part_plane_' + Date.now() + '_' + suff,
           name: part.name + ' ' + suff,
-          color: /perno|sopra|\(A\)/.test(suff) ? coloreNuovo() : part.color.slice(),
+          color: /perno|nocciolo|sopra|\(A\)/.test(suff) ? coloreNuovo() : part.color.slice(),
           sourceTriangleCount: rep.indices.length / 3,
           positions: rep.positions, indices: rep.indices,
           log: rep.log, watertight: rep.watertight, stats: rep.stats, included: true,

@@ -229,6 +229,50 @@ manifold3d. Due regole imparate:
 - **Se un terzo dello spessore non arriva a 2 mm, NON mettere il perno** e scrivilo:
   sarebbe più grosso del pezzo. I due pezzi combaciano lo stesso e si incollano.
 
+### L'incastro a nocciolo (quando il perno non basta)
+
+Se la selezione è una **macchia su un fianco** e non un anello attorno a qualcosa, chiuderla
+con un tappo produce una **buccia**: un guscio sottile, inutile da stampare e troppo esile
+per reggere un perno. Su una coscia: 15,7 unità di spessore, cioè 1,6 mm stampati.
+
+Rimedio (è la tecnica dei modelli con la bocca staccata: prendi la bocca, ne fai un solido,
+lo **sottrai** dalla testa e ottieni la sede giusta):
+
+1. **Nocciolo** = la pelle selezionata + la stessa pelle spostata all'interno lungo le
+   normali dei vertici, chiuse da una parete sul contorno.
+2. `A = Nocciolo ∩ Originale` — così il blocchetto **non può uscire** dal modello.
+3. `B = Originale − Sede`, dove la Sede è lo stesso solido **senza** il ritiro di gioco.
+
+Il pezzo entra in un verso solo e si posiziona da sé: **niente perno**.
+
+**La profondità non si indovina: si prova.** Con un solo numero (0,22 × larghezza della
+macchia) su una macchia larga la pelle spostata **si incrocia con sé stessa** e il risultato
+esce più sottile del taglio normale (misurato: 10,6 mm invece di 17,0 — il nocciolo veniva
+scartato proprio dove serviva). Prova quattro affondamenti (0,05 / 0,10 / 0,18 / 0,30 volte
+la larghezza) e tieni quello che dà il blocchetto **più spesso**. Costa qualche secondo e
+toglie di mezzo una costante da tarare a mano. Mai millimetri fissi: le unità del modello
+non sono millimetri di stampa (su un Goku da 1899 unità ce ne vogliono quasi dieci per un
+millimetro stampato).
+
+### La scelta dell'incastro — anche questa è dell'utente
+
+Il nocciolo era **solo automatico**, e il primo utente che l'ha voluto non ha trovato nessun
+bottone da premere: è andato a cercarlo, invano, nel menu della faccia piatta. Un motore che
+fa la cosa giusta ma non si lascia comandare è un motore rotto. Menu a quattro voci:
+
+- *decidi tu* (predefinito): nocciolo dove il pezzo verrebbe una buccia (spessore < 12% della
+  larghezza **e** selezione tutta da un lato > 0,35), perno altrove. Si accetta solo se
+  migliora di almeno il 5%.
+- *a NOCCIOLO*: lo fai comunque, purché i due pezzi vengano chiusi. Se la selezione avvolge il
+  modello il nocciolo **svuota** il pezzo (misurato: 32 mm invece di 106): non rifiutarti,
+  fallo e **scrivi l'avviso**.
+- *a PERNO*: mai il nocciolo.
+- *niente aggancio*: solo colla.
+
+E **i nomi dei pezzi devono dire com'è venuto davvero**: col nocciolo si chiamano
+*(nocciolo)* e *(sede)*, non *(perno)* e *(foro)* — mandare a cercare uno spinotto che non
+esiste è lo stesso errore di prima, in piccolo.
+
 ---
 
 ## 7. Il Lazo (il pezzo più insidioso)

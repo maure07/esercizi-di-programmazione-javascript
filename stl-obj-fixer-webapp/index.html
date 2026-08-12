@@ -576,7 +576,8 @@
     <b>✂️ Taglia SULLA SELEZIONE</b> (in fondo) stacca esattamente la zona che hai dipinto o
     cerchiato, seguendone il contorno — è quello per mani, ciocche, cinture.
     <b>📐 Taglia col PIANO</b> taglia invece dritto e ignora la forma della selezione.
-    Tutti e due mettono da soli perno e foro.
+    Tutti e due mettono da soli l'aggancio fra i due pezzi (perno e foro, oppure
+    blocchetto e sede: lo scegli tu qui sotto in <b>“Come si uniscono i pezzi”</b>).
   </div>
   <div id="cutControls" style="display:none">
     <div id="cutHint">Tocca il modello per selezionare (giallo). Raggio piccolo = tocchi precisi. ➖ Rimuovi cancella dove tocchi, ↩ annulla l'ultimo tocco.</div>
@@ -622,6 +623,24 @@
       <input type="checkbox" id="lassoThroughChk" style="width:16px;height:16px;accent-color:var(--accent)" />
       Lazo passante — opzionale (prende anche quello che sta DIETRO, coperto alla vista)
     </label>
+    <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:12px;color:var(--text-dim)">
+      <span>Come si uniscono i pezzi:</span>
+      <select id="incastroModo" style="flex:1;min-width:120px">
+        <option value="auto" selected>decidi tu (consigliato)</option>
+        <option value="nocciolo">a NOCCIOLO (blocchetto + sede scavata)</option>
+        <option value="perno">a PERNO (spinotto quadro + foro)</option>
+        <option value="niente">niente aggancio (solo colla)</option>
+      </select>
+    </label>
+    <div style="font-size:11px;color:var(--text-dim);margin:-4px 0 8px 0;line-height:1.4">
+      <b>Nocciolo</b> = la zona che hai selezionato diventa un blocchetto spesso e
+      nell'altro pezzo si scava la sua sede, come lo stampo di una serratura: entra
+      in un verso solo e si posiziona da sé. È quello giusto per <b>macchie e toppe</b>
+      (una ciocca, una spalliera, una placca) che da sole verrebbero una buccia
+      sottile. <b>Perno</b> = il vecchio spinotto quadro col foro, giusto per
+      <b>tagliare in due un arto</b>. Con <b>“decidi tu”</b> l'app guarda com'è venuto
+      il pezzo e sceglie da sé, scrivendotelo nel resoconto.
+    </div>
     <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:12px;color:var(--text-dim)">
       <input type="checkbox" id="flatCutChk" checked style="display:none" />
       <span>Faccia di taglio piatta:</span>
@@ -735,7 +754,8 @@
     </div>
     <div style="font-size:11px;color:var(--text-dim);margin:0 0 8px;line-height:1.4">
       <b>È questo il taglio sagomato</b>: stacca esattamente la zona che hai dipinto o cerchiato,
-      seguendone il contorno, e mette perno e foro. Usa questo per una mano, una ciocca di capelli,
+      seguendone il contorno, e mette l'aggancio scelto qui sopra in <b>“Come si uniscono i
+      pezzi”</b>. Usa questo per una mano, una ciocca di capelli,
       una cintura. (Il pulsante “📐 Taglia col PIANO” più sopra taglia invece dritto e non guarda
       la forma della selezione.)
     </div>
