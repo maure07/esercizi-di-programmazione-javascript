@@ -17,8 +17,8 @@ import numpy as np
 import trimesh
 import taglia_pro
 
-SCR = '/home/user/esercizi-di-programmazione-javascript/stl-obj-fixer-webapp/test/modelli'
-m = trimesh.load(SCR + '/goku_vero.stl')
+SCR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'modelli')
+m = trimesh.load(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'modelli') + '/goku_vero.stl')
 m.merge_vertices()
 V, F = np.asarray(m.vertices), np.asarray(m.faces)
 print('Goku:', len(F), 'triangoli, altezza', round(float(m.extents[2]), 1))

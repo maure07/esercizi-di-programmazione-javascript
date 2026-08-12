@@ -1,8 +1,9 @@
 # Quanto e' seghettato il contorno del taglio, prima e dopo la levigatura.
 # Ruvidezza = quanto ogni vertice del bordo sporge rispetto alla meta' dei suoi
 # due vicini, in proporzione alla lunghezza tipica degli spigoli.
-import sys, numpy as np, trimesh
-sys.path.insert(0, '/home/user/esercizi-di-programmazione-javascript/ai-segmentation')
+import sys, os, numpy as np, trimesh
+# il motore sta due cartelle sopra: niente percorsi assoluti
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'ai-segmentation'))
 import taglia_pro as tp
 
 def ruvidezza(m):

@@ -2,11 +2,12 @@
 nocciolo esiste. Controlla che l'automatico continui a farlo scattare anche
 dopo il cambio di profondita', e che i quattro modi diano quel che promettono."""
 import sys
+import os
 sys.path.insert(0, '../../ai-segmentation')
 import numpy as np, trimesh, taglia_pro
 
-SCR = '/home/user/esercizi-di-programmazione-javascript/stl-obj-fixer-webapp/test/modelli'
-m = trimesh.load(SCR + '/ciocca_su_testa.stl'); m.merge_vertices()
+SCR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'modelli')
+m = trimesh.load(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'modelli') + '/ciocca_su_testa.stl'); m.merge_vertices()
 V, F = np.asarray(m.vertices), np.asarray(m.faces)
 C = V[F].mean(axis=1)
 print('ciocca_su_testa:', len(F), 'triangoli, ingombro', np.round(m.extents, 1).tolist())

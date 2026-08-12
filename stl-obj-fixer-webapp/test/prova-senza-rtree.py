@@ -1,7 +1,7 @@
 """Simula il PC dell'utente: trimesh installato ma rtree NO.
 E' la trappola che ha tenuto fermo il nocciolo per giorni — qui rtree c'era,
 quindi i test passavano sempre e il difetto non si vedeva."""
-import sys, builtins, time
+import sys, os, builtins, time
 _vero = builtins.__import__
 def _finto(nome, *a, **k):
     if nome == 'rtree' or nome.startswith('rtree.'):
@@ -11,14 +11,15 @@ builtins.__import__ = _finto
 for m in list(sys.modules):
     if m.startswith('rtree'):
         del sys.modules[m]
-sys.path.insert(0, '/home/user/esercizi-di-programmazione-javascript/ai-segmentation')
+# il motore sta due cartelle sopra: niente percorsi assoluti
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'ai-segmentation'))
 import numpy as np, trimesh, taglia_pro as tp
 try:
     import rtree
     print('ATTENZIONE: rtree ancora importabile, la prova non vale'); sys.exit(2)
 except ImportError:
     pass
-m = trimesh.load('goku_vero.stl'); m.merge_vertices()
+m = trimesh.load(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'modelli', 'goku_vero.stl')); m.merge_vertices()
 V, F = np.asarray(m.vertices), np.asarray(m.faces)
 C = V[F].mean(axis=1); N = m.face_normals
 zmin, zmax = float(V[:,2].min()), float(V[:,2].max())

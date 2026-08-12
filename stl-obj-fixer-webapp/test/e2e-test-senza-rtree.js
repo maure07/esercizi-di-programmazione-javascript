@@ -6,8 +6,8 @@
 const { execFileSync } = require('child_process');
 const dir = require('path').join(__dirname, 'modelli');
 try {
-  const out = execFileSync('python3', [`${dir}/prova-senza-rtree.py`],
-    { encoding: 'utf8', timeout: 1800000, cwd: dir });
+  const out = execFileSync('python3', [require('path').join(__dirname, 'prova-senza-rtree.py')],
+    { encoding: 'utf8', timeout: 1800000, cwd: __dirname });
   console.log(out.trim());
   console.log(/ESITO: OK/.test(out)
     ? '\nRISULTATO: IL NOCCIOLO FUNZIONA ANCHE SENZA RTREE'

@@ -2,8 +2,9 @@
 #  - cilindro RADO: l'anello di taglio e' un cerchio "buono", non deve stringersi
 #  - sfera fitta: contorno con dentini piccoli
 #  - scalinatura finta: anello a zig-zag, deve venire dritto
-import sys, numpy as np, trimesh
-sys.path.insert(0, '/home/user/esercizi-di-programmazione-javascript/ai-segmentation')
+import sys, os, numpy as np, trimesh
+# il motore sta due cartelle sopra: niente percorsi assoluti
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'ai-segmentation'))
 import taglia_pro as tp
 
 def prova(nome, m, quota):

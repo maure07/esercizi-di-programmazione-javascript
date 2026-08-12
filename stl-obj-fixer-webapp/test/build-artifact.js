@@ -56,5 +56,10 @@ artifact = artifact.replace(/<\/body>\s*/i, '');
 const artifactPath = path.join(outDir, 'artifact-bundle.html');
 fs.writeFileSync(artifactPath, artifact);
 
+// Alcuni test aprono index.html, altri stl-obj-fixer.html: sono la stessa
+// pagina montata, e chiedere a ogni test di sapere quale non serve a niente.
+// Se ne scrive una copia con tutti e due i nomi.
+fs.writeFileSync(path.join(outDir, 'index.html'), standalone);
+
 console.log('standalone', (standalone.length / 1024).toFixed(0), 'KB ->', standalonePath);
 console.log('artifact  ', (artifact.length / 1024).toFixed(0), 'KB ->', artifactPath);

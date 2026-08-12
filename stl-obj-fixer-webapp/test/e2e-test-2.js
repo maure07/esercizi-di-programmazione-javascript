@@ -1,6 +1,7 @@
 const { chromium } = require('/opt/node22/lib/node_modules/playwright');
 
 (async () => {
+  const dir = require('path').join(__dirname, 'modelli');
   const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium', headless: true });
   const page = await browser.newPage({ viewport: { width: 420, height: 850 } });
   const consoleErrors = [];
@@ -10,7 +11,7 @@ const { chromium } = require('/opt/node22/lib/node_modules/playwright');
   await page.goto('http://127.0.0.1:8973/index.html');
   await page.waitForTimeout(300);
 
-  const stlPath = '${dir}/cubo_con_buco.stl';
+  const stlPath = `${dir}/cubo_con_buco.stl`;
   await page.setInputFiles('#fileInput', [stlPath]);
   await page.waitForSelector('#toSegmentBtn', { timeout: 30000 });
   await page.click('#toSegmentBtn', { timeout: 120000, noWaitAfter: true });
@@ -52,7 +53,7 @@ const { chromium } = require('/opt/node22/lib/node_modules/playwright');
     page.waitForEvent('download'),
     page.click('.part-actions button:has-text("STL")'),
   ]);
-  const singleStlPath = '${dir}/single-part.stl';
+  const singleStlPath = `${dir}/single-part.stl`;
   await download.saveAs(singleStlPath);
 
   await browser.close();

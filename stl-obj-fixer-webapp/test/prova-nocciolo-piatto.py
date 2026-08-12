@@ -2,11 +2,12 @@
 faccia di dietro (i triangoli che guardano dalla parte opposta alla macchia) e
 si guarda quanto si scostano dal loro piano medio. Zero = piano perfetto."""
 import sys
+import os
 sys.path.insert(0, '../../ai-segmentation')
 import numpy as np, trimesh, taglia_pro
 
-SCR = '/home/user/esercizi-di-programmazione-javascript/stl-obj-fixer-webapp/test/modelli'
-m = trimesh.load(SCR + '/goku_vero.stl'); m.merge_vertices()
+SCR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'modelli')
+m = trimesh.load(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'modelli') + '/goku_vero.stl'); m.merge_vertices()
 V, F = np.asarray(m.vertices), np.asarray(m.faces)
 C = V[F].mean(axis=1)
 
@@ -50,4 +51,4 @@ for modo in ('nocciolo',):
     for l in r['log']:
         if any(k in l for k in ('NOCCIOLO', 'Nocciolo', 'ATTENZIONE', 'nocciolo')):
             print('   ·', l[:200])
-    ma.export(SCR + '/nocciolo-A.stl'); mb.export(SCR + '/nocciolo-B.stl')
+    ma.export(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'modelli') + '/nocciolo-A.stl'); mb.export(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'modelli') + '/nocciolo-B.stl')

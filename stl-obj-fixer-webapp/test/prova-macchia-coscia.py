@@ -1,11 +1,12 @@
 """Macchia pulita sulla coscia (come quella che si ottiene col clic magico),
 taglio a nocciolo, esporta i due pezzi per guardarli."""
 import sys
+import os
 sys.path.insert(0, '../../ai-segmentation')
 import numpy as np, trimesh, taglia_pro
 
-SCR = '/home/user/esercizi-di-programmazione-javascript/stl-obj-fixer-webapp/test/modelli'
-m = trimesh.load(SCR + '/goku_vero.stl'); m.merge_vertices()
+SCR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'modelli')
+m = trimesh.load(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'modelli') + '/goku_vero.stl'); m.merge_vertices()
 V, F = np.asarray(m.vertices), np.asarray(m.faces)
 C = V[F].mean(axis=1); N = m.face_normals
 zmin, zmax = float(V[:, 2].min()), float(V[:, 2].max())
@@ -40,5 +41,5 @@ print(f'faccia di taglio piana: area {ap:.0f} su {ar:.0f} rivolta all\'indietro 
 q = (ma.triangles.mean(axis=1) @ n)[piatti]
 if len(q):
     print(f'   e sta tutta su una quota sola: da {q.min():.1f} a {q.max():.1f}')
-ma.export(SCR + '/macchia-A.stl'); mb.export(SCR + '/macchia-B.stl')
+ma.export(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'modelli') + '/macchia-A.stl'); mb.export(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'modelli') + '/macchia-B.stl')
 print('esportati macchia-A.stl e macchia-B.stl')

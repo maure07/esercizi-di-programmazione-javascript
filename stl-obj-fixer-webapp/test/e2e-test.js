@@ -2,6 +2,7 @@ const { chromium } = require('/opt/node22/lib/node_modules/playwright');
 const path = require('path');
 
 (async () => {
+  const dir = require('path').join(__dirname, 'modelli');
   const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium', headless: true });
   const page = await browser.newPage({ viewport: { width: 420, height: 850 } }); // simula schermo telefono
   const consoleErrors = [];
@@ -38,7 +39,7 @@ const path = require('path');
   console.log('consoleErrors:', consoleErrors);
 
   // Screenshot per ispezione visiva
-  await page.screenshot({ path: '${dir}/e2e-screenshot.png' });
+  await page.screenshot({ path: `${dir}/e2e-screenshot.png` });
 
   // Test download ZIP
   await page.click('#toPrintBtn');
@@ -47,7 +48,7 @@ const path = require('path');
     page.waitForEvent('download'),
     page.click('#exportZipBtn'),
   ]);
-  const zipSavePath = '${dir}/e2e-export.zip';
+  const zipSavePath = `${dir}/e2e-export.zip`;
   await download.saveAs(zipSavePath);
   console.log('ZIP scaricato in', zipSavePath);
 

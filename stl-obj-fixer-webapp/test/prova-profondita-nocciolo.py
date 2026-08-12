@@ -4,8 +4,8 @@ import sys, time
 sys.path.insert(0, '../../ai-segmentation')
 import numpy as np, trimesh, taglia_pro
 
-SCR = '/home/user/esercizi-di-programmazione-javascript/stl-obj-fixer-webapp/test/modelli'
-m = trimesh.load(SCR + '/goku_vero.stl'); m.merge_vertices()
+SCR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'modelli')
+m = trimesh.load(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'modelli') + '/goku_vero.stl'); m.merge_vertices()
 V, F = np.asarray(m.vertices), np.asarray(m.faces)
 C = V[F].mean(axis=1); N = m.face_normals
 zmin, zmax = float(V[:, 2].min()), float(V[:, 2].max())
