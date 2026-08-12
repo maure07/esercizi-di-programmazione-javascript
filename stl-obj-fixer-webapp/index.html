@@ -4,21 +4,24 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <title>Correggi & Segmenta STL/OBJ</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%97%BF%3C/text%3E%3C/svg%3E" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2308080a'/%3E%3Cpath d='M16 6 L25 11 L25 21 L16 26 L7 21 L7 11 Z' fill='none' stroke='%23e02434' stroke-width='2' stroke-linejoin='round'/%3E%3Cpath d='M16 16 L25 11 M16 16 L7 11 M16 16 L16 26' fill='none' stroke='%23e02434' stroke-width='1.4' opacity='.55'/%3E%3C/svg%3E" />
 <style>
   :root {
     color-scheme: dark;
-    --bg: #0e1013;
-    --panel: #151920;
-    --panel2: #1b2029;
-    --border: #2b313b;
-    --border-forte: #3a424f;
-    --text: #e4e7ec;
-    --text-dim: #8b93a1;
-    --accent: #4c8dff;
-    --accent2: #34a97b;
-    --warn: #d3a03f;
-    --danger: #d8595c;
+    --bg: #08080a;
+    --panel: #101013;
+    --panel2: #16161a;
+    --panel3: #1c1c21;
+    --border: #232329;
+    --border-forte: #34343d;
+    --text: #ececef;
+    --text-dim: #86868f;
+    --accent: #e02434;
+    --accent-soft: rgba(224, 36, 52, 0.12);
+    --accent-bordo: rgba(224, 36, 52, 0.35);
+    --accent2: #e02434;
+    --warn: #d99a3c;
+    --danger: #e04a52;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { height: 100%; margin: 0; }
@@ -301,7 +304,11 @@
     font-size: 13px;
     font-weight: 600;
   }
-  #cutToggleBtn.active { border-color: var(--warn); color: var(--warn); }
+  #cutToggleBtn.active {
+    border-color: var(--accent);
+    color: #ff8a92;
+    background: var(--accent-soft);
+  }
   #cutControls {
     margin-top: 8px;
     background: var(--panel2);
@@ -437,89 +444,262 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* ---------------------------------------------------------------
-     RIFINITURA: un solo colore d'accento, angoli appena smussati,
-     spaziature regolari. Serve a far sembrare l'app uno strumento di
-     lavoro invece che un giocattolo: bottoni piatti e squadrati,
-     testo che non urla, e il colore usato solo dove indica qualcosa.
-     -------------------------------------------------------------- */
+  /* =================================================================
+     ASPETTO — nero, rosso, grigio scuro.
+     L'impianto e' a SCHEDE: ogni gruppo di comandi sta dentro un
+     riquadro con un titolo e un bordo, cosi' si capisce a colpo
+     d'occhio dove finisce una cosa e dove ne comincia un'altra. Il
+     rosso si usa SOLO per quello che e' attivo adesso o per l'azione
+     principale: se coloro tutto, il colore non indica piu' niente.
+     ================================================================= */
+  body { background: var(--bg); }
+
   button {
     font-family: inherit;
     letter-spacing: 0.01em;
     cursor: pointer;
-    transition: background .12s, border-color .12s, color .12s;
+    transition: background .13s, border-color .13s, color .13s;
   }
-  button:hover:not(:disabled) { border-color: var(--border-forte); }
+  button:hover:not(:disabled) { border-color: var(--border-forte); background: var(--panel3); }
   button:active:not(:disabled) { transform: translateY(1px); }
-  button:disabled { cursor: default; }
+  button:disabled { cursor: default; opacity: .45; }
+
   input[type="text"], input[type="number"], select, textarea {
     font-family: inherit;
     background: var(--bg);
     color: var(--text);
     border: 1px solid var(--border);
-    border-radius: 3px;
-    padding: 6px 8px;
+    border-radius: 4px;
+    padding: 7px 9px;
     font-size: 12.5px;
   }
-  input[type="range"] { accent-color: var(--accent); }
-  input[type="checkbox"] { accent-color: var(--accent); }
-  select:focus, input:focus { outline: none; border-color: var(--accent); }
+  select:focus, input:focus, textarea:focus { outline: none; border-color: var(--accent); }
 
-  header { padding: 12px 16px; }
-  header h1 { font-size: 14px; letter-spacing: 0.01em; }
-  header h1 small { font-size: 10.5px; letter-spacing: 0.02em; margin-top: 2px; }
-  #fileBtn { border-radius: 3px; font-weight: 500; font-size: 12.5px; padding: 8px 14px; }
-  #fileBtn:hover { filter: brightness(1.12); }
+  /* barra di scorrimento: sottile e scura, non quella di sistema */
+  #sheet::-webkit-scrollbar { width: 10px; }
+  #sheet::-webkit-scrollbar-track { background: transparent; }
+  #sheet::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; }
+  #sheet::-webkit-scrollbar-thumb:hover { background: var(--border-forte); }
 
-  .section-title {
-    font-size: 10.5px;
-    letter-spacing: 0.09em;
-    color: var(--text-dim);
-    margin: 18px 0 8px;
-    padding-bottom: 5px;
+  /* ---- intestazione ---- */
+  header {
+    padding: 12px 18px;
+    background: var(--panel);
     border-bottom: 1px solid var(--border);
   }
-  .cut-actions button, .part-actions button {
-    border-radius: 3px;
-    font-weight: 500;
+  header h1 { font-size: 15px; font-weight: 600; letter-spacing: 0.005em; }
+  header h1 small { font-size: 10.5px; letter-spacing: 0.02em; margin-top: 3px; }
+  #fileBtn {
+    background: var(--accent);
+    border: none;
+    border-radius: 5px;
+    font-weight: 600;
+    font-size: 12.5px;
+    padding: 9px 16px;
+  }
+  #fileBtn:hover { filter: brightness(1.15); }
+
+  /* ---- marchio ---- */
+  #marchio {
+    width: 34px; height: 34px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-bordo);
+    border-radius: 7px;
+    color: var(--accent);
+  }
+  #marchio svg { width: 20px; height: 20px; display: block; }
+
+  /* ---- titoli di sezione: una barretta rossa e basta ---- */
+  .section-title {
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    color: var(--text-dim);
+    margin: 20px 0 9px;
+    padding: 0 0 6px 10px;
+    border-bottom: 1px solid var(--border);
+    border-left: 2px solid var(--accent);
+    line-height: 1.6;
+  }
+
+  /* ---- schede dei gruppi di comandi ---- */
+  #methodRow, #controlsRow, #scaleRow, #sensitivityRow,
+  #cutControls, #copertaControls, #selectExtras {
     background: var(--panel2);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 11px 12px;
+  }
+  #cutControls, #copertaControls { padding: 12px; }
+
+  /* ---- passi in alto ---- */
+  #stepper { gap: 6px; margin-bottom: 14px; }
+  .step-chip {
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 9px 4px;
+    font-size: 11.5px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    position: relative;
+  }
+  .step-chip.active {
+    color: var(--text);
+    border-color: var(--accent-bordo);
+    background: var(--accent-soft);
+  }
+  .step-chip.active::after {
+    content: '';
+    position: absolute; left: 22%; right: 22%; bottom: -1px; height: 2px;
+    background: var(--accent); border-radius: 2px;
+  }
+  .step-chip.done { color: var(--text-dim); }
+
+  /* ---- bottoni ---- */
+  .cut-actions button, .part-actions button {
+    background: var(--panel3);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    font-weight: 500;
+    color: var(--text);
   }
   .cut-actions button.active {
-    background: var(--panel2);
-    border-color: var(--accent);
-    color: var(--accent);
-    font-weight: 500;
+    background: var(--accent-soft);
+    border-color: var(--accent-bordo);
+    color: #ff8a92;
+    font-weight: 600;
   }
-  .part-card { border-radius: 4px; padding: 12px; }
-  .swatch { border-radius: 2px; }
-  .step-chip { border-radius: 3px; font-weight: 500; letter-spacing: 0.02em; }
+  #cutCreateBtn:not(:disabled), #cutLassoCloseBtn {
+    border-color: var(--accent-bordo); color: #ff8a92; font-weight: 600;
+  }
+  #exportZipBtn, #toPrintBtn, #repairBtn, #toSegmentBtn, #cutFlatProBtn {
+    background: var(--accent);
+    border: 1px solid var(--accent);
+    color: #fff;
+    font-weight: 600;
+    border-radius: 5px;
+  }
+  #exportZipBtn:hover, #toPrintBtn:hover, #repairBtn:hover,
+  #toSegmentBtn:hover, #cutFlatProBtn:hover {
+    filter: brightness(1.15); background: var(--accent); border-color: var(--accent);
+  }
 
-  /* le misure del pezzo: tre caselle in fila, sobrie */
+  /* ---- interruttori al posto delle caselle ---- */
+  input[type="checkbox"] {
+    appearance: none; -webkit-appearance: none;
+    width: 34px; height: 19px;
+    background: var(--panel3);
+    border: 1px solid var(--border-forte);
+    border-radius: 10px;
+    position: relative;
+    flex-shrink: 0;
+    cursor: pointer;
+    transition: background .15s, border-color .15s;
+  }
+  input[type="checkbox"]::after {
+    content: '';
+    position: absolute; top: 2px; left: 2px;
+    width: 13px; height: 13px; border-radius: 50%;
+    background: var(--text-dim);
+    transition: transform .15s, background .15s;
+  }
+  input[type="checkbox"]:checked { background: var(--accent-soft); border-color: var(--accent); }
+  input[type="checkbox"]:checked::after { transform: translateX(15px); background: var(--accent); }
+
+  /* ---- cursori ---- */
+  input[type="range"] {
+    appearance: none; -webkit-appearance: none;
+    height: 4px; border-radius: 2px;
+    background: var(--panel3);
+    border: 1px solid var(--border);
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    appearance: none; -webkit-appearance: none;
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid var(--bg);
+    cursor: pointer;
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--accent); border: 2px solid var(--bg); cursor: pointer;
+  }
+  .cut-slider-row { align-items: center; gap: 10px; }
+  .cut-slider-row > span:last-child {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 8px;
+    min-width: 58px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---- schede dei pezzi ---- */
+  .part-card {
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 12px;
+  }
+  .part-card:hover { border-color: var(--border-forte); }
+  .swatch { border-radius: 3px; width: 16px; height: 16px; }
+  .visibility-toggle {
+    border-radius: 5px; color: var(--text-dim);
+    background: var(--panel3); border: 1px solid var(--border);
+  }
+  .visibility-toggle.active { color: var(--accent); border-color: var(--accent-bordo); }
+  .visibility-toggle svg { width: 15px; height: 15px; display: block; margin: auto; }
+  .part-stats { gap: 4px 12px; }
+
+  /* ---- barra dei comandi sul modello ---- */
+  #viewerHint {
+    background: rgba(8,8,10,0.82);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 7px 10px;
+    line-height: 1.6;
+  }
+  #frameBtn, #undoPartiBtn {
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+  }
+
+  /* ---- misure del pezzo ---- */
   .part-misure { margin-top: 10px; font-size: 11.5px; color: var(--text-dim); }
   .part-misure > summary {
-    cursor: pointer; color: var(--text-dim); font-size: 11px;
-    letter-spacing: 0.05em; text-transform: uppercase; padding: 2px 0;
+    cursor: pointer; color: var(--text-dim); font-size: 10.5px;
+    letter-spacing: 0.09em; text-transform: uppercase; padding: 3px 0;
   }
   .part-misure > summary:hover { color: var(--text); }
-  .misure-riga { display: flex; gap: 8px; margin: 8px 0 6px; }
+  .misure-riga { display: flex; gap: 8px; margin: 9px 0 7px; }
   .misure-riga label {
     flex: 1; display: flex; align-items: center; gap: 6px;
     font-size: 11px; color: var(--text-dim);
   }
   .misure-riga input { width: 100%; min-width: 0; text-align: right; }
   .misure-legame {
-    display: flex; align-items: center; gap: 6px;
-    font-size: 11.5px; color: var(--text-dim); margin-bottom: 8px;
+    display: flex; align-items: center; gap: 8px;
+    font-size: 11.5px; color: var(--text-dim); margin-bottom: 9px;
   }
-  .misure-legame input { width: 14px; height: 14px; }
-  .visibility-toggle svg { width: 15px; height: 15px; display: block; margin: auto; }
-  .visibility-toggle { color: var(--text-dim); }
-  .visibility-toggle.active { color: var(--accent); }
+
+  /* ---- riquadri d'avviso ---- */
+  .warning-box { border-radius: 5px; }
+  #log { border: 1px solid var(--border); border-radius: 6px; }
+  .report-box { border-radius: 7px; }
 </style>
 </head>
 <body>
 
 <header>
+  <div id="marchio" aria-hidden="true">
+    <svg viewBox="0 0 32 32"><path d="M16 5 L26 10.5 L26 21.5 L16 27 L6 21.5 L6 10.5 Z"
+      fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+      <path d="M16 16 L26 10.5 M16 16 L6 10.5 M16 16 L16 27" fill="none"
+      stroke="currentColor" stroke-width="1.3" opacity=".5"/></svg>
+  </div>
   <h1>Correggi &amp; Segmenta<small>STL / OBJ per stampa 3D multi-parte &middot; <span id="versioneApp"></span></small></h1>
   <button id="fileBtn">Apri modello</button>
   <input id="fileInput" type="file" accept=".stl,.obj,.mtl,.png,.jpg,.jpeg,.webp,.json" multiple />
@@ -652,7 +832,7 @@
     </div>
     <div id="smartSelBox" style="margin:8px 0;padding:10px;border:1px solid var(--border);border-radius:4px">
       <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text);cursor:pointer">
-        <input type="checkbox" id="smartSelChk" checked style="width:16px;height:16px;accent-color:var(--accent2)" />
+        <input type="checkbox" id="smartSelChk" checked />
         <b>Un clic = tutta la zona</b> (si ferma sulle pieghe)
       </label>
       <div class="cut-slider-row" style="margin-top:6px">
@@ -684,7 +864,7 @@
       a mano: tiene la macchia più grande e scarta tutte le altre.
     </div>
     <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:12px;color:var(--text-dim)">
-      <input type="checkbox" id="lassoThroughChk" style="width:16px;height:16px;accent-color:var(--accent)" />
+      <input type="checkbox" id="lassoThroughChk" />
       Lazo passante — opzionale (prende anche quello che sta DIETRO, coperto alla vista)
     </label>
     <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:12px;color:var(--text-dim)">
@@ -803,7 +983,7 @@
       </div>
       <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
         <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text);cursor:pointer">
-          <input type="checkbox" id="connAutoChk" checked style="width:16px;height:16px;accent-color:var(--accent2)" />
+          <input type="checkbox" id="connAutoChk" checked />
           Connettore quadrato automatico (perno + foro)
         </label>
         <div class="cut-slider-row" style="margin-top:6px">
