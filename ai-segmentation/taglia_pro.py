@@ -875,6 +875,125 @@ def _gruppi_di_bordo(F, sel):
     return [g for g in gruppi.values() if len(g) >= 3]
 
 
+# ---------------------------------------------------------------------------
+# TAGLIO A FUSTELLA
+# ---------------------------------------------------------------------------
+# Perche' serve. Chiudere l'anello di bordo con un tappo funziona benissimo
+# quando la selezione GIRA ATTORNO a qualcosa (una ciocca di capelli, una
+# cintura, un polso): li' il contorno e' un anello attorno a un collo e
+# chiuderlo produce un solido vero. Ma quando si dipinge una MACCHIA SU UN LATO
+# — per esempio una zona sulla coscia — il contorno e' appoggiato sulla
+# superficie, e chiuderlo produce per forza una BUCCIA. Misurato sul modello
+# vero: un pezzo grande 172x176x203 unita' con uno spessore vero di 15,7 unita',
+# cioe' 1,6 mm su una stampa da 20 cm. Da li' viene tutto il resto: niente
+# perno (sarebbe piu' grosso del pezzo), faccia di taglio sproporzionata,
+# bordo che si sbriciola.
+#
+# La fustella fa invece quello che uno si aspetta: prende il contorno disegnato,
+# lo estrude attraverso il modello come lo stampo di un biscotto, e interseca.
+# Il pezzo esce solido, con i fianchi esattamente sul contorno scelto.
+def _solido_fustella(giri, centro, u, v, n, lunghezza):
+    """Costruisce il solido-fustella: il contorno estruso lungo n, da una parte
+    e dall'altra, abbastanza da attraversare tutto il modello."""
+    Vs, Fs = [], []
+    for ciclo in giri:
+        if len(ciclo) < 3:
+            continue
+        P3 = np.asarray(ciclo, dtype=np.float64)
+        P2 = np.column_stack([(P3 - centro) @ u, (P3 - centro) @ v])
+        tri = _ritaglia_orecchie(P2)
+        if tri is None:
+            continue
+        m = len(P2)
+        b = len(Vs)
+        for q in (-lunghezza, lunghezza):
+            for i in range(m):
+                Vs.append(centro + u * P2[i, 0] + v * P2[i, 1] + n * q)
+        # tappi: sotto al rovescio, sopra dritto
+        for i0, i1, i2 in tri:
+            Fs.append([b + i0, b + i2, b + i1])
+            Fs.append([b + m + i0, b + m + i1, b + m + i2])
+        # fianchi
+        for i in range(m):
+            j = (i + 1) % m
+            Fs.append([b + i, b + j, b + m + j])
+            Fs.append([b + i, b + m + j, b + m + i])
+    if not Fs:
+        return None
+    return np.asarray(Vs, dtype=np.float64), np.asarray(Fs, dtype=np.int64)
+
+
+def taglia_a_fustella(V, F, sel, anelli, log):
+    """Stacca il volume sotto la selezione estrudendone il contorno.
+
+    Torna (mesh_a, mesh_b) oppure None se non ce la fa.
+    """
+    import trimesh
+    giri = []
+    for anello in anelli:
+        g = _ordina_anello(anello)
+        giri.extend([g] if g is not None else _cicli_anello(anello))
+    giri = [[V[k] for k in g] for g in giri if g is not None and len(g) >= 3]
+    if not giri:
+        return None
+    P = np.vstack([np.asarray(g) for g in giri])
+    centro = P.mean(axis=0)
+    D = P - centro
+    val, vec = np.linalg.eigh(D.T @ D)
+    n = _normalizza(vec[:, 0])          # normale del piano medio del contorno
+    u = _normalizza(np.cross(n, [0.0, 0.0, 1.0]) if abs(n[2]) < 0.9
+                    else np.cross(n, [1.0, 0.0, 0.0]))
+    v = np.cross(n, u)
+    diag = float(np.linalg.norm(V.max(axis=0) - V.min(axis=0))) or 1.0
+    fu = _solido_fustella(giri, centro, u, v, n, 1.2 * diag)
+    if fu is None:
+        return None
+    Vf, Ff = fu
+    Mo = trimesh.Trimesh(vertices=V, faces=F, process=True)
+    Mo.update_faces(Mo.nondegenerate_faces())
+    Mo.remove_unreferenced_vertices()
+    Orig = _manifold(np.asarray(Mo.vertices), np.asarray(Mo.faces))
+    Fust = _manifold(Vf, Ff)
+    if Orig.status().name != "NoError" or Fust.status().name != "NoError":
+        log.append(f"(fustella non utilizzabile: modello {Orig.status().name}, "
+                   f"fustella {Fust.status().name})")
+        return None
+    A = Orig ^ Fust
+    if A.status().name != "NoError":
+        return None
+    # se la fustella ha preso piu' blocchi staccati (il tubo attraversa anche
+    # roba lontana), si tiene solo quello che sta sotto la selezione
+    pezzi = A.decompose()
+    if len(pezzi) > 1:
+        # si tiene il blocco PIU' GROSSO, non il piu' vicino: il centro della
+        # selezione sta sulla pelle, e li' vicino ci sono spesso schegge sottili
+        # che vincerebbero il confronto lasciando un pezzo da niente.
+        migliore, vmax = None, -1.0
+        for pz in pezzi:
+            vp, fp = _to_arrays(pz)
+            if not len(fp):
+                continue
+            vol = abs(float(trimesh.Trimesh(vertices=vp, faces=fp, process=False).volume))
+            if vol > vmax:
+                vmax, migliore = vol, pz
+        if migliore is None:
+            return None
+        A = migliore
+        log.append(f"La fustella attraversava {len(pezzi)} blocchi: tenuto quello sotto la selezione")
+    B = Orig - A
+    if B.status().name != "NoError":
+        return None
+    va, fa = _to_arrays(A)
+    vb, fb = _to_arrays(B)
+    if not len(fa) or not len(fb):
+        return None
+    ma = trimesh.Trimesh(vertices=va, faces=fa, process=False)
+    mb = trimesh.Trimesh(vertices=vb, faces=fb, process=False)
+    log.append("Taglio A FUSTELLA: il contorno che hai disegnato e' stato estruso "
+               "attraverso il modello, cosi' il pezzo esce solido invece che una buccia")
+    return ma, mb
+
+
 def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.20,
                            lato=None, profondita=None, scala_connettore=1.0,
                            appiattisci=True):
@@ -1400,6 +1519,45 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
         pass
     except Exception as e:
         log.append(f"(controllo delle sporgenze non riuscito: {e}; pezzi consegnati come sono)")
+    # BUCCIA? Se il pezzo staccato e' un foglio (spessore vero minuscolo rispetto
+    # alla sua estensione) vuol dire che la selezione era una macchia su un lato
+    # e non un anello attorno a qualcosa: chiuderla col tappo produce una buccia,
+    # inutile da stampare e troppo sottile per il perno. In quel caso si rifa'
+    # il taglio con la FUSTELLA, che porta via il volume sotto la selezione.
+    try:
+        _sp = 4.0 * abs(float(ma.volume)) / (float(ma.area) or 1.0)
+        _gr = float(np.sort(np.asarray(ma.extents))[1])       # seconda dimensione
+        # quanto la selezione "guarda tutta da una parte": 1 = macchia piatta su
+        # un fianco, 0 = avvolge il pezzo. Misurato: macchia sulla coscia 0,41;
+        # capelli 0,28; cintura 0,08. Da sola non basta, ma insieme allo
+        # spessore separa nettamente la buccia dal blocco vero.
+        _T = V[F[sorted(sel)]]
+        _nf = np.cross(_T[:, 1] - _T[:, 0], _T[:, 2] - _T[:, 0])
+        _dir = float(np.linalg.norm(_nf.sum(axis=0)) / (np.linalg.norm(_nf, axis=1).sum() or 1.0))
+        if _gr > 0 and _sp < 0.12 * _gr and _dir > 0.35:
+            log.append(f"Il pezzo verrebbe una buccia (spessa {_sp:.1f} mm su "
+                       f"{_gr:.0f} mm di larghezza, selezione tutta da un lato "
+                       f"{_dir:.2f}): rifaccio il taglio a fustella")
+            _fu = taglia_a_fustella(V, F, sel, anelli, log)
+            if _fu is not None:
+                # si accetta SOLO se il pezzo esce davvero piu' massiccio. Se il
+                # contorno disegnato serpeggia in tre dimensioni (misurato sulla
+                # coscia: 274 punti sparsi su tutti e tre gli assi) la fustella
+                # collassa e darebbe un pezzo peggiore di quello di partenza.
+                _sp2 = 4.0 * abs(float(_fu[0].volume)) / (float(_fu[0].area) or 1.0)
+                if _sp2 > _sp:
+                    ma, mb = _fu
+                    log.append(f"Fustella accettata: spessore da {_sp:.1f} a {_sp2:.1f} mm")
+                else:
+                    log.append(f"Fustella scartata: darebbe un pezzo ancora piu' sottile "
+                               f"({_sp2:.1f} mm invece di {_sp:.1f}). Il contorno che hai "
+                               "disegnato serpeggia troppo per essere estruso: per dividere "
+                               "un arto conviene il taglio col PIANO.")
+            else:
+                log.append("(la fustella non e' riuscita: tenuto il taglio precedente)")
+    except Exception as _e:
+        log.append(f"(controllo buccia non eseguito: {_e})")
+
     log.append(f"Pezzo staccato: {len(ma.faces)} facce, chiuso={ma.is_watertight}; "
                f"resto: {len(mb.faces)} facce, chiuso={mb.is_watertight}")
     if not (ma.is_watertight and mb.is_watertight):
