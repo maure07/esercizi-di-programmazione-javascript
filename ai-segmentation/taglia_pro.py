@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "solo-la-pelle-25"
+VERSIONE = "sede-dal-pezzo-26"
 
 
 # ---------------------------------------------------------------------------
@@ -1549,15 +1549,21 @@ def taglia_a_nocciolo_piatto(V, F, sel, anelli, log, gioco, frazione=0.5,
                f"corpi dopo la booleana {_corpi}, tenuti quelli che poggiano "
                f"sulla pelle scelta: {_corpi_dopo}")
 
-    Sede = _fustella(gioco)
-    if Sede is None:
-        return None
-    # la sede e' un filo piu' larga e un filo piu' fonda: il pezzo ci entra.
-    # Stesso filtro del pezzo: se non si toglie anche qui, nell'altro pezzo
-    # resta scavata la tasca del pantalone che nessuno ha chiesto.
-    Sede, _ = _solo_con_la_pelle(
-        (Sede ^ Orig) ^ _semispazio(n, quota - gioco, diag), _pelle, _tol)
-    Sede = _senza_briciole(Sede)
+    # LA SEDE SI RICAVA DAL PEZZO, non da una seconda booleana per conto suo.
+    # Calcolandole separate le due potevano non combaciare: la sede prendeva un
+    # tocco (il bordo del pantalone sotto la coscia) che il pezzo non aveva, e
+    # quel materiale spariva — un buco nel modello che nessuno aveva chiesto.
+    # Cosi' invece la sede e' il pezzo stesso strisciato all'indietro di un
+    # gioco: e' garantito che contenga il pezzo e niente di piu', quindi
+    # l'unico materiale che si perde e' la fettina di gioco in fondo alla
+    # tasca, che e' esattamente quella che serve perche' il pezzo ci entri.
+    try:
+        Sede = A + A.translate(list(-np.asarray(n, dtype=float) * gioco))
+    except Exception as _e:
+        log.append(f"(sede non ricavabile dal pezzo: {_e}; uso il pezzo com'e')")
+        Sede = A
+    if Sede.status().name != "NoError":
+        Sede = A
     B = Orig - Sede
     if A.status().name != "NoError" or B.status().name != "NoError":
         return None
