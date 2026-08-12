@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "senza-rtree-24"
+VERSIONE = "solo-la-pelle-25"
 
 
 # ---------------------------------------------------------------------------
@@ -1277,6 +1277,57 @@ def _semispazio(n, quota, taglia):
     return _cubo([w, w, w], np.asarray(n, dtype=np.float64) * (quota + w * 0.5), u, v, nn)
 
 
+def _solo_con_la_pelle(solido, punti, tol, quota_minima=0.10):
+    """Fra i tocchi separati tiene SOLO quelli che poggiano sulla pelle scelta.
+
+    Il prisma del nocciolo scende dritto dentro il modello e si porta via tutto
+    quello che incontra nella sua colonna: sotto una macchia sulla coscia
+    c'e' anche il bordo del pantalone, che finisce nel pezzo staccato come un
+    lembo a parte. Non e' un errore della selezione — la selezione e' giusta —
+    ed e' per questo che pulirla a mano non serviva a niente: quel lembo
+    nasceva dopo, dalla booleana.
+
+    Si tiene un tocco solo se una fetta consistente dei punti della pelle
+    scelta ci poggia sopra: il blocco vero ce li ha quasi tutti, il lembo di
+    pantalone nessuno.
+    """
+    try:
+        pezzi = [p for p in solido.decompose() if p.status().name == "NoError"]
+    except Exception:
+        pezzi = []
+    if len(pezzi) <= 1:
+        return solido, len(pezzi) or 1
+    P = np.asarray(punti, dtype=np.float64)
+    if len(P) > 300:
+        P = P[np.linspace(0, len(P) - 1, 300).astype(int)]
+    if not len(P):
+        return solido, len(pezzi)
+    p2 = (P * P).sum(axis=1)
+    tenuti = []
+    for p in pezzi:
+        try:
+            Vc, Fc = _to_arrays(p)
+        except Exception:
+            continue
+        if not len(Fc):
+            continue
+        vicino = np.full(len(P), np.inf)
+        for i in range(0, len(Vc), 4000):
+            B = Vc[i:i + 4000]
+            d2 = p2[:, None] + (B * B).sum(axis=1)[None, :] - 2.0 * (P @ B.T)
+            vicino = np.minimum(vicino, d2.min(axis=1))
+        if float((vicino < tol * tol).mean()) >= quota_minima:
+            tenuti.append(p)
+    if not tenuti:
+        return solido, len(pezzi)
+    fuso = tenuti[0]
+    for p in tenuti[1:]:
+        fuso = fuso + p
+    if fuso.status().name != "NoError":
+        return solido, len(pezzi)
+    return fuso, len(pezzi)
+
+
 def _senza_briciole(solido, quota_minima=0.05):
     """Butta via i tocchi minuscoli di una booleana.
 
@@ -1476,13 +1527,18 @@ def taglia_a_nocciolo_piatto(V, F, sel, anelli, log, gioco, frazione=0.5,
     alto = float((V[sorted({int(x) for f in F[sorted(sel)] for x in f})] @ n).max())
     quota = alto - frazione * spess           # dove passa la faccia piatta
 
+    # I punti della PELLE SCELTA: servono a riconoscere, fra i tocchi che la
+    # booleana tira fuori, quali sono davvero il pezzo che hai selezionato e
+    # quali invece sono roba finita per caso nella colonna del prisma (sotto
+    # una macchia sulla coscia ci passa anche il bordo del pantalone).
+    _pelle = _tf.mean(axis=1)
+    if len(_pelle) > 300:
+        _pelle = _pelle[np.linspace(0, len(_pelle) - 1, 300).astype(int)]
+    _tol = 0.01 * diag
+
     _tagliato = Blocco ^ _semispazio(n, quota, diag)
-    _corpi = 1
-    try:
-        _corpi = len(list(_tagliato.decompose()))
-    except Exception:
-        pass
-    A = _senza_briciole(_tagliato)
+    A, _corpi = _solo_con_la_pelle(_tagliato, _pelle, _tol)
+    A = _senza_briciole(A)
     _corpi_dopo = 1
     try:
         _corpi_dopo = len(list(A.decompose()))
@@ -1490,14 +1546,18 @@ def taglia_a_nocciolo_piatto(V, F, sel, anelli, log, gioco, frazione=0.5,
         pass
     log.append(f"[diagnostica] spessore stimato {spess:.1f}, piano a quota "
                f"{quota:.1f} (cioe' {frazione * spess:.1f} sotto la pelle); "
-               f"corpi dopo la booleana {_corpi}, dopo il filtro delle briciole "
-               f"{_corpi_dopo}")
+               f"corpi dopo la booleana {_corpi}, tenuti quelli che poggiano "
+               f"sulla pelle scelta: {_corpi_dopo}")
 
     Sede = _fustella(gioco)
     if Sede is None:
         return None
-    # la sede e' un filo piu' larga e un filo piu' fonda: il pezzo ci entra
-    Sede = _senza_briciole((Sede ^ Orig) ^ _semispazio(n, quota - gioco, diag))
+    # la sede e' un filo piu' larga e un filo piu' fonda: il pezzo ci entra.
+    # Stesso filtro del pezzo: se non si toglie anche qui, nell'altro pezzo
+    # resta scavata la tasca del pantalone che nessuno ha chiesto.
+    Sede, _ = _solo_con_la_pelle(
+        (Sede ^ Orig) ^ _semispazio(n, quota - gioco, diag), _pelle, _tol)
+    Sede = _senza_briciole(Sede)
     B = Orig - Sede
     if A.status().name != "NoError" or B.status().name != "NoError":
         return None
