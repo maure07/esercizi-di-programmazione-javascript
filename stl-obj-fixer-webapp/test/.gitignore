@@ -1,0 +1,8 @@
+# il personaggio di prova pesa 19 MB: sta fuori dal repository, e i test che
+# lo usano si saltano da soli quando manca (vedi LEGGIMI.md)
+modelli/goku_vero.stl
+# roba prodotta dalla batteria, non da conservare
+modelli/stl-obj-fixer.html
+modelli/artifact-bundle.html
+modelli/*-A.stl
+modelli/*-B.stl
