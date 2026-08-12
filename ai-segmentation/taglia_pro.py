@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "taglio-dentro-16"
+VERSIONE = "taglio-nocciolo-17"
 
 
 # ---------------------------------------------------------------------------
@@ -994,6 +994,92 @@ def taglia_a_fustella(V, F, sel, anelli, log):
     return ma, mb
 
 
+# ---------------------------------------------------------------------------
+# TAGLIO A NOCCIOLO (incastro a sede, senza perno)
+# ---------------------------------------------------------------------------
+# L'idea arriva da come sono fatti i pupazzi stampati bene: il musetto non e'
+# tenuto da un perno, e' un blocchetto che entra in una SEDE scavata nella
+# testa, della sua identica forma. Si posiziona da solo e non scivola.
+#
+# Da noi risolve il caso che non veniva: una macchia dipinta sul fianco di una
+# coscia, chiusa col tappo, dava una buccia da 1,6 mm — troppo sottile perfino
+# per metterci il perno. Qui invece la pelle selezionata viene portata verso
+# l'interno dello spessore scelto e chiusa di lato: il pezzo esce un solido
+# vero, la pelle esterna resta intatta al millesimo, e nell'altro pezzo si
+# scava la sede corrispondente.
+def _nocciolo(V, F, sel, anelli, profondita, ritiro, normali_v):
+    """Costruisce il solido "nocciolo": la pelle selezionata + la stessa pelle
+    spostata all'interno di `profondita`, chiuse da una parete sul contorno.
+
+    ritiro : di quanto stringere il nocciolo (gioco di accoppiamento). Zero per
+             scavare la sede, il gioco vero per il pezzo che ci deve entrare.
+    """
+    facce = [F[f] for f in sorted(sel)]
+    usati = sorted({int(x) for f in facce for x in f})
+    interno = {v: i for i, v in enumerate(usati)}
+    n_u = len(usati)
+    # vertici del contorno: li si stringe anche di lato, verso il centro della
+    # macchia, altrimenti il pezzo entrerebbe nella sede solo a martellate
+    bordo = {int(a) for anello in anelli for e in anello for a in e}
+    centro_patch = V[usati].mean(axis=0)
+    Vn = [V[v] for v in usati]                      # pelle esterna
+    for v in usati:
+        nv = normali_v[v]
+        p = V[v] - nv * profondita
+        if ritiro > 0:
+            verso = centro_patch - V[v]
+            verso = verso - nv * float(verso @ nv)   # solo di lato, non in fuori
+            ln = float(np.linalg.norm(verso))
+            if ln > 1e-9:
+                p = p + verso * (ritiro / ln)
+                if v in bordo:
+                    pass
+        Vn.append(p)
+    Vn = np.asarray(Vn, dtype=np.float64)
+    Fn = []
+    for f in facce:                                  # pelle esterna, come sta
+        a, b, c = interno[int(f[0])], interno[int(f[1])], interno[int(f[2])]
+        Fn.append([a, b, c])
+        Fn.append([n_u + c, n_u + b, n_u + a])       # schiena, al rovescio
+    for anello in anelli:                            # parete laterale
+        for a, b in anello:
+            ia, ib = interno[int(a)], interno[int(b)]
+            Fn.append([ib, ia, n_u + ia])
+            Fn.append([ib, n_u + ia, n_u + ib])
+    return Vn, np.asarray(Fn, dtype=np.int64)
+
+
+def taglia_a_nocciolo(V, F, sel, anelli, log, profondita, gioco, normali_v):
+    """Stacca la zona selezionata come nocciolo e ne scava la sede nel resto."""
+    import trimesh
+    Vp, Fp = _nocciolo(V, F, sel, anelli, profondita, gioco, normali_v)
+    Vs, Fs = _nocciolo(V, F, sel, anelli, profondita, 0.0, normali_v)
+    Mo = trimesh.Trimesh(vertices=V, faces=F, process=True)
+    Mo.update_faces(Mo.nondegenerate_faces())
+    Mo.remove_unreferenced_vertices()
+    Orig = _manifold(np.asarray(Mo.vertices), np.asarray(Mo.faces))
+    Pezzo = _manifold(Vp, Fp)
+    Sede = _manifold(Vs, Fs)
+    if any(x.status().name != "NoError" for x in (Orig, Pezzo, Sede)):
+        log.append(f"(nocciolo non utilizzabile: modello {Orig.status().name}, "
+                   f"pezzo {Pezzo.status().name}, sede {Sede.status().name})")
+        return None
+    A = Pezzo ^ Orig                 # il nocciolo non puo' uscire dal modello
+    B = Orig - Sede
+    if A.status().name != "NoError" or B.status().name != "NoError":
+        return None
+    va, fa = _to_arrays(A)
+    vb, fb = _to_arrays(B)
+    if not len(fa) or not len(fb):
+        return None
+    ma = trimesh.Trimesh(vertices=va, faces=fa, process=False)
+    mb = trimesh.Trimesh(vertices=vb, faces=fb, process=False)
+    log.append(f"Taglio A NOCCIOLO: la zona scelta diventa un blocchetto spesso "
+               f"{profondita:.1f} mm e nell'altro pezzo si scava la sua sede "
+               f"(gioco {gioco:.2f} mm). Si incastra da solo: niente perno.")
+    return ma, mb
+
+
 def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.20,
                            lato=None, profondita=None, scala_connettore=1.0,
                            appiattisci=True):
@@ -1254,6 +1340,7 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
 
     # costruito al primo bisogno: dice se un punto sta fuori dalla pelle
     quanto_fuori = None
+    niente_perno = False   # col nocciolo l'incastro c'e' gia'
     tappo_a = []          # facce aggiunte come tappo (per il controllo sporgenze)
     normali_tappo = []
     centri_tappo = []
@@ -1538,23 +1625,33 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
             log.append(f"Il pezzo verrebbe una buccia (spessa {_sp:.1f} mm su "
                        f"{_gr:.0f} mm di larghezza, selezione tutta da un lato "
                        f"{_dir:.2f}): rifaccio il taglio a fustella")
-            _fu = taglia_a_fustella(V, F, sel, anelli, log)
+            # Spessore del nocciolo: proporzionato alla macchia, ma sempre
+            # stampabile e mai piu' di un quarto della sua larghezza.
+            # Tutto in proporzione alla macchia, MAI in millimetri fissi: le
+            # unita' del modello non sono millimetri di stampa (su questo Goku
+            # ce ne vogliono quasi dieci per un millimetro stampato), e un
+            # numero fisso dava un nocciolo spesso un millimetro e mezzo.
+            _p = 0.22 * _gr
+            _fu = taglia_a_nocciolo(V, F, sel, anelli, log, _p, gioco, normali_v)
             if _fu is not None:
-                # si accetta SOLO se il pezzo esce davvero piu' massiccio. Se il
-                # contorno disegnato serpeggia in tre dimensioni (misurato sulla
-                # coscia: 274 punti sparsi su tutti e tre gli assi) la fustella
-                # collassa e darebbe un pezzo peggiore di quello di partenza.
                 _sp2 = 4.0 * abs(float(_fu[0].volume)) / (float(_fu[0].area) or 1.0)
                 if _sp2 > _sp:
                     ma, mb = _fu
-                    log.append(f"Fustella accettata: spessore da {_sp:.1f} a {_sp2:.1f} mm")
+                    niente_perno = True
+                    log.append(f"Nocciolo accettato: spessore da {_sp:.1f} a {_sp2:.1f} mm")
                 else:
-                    log.append(f"Fustella scartata: darebbe un pezzo ancora piu' sottile "
-                               f"({_sp2:.1f} mm invece di {_sp:.1f}). Il contorno che hai "
-                               "disegnato serpeggia troppo per essere estruso: per dividere "
-                               "un arto conviene il taglio col PIANO.")
+                    log.append(f"Nocciolo scartato: non migliora ({_sp2:.1f} mm invece di {_sp:.1f})")
             else:
-                log.append("(la fustella non e' riuscita: tenuto il taglio precedente)")
+                # ripiego: la vecchia fustella
+                _fu2 = taglia_a_fustella(V, F, sel, anelli, log)
+                if _fu2 is not None:
+                    _sp3 = 4.0 * abs(float(_fu2[0].volume)) / (float(_fu2[0].area) or 1.0)
+                    if _sp3 > _sp:
+                        ma, mb = _fu2
+                        log.append(f"Fustella accettata: spessore da {_sp:.1f} a {_sp3:.1f} mm")
+                    else:
+                        log.append("Il contorno che hai disegnato serpeggia troppo per essere "
+                                   "estruso: per dividere un arto conviene il taglio col PIANO.")
     except Exception as _e:
         log.append(f"(controllo buccia non eseguito: {_e})")
 
@@ -1633,6 +1730,10 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
     # modello. Prima un `max(4.0, ...)` scavalcava il limite e su una lamina da
     # 1,7 mm usciva comunque un perno da 4 mm.
     tetto = 0.33 * spessore
+    if niente_perno:
+        log.append("Nessun perno: il pezzo si incastra da solo nella sua sede.")
+        return {"a": _pack(np.asarray(ma.vertices), np.asarray(ma.faces)),
+                "b": _pack(np.asarray(mb.vertices), np.asarray(mb.faces)), "log": log}
     if lato is None and profondita is None and tetto < 2.0:
         log.append(f"Pezzo staccato spesso solo {spessore:.1f} mm: niente perno "
                    "(sarebbe piu' grosso del pezzo). I due pezzi combaciano "
