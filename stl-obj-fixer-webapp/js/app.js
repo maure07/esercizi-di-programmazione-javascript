@@ -3724,6 +3724,10 @@
     return tot;
   }
 
+  // Quaderni di lavoro dell'arrotondamento, riusati fra una pennellata e
+  // l'altra invece di allocarli ogni volta (vedi sotto).
+  let _quaderni = null;
+
   // ARROTONDA il bordo della selezione a una SCALA DECISA DA TE.
   //
   // Il vecchio smusso guardava solo i vicini immediati: toglieva i dentini da
@@ -3770,8 +3774,16 @@
     // alzare il cursore oltre il 4%).
     const prof = Math.max(3, Math.min(60, Math.ceil(3 * k)));
 
-    // fascia attorno al bordo, per distanza in triangoli
-    const dist = new Int32Array(nTris).fill(-1);
+    // Fascia attorno al bordo, per distanza in triangoli. I due quaderni di
+    // lavoro (distanze e valori sfumati) sono grandi quanto la mesh, quindi si
+    // tengono da parte e si riusano: allocarne due nuovi a ogni pennellata,
+    // su un modello pesante, voleva dire 3 MB buttati via ogni volta e la
+    // pagina che si fermava a fare pulizia.
+    if (!_quaderni || _quaderni.n !== nTris) {
+      _quaderni = { n: nTris, dist: new Int32Array(nTris), u: new Float32Array(nTris) };
+    }
+    const dist = _quaderni.dist;
+    dist.fill(-1);
     const fascia = [];
     sel.forEach((f) => {
       const adj = topo.adjacency[f];
@@ -3799,7 +3811,8 @@
     // cosi' la sfumatura si propaga gia' dentro la passata e ne bastano la
     // meta'. Per non trascinare tutto nel verso in cui si scorre l'elenco, il
     // verso si inverte a ogni passata.
-    const u = new Float32Array(nTris);
+    const u = _quaderni.u;
+    u.fill(0);
     sel.forEach((f) => { u[f] = 1; });
     for (let giro = 0; giro < passi; giro++) {
       const avanti = (giro & 1) === 0;
@@ -3812,26 +3825,31 @@
       }
     }
 
-    // ritaglio a meta': il nuovo bordo passa dove il campo sfumato vale 0,5
+    // ritaglio a meta': il nuovo bordo passa dove il campo sfumato vale 0,5.
+    // Per poter tornare indietro si segna solo com'era la FASCIA: fuori di li'
+    // niente cambia, quindi copiare tutta la selezione sarebbe stato sprecato.
     const prima = sel.size;
-    const salvata = new Set(sel);
+    const eraDentro = [];
     for (let i = 0; i < fascia.length; i++) {
       const f = fascia[i];
+      const c = sel.has(f);
+      eraDentro.push(c);
       if (u[f] >= 0.5) sel.add(f); else sel.delete(f);
     }
     // rete di sicurezza: se lo smusso ha mangiato la macchia (puo' capitare su
     // selezioni sottili tipo una cintura) si torna indietro invece di lasciare
     // in mano un ritaglio dimezzato
     if (sel.size < prima * 0.5 || sel.size < 8) {
-      sel.clear();
-      salvata.forEach((f) => sel.add(f));
+      for (let i = 0; i < fascia.length; i++) {
+        if (eraDentro[i]) sel.add(fascia[i]); else sel.delete(fascia[i]);
+      }
       return smussaDentiniSelezione(part, sel, 3);
     }
     // il ritaglio a meta' puo' lasciare qualche triangolo spaiato: si ripulisce
     // come sempre (buchi tappati, frammenti staccati buttati) e si finisce con
     // lo smusso fine, che toglie gli ultimi dentini da un triangolo solo
-    pulisciSelezione(part, sel, fascia);
-    return smussaDentiniSelezione(part, sel, 3, fascia);
+    pulisciSelezione(part, sel);
+    return smussaDentiniSelezione(part, sel, 3);
   }
 
   // SMUSSO FINE, da un triangolo: toglie i dentini rimasti, senza allargare.
@@ -3842,23 +3860,27 @@
   // dentro, uno appena dentro ne ha due), quindi la macchia non cresce: si
   // smussano solo i denti. La prima regola da sola, senza il taglio delle
   // linguette, contagerebbe invece tutto il pezzo.
-  function smussaDentiniSelezione(part, sel, giri, candidati) {
+  function smussaDentiniSelezione(part, sel, giri) {
     const topo = ensurePartTopology(part);
-    const nTris = part.indices.length / 3;
-    const quanti = candidati ? candidati.length : nTris;
-    const quale = (i) => (candidati ? candidati[i] : i);
     for (let giro = 0; giro < (giri || 3); giro++) {
       let mosse = 0;
       const dentro = [];
-      for (let i = 0; i < quanti; i++) {
-        const f = quale(i);
-        if (sel.has(f)) continue;
-        const adj = topo.adjacency[f];
-        if (adj.length < 3) continue;
-        let n = 0;
-        for (let q = 0; q < adj.length; q++) if (sel.has(adj[q])) n++;
-        if (n >= 2) dentro.push(f);
-      }
+      // anche qui basta l'anello attaccato alla macchia: un triangolo con due
+      // vicini dentro la tocca per forza
+      const visti = new Set();
+      sel.forEach((f0) => {
+        const a = topo.adjacency[f0];
+        for (let i = 0; i < a.length; i++) {
+          const f = a[i];
+          if (sel.has(f) || visti.has(f)) continue;
+          visti.add(f);
+          const adj = topo.adjacency[f];
+          if (adj.length < 3) continue;
+          let n = 0;
+          for (let q = 0; q < adj.length; q++) if (sel.has(adj[q])) n++;
+          if (n >= 2) dentro.push(f);
+        }
+      });
       for (const f of dentro) { sel.add(f); mosse++; }
       const fuori = [];
       sel.forEach((f) => {
@@ -3899,27 +3921,29 @@
   // Ripulisce una selezione dai buchi: i triangolini rimasti fuori in mezzo
   // alla zona scelta vengono inglobati, e i frammenti isolati fuori vengono
   // scartati. Sono quelli che lasciavano il bordo del taglio frastagliato.
-  // "candidati" e' facoltativo: quando si sa gia' che i triangoli da guardare
-  // sono solo quelli vicini al bordo (la fascia dell'arrotondamento) si passa
-  // quell'elenco invece di riscorrere tutta la mesh. Su un modello da 400.000
-  // triangoli e' la differenza fra un decimo di secondo e un secondo.
-  function pulisciSelezione(part, sel, candidati) {
+  function pulisciSelezione(part, sel) {
     const topo = ensurePartTopology(part);
-    const nTris = part.indices.length / 3;
-    const quanti = candidati ? candidati.length : nTris;
-    const quale = (i) => (candidati ? candidati[i] : i);
-    // 1) buchi DENTRO la selezione: un triangolo fuori, circondato da dentro
+    // 1) buchi DENTRO la selezione: un triangolo fuori, circondato da dentro.
+    // Basta guardare l'anello attaccato alla macchia: un triangolo con TUTTI i
+    // vicini dentro tocca per forza la macchia. Prima si scorrevano invece
+    // tutti i triangoli del modello, e su un personaggio da 400.000 era il
+    // motivo per cui lasciare il pennello faceva "impuntare" la pagina.
     for (let giro = 0; giro < 3; giro++) {
       const daAggiungere = [];
-      for (let i = 0; i < quanti; i++) {
-        const f = quale(i);
-        if (sel.has(f)) continue;
-        const adj = topo.adjacency[f];
-        if (adj.length === 0) continue;
-        let dentro = 0;
-        for (let q = 0; q < adj.length; q++) if (sel.has(adj[q])) dentro++;
-        if (dentro >= adj.length - 0.5) daAggiungere.push(f);  // tutti i vicini dentro
-      }
+      const visti = new Set();
+      sel.forEach((f) => {
+        const a = topo.adjacency[f];
+        for (let i = 0; i < a.length; i++) {
+          const g = a[i];
+          if (sel.has(g) || visti.has(g)) continue;
+          visti.add(g);
+          const adj = topo.adjacency[g];
+          if (adj.length === 0) continue;
+          let dentro = 0;
+          for (let q = 0; q < adj.length; q++) if (sel.has(adj[q])) dentro++;
+          if (dentro >= adj.length - 0.5) daAggiungere.push(g);  // tutti i vicini dentro
+        }
+      });
       if (daAggiungere.length === 0) break;
       for (const f of daAggiungere) sel.add(f);
     }
