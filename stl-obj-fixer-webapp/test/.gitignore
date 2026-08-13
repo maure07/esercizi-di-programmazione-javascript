@@ -1,6 +1,9 @@
 # il personaggio di prova pesa 19 MB: sta fuori dal repository, e i test che
 # lo usano si saltano da soli quando manca (vedi LEGGIMI.md)
 modelli/goku_vero.stl
+# il modello da 130 MB per provare il caso "pagina lenta": si rifa' con
+# test/fai-modello-pesante.py, non si conserva
+modelli/pesante.stl
 # roba prodotta dalla batteria, non da conservare
 modelli/stl-obj-fixer.html
 modelli/index.html

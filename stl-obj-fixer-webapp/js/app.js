@@ -120,6 +120,10 @@
     flatCutModo: document.getElementById('flatCutModo'),
     incastroModo: document.getElementById('incastroModo'),
     analysisPanel: document.getElementById('analysisPanel'),
+    alleggerBox: document.getElementById('alleggerBox'),
+    alleggerNota: document.getElementById('alleggerNota'),
+    alleggerObiettivo: document.getElementById('alleggerObiettivo'),
+    alleggerBtn: document.getElementById('alleggerBtn'),
     analysisReport: document.getElementById('analysisReport'),
     modelHeight: document.getElementById('modelHeight'),
     applyModelScaleBtn: document.getElementById('applyModelScaleBtn'),
@@ -744,6 +748,8 @@
       ${colorHtml}
     `;
 
+    mostraAlleggerimento(nTris, size);
+
     el.emptyState.style.display = 'none';
     el.viewerHint.style.display = '';
     el.frameBtn.style.display = '';
@@ -751,6 +757,74 @@
     aggiornaInfoMesh();
     goToStep(1);
     setLoading(false);
+  }
+
+  // Oltre questa soglia il modello e' piu' fine di quanto una stampante possa
+  // rendere, e la pagina comincia a soffrire: si propone di alleggerirlo.
+  const TROPPI_TRIANGOLI = 400000;
+
+  function mostraAlleggerimento(nTris, size) {
+    if (!el.alleggerBox) return;
+    if (nTris <= TROPPI_TRIANGOLI) { el.alleggerBox.style.display = 'none'; return; }
+    el.alleggerBox.style.display = '';
+    // quanto verrebbe grosso il triangolo tipico, in millimetri veri
+    const obiettivo = parseInt(el.alleggerObiettivo.value, 10) || 300000;
+    const { passo } = MeshCore.passoPerAlleggerire(currentParsed.rawPositions, obiettivo);
+    const mm = passo * currentScaleFactor;
+    el.alleggerNota.innerHTML =
+      `Questo modello ha <b>${fmt(nTris, 0)} triangoli</b>: sono ` +
+      `${(nTris / obiettivo).toFixed(1)} volte quelli che servono per stamparlo. ` +
+      `Alleggerendolo a ${fmt(obiettivo, 0)} il triangolo piu' fine diventa di circa ` +
+      `<b>${mm < 0.1 ? mm.toFixed(3) : mm.toFixed(2)} mm</b>: l'ugello ne fa 0,4 e lo strato 0,2, ` +
+      `quindi quel dettaglio nell'oggetto stampato non ci finirebbe comunque. ` +
+      `Il modello di partenza resta il tuo file, qui non si tocca niente.`;
+  }
+
+  async function alleggerisciModello() {
+    if (!currentParsed) return;
+    const obiettivo = parseInt(el.alleggerObiettivo.value, 10) || 300000;
+    setLoading(true, 'Alleggerisco il modello…');
+    await new Promise((r) => setTimeout(r, 30));
+    try {
+      const { passo } = MeshCore.passoPerAlleggerire(currentParsed.rawPositions, obiettivo);
+      const r = MeshCore.alleggerisci(currentParsed.rawPositions, passo);
+      currentParsed.rawPositions = r.rawPositions;
+      // colori e texture seguono i triangoli sopravvissuti, invece di perdersi
+      if (currentParsed.rawColors) {
+        const c = new Float32Array(r.triangoliDopo * 3);
+        for (let t = 0; t < r.triangoliDopo; t++) {
+          const s = r.tenuti[t];
+          c[t * 3] = currentParsed.rawColors[s * 3];
+          c[t * 3 + 1] = currentParsed.rawColors[s * 3 + 1];
+          c[t * 3 + 2] = currentParsed.rawColors[s * 3 + 2];
+        }
+        currentParsed.rawColors = c;
+      }
+      if (currentParsed.rawUV) {
+        // rawUV e' il centroide della texture, due numeri per triangolo
+        const u = new Float32Array(r.triangoliDopo * 2);
+        for (let t = 0; t < r.triangoliDopo; t++) {
+          const s = r.tenuti[t];
+          u[t * 2] = currentParsed.rawUV[s * 2];
+          u[t * 2 + 1] = currentParsed.rawUV[s * 2 + 1];
+        }
+        currentParsed.rawUV = u;
+      }
+      currentAnalysis = null;
+      currentRepaired = null;
+      currentResult = null;
+      setCutMode(false);
+      await runAnalysis();
+      alert('Alleggerito: da ' + fmt(r.triangoliPrima, 0) + ' a ' + fmt(r.triangoliDopo, 0)
+        + ' triangoli.\n\nLa forma e\' la stessa: sono spariti solo i triangoli piu\' piccoli '
+        + 'di quanto la stampante possa rendere.\n\nSe ti sembra che abbia perso dettagli che '
+        + 'ti servono, ricarica il file e scegli un valore piu\' alto.');
+    } catch (err) {
+      console.error(err);
+      alert('Errore durante l\'alleggerimento: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function runWholeRepair() {
@@ -815,6 +889,12 @@
   el.smartSelAngle.addEventListener('input', () => {
     el.smartSelAngleValue.textContent = el.smartSelAngle.value + '\u00b0';
   });
+  if (el.alleggerBtn) {
+    el.alleggerBtn.addEventListener('click', () => alleggerisciModello());
+    el.alleggerObiettivo.addEventListener('change', () => {
+      if (currentAnalysis) mostraAlleggerimento(currentAnalysis.nTris, currentAnalysis.size);
+    });
+  }
   if (el.arrotondaForza) {
     el.arrotondaForza.addEventListener('input', () => {
       el.arrotondaForzaValue.textContent = el.arrotondaForza.value + '%';

@@ -43,6 +43,72 @@
   };
 
   // ---------------------------------------------------------------------
+  // ALLEGGERIMENTO: meno triangoli, stessa forma.
+  //
+  // I modelli fatti dall'IA arrivano con triangoli molto piu' fini di quanto
+  // una stampante possa mai riprodurre: un file da 130 MB ha triangoli grossi
+  // un decimo di millimetro, mentre l'ugello ne fa 0,4 e lo strato 0,2. Quel
+  // dettaglio non finisce nell'oggetto stampato, finisce solo nella memoria
+  // del browser: la mappa degli spigoli di un modello da 2,6 milioni di
+  // triangoli occupa da sola quasi un giga, ed e' per questo che la pagina si
+  // impunta e Firefox avvisa che sta rallentando.
+  //
+  // Si alleggerisce nel modo piu' semplice e prevedibile: si appoggia il
+  // modello su una griglia e i punti che finiscono nella stessa casella
+  // diventano uno solo. I triangoli che cosi' si schiacciano spariscono. E'
+  // esattamente la saldatura dei vertici che si fa gia' all'apertura del file,
+  // solo con la maglia piu' larga.
+  //
+  // Il passo della griglia NON si cerca per tentativi (ogni tentativo su un
+  // modello del genere costa dieci secondi): si calcola. Su una superficie il
+  // numero di caselle occupate e' circa area/passo², e ogni casella regge un
+  // paio di triangoli, quindi per arrivare a T triangoli serve
+  // passo = radice(2·area/T).
+  // ---------------------------------------------------------------------
+  MeshCore.passoPerAlleggerire = function (rawPositions, triangoliObiettivo) {
+    let area = 0;
+    for (let i = 0; i + 8 < rawPositions.length; i += 9) {
+      const ux = rawPositions[i + 3] - rawPositions[i];
+      const uy = rawPositions[i + 4] - rawPositions[i + 1];
+      const uz = rawPositions[i + 5] - rawPositions[i + 2];
+      const vx = rawPositions[i + 6] - rawPositions[i];
+      const vy = rawPositions[i + 7] - rawPositions[i + 1];
+      const vz = rawPositions[i + 8] - rawPositions[i + 2];
+      const cx = uy * vz - uz * vy, cy = uz * vx - ux * vz, cz = ux * vy - uy * vx;
+      area += Math.sqrt(cx * cx + cy * cy + cz * cz) * 0.5;
+    }
+    const T = Math.max(1000, triangoliObiettivo || 300000);
+    return { passo: Math.sqrt((2 * area) / T), area };
+  };
+
+  // Alleggerisce e riporta anche COSA e' sopravvissuto, cosi' chi chiama puo'
+  // portarsi dietro i colori e le coordinate della texture dei triangoli
+  // rimasti invece di buttarli.
+  MeshCore.alleggerisci = function (rawPositions, passo, areaEpsilon) {
+    const w = MeshCore.weldVertices(rawPositions, passo);
+    const deg = MeshCore.removeDegenerateTriangles(w.positions, w.indices,
+      areaEpsilon === undefined ? passo * passo * 1e-4 : areaEpsilon);
+    // rawPositions "espanse": tre vertici per triangolo, com'e' il formato che
+    // gira nel resto dell'app
+    const n = deg.indices.length / 3;
+    const fuori = new Float64Array(n * 9);
+    for (let t = 0; t < n; t++) {
+      for (let k = 0; k < 3; k++) {
+        const v = deg.indices[t * 3 + k];
+        fuori[t * 9 + k * 3] = w.positions[v * 3];
+        fuori[t * 9 + k * 3 + 1] = w.positions[v * 3 + 1];
+        fuori[t * 9 + k * 3 + 2] = w.positions[v * 3 + 2];
+      }
+    }
+    return {
+      rawPositions: fuori,
+      triangoliPrima: rawPositions.length / 9,
+      triangoliDopo: n,
+      tenuti: deg.keptTriOriginalIndex,   // indice del triangolo di partenza
+    };
+  };
+
+  // ---------------------------------------------------------------------
   // Rimozione triangoli degeneri (area ~ 0)
   // ---------------------------------------------------------------------
   MeshCore.removeDegenerateTriangles = function (positions, indices, areaEpsilon) {
