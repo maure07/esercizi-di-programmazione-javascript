@@ -765,7 +765,11 @@
 
   function mostraAlleggerimento(nTris, size) {
     if (!el.alleggerBox) return;
-    if (nTris <= TROPPI_TRIANGOLI) { el.alleggerBox.style.display = 'none'; return; }
+    if (nTris <= TROPPI_TRIANGOLI) {
+      el.alleggerBox.style.display = 'none';
+      el.alleggerNota.textContent = '';   // niente testo vecchio che resta li' sotto
+      return;
+    }
     el.alleggerBox.style.display = '';
     // quanto verrebbe grosso il triangolo tipico, in millimetri veri
     const obiettivo = parseInt(el.alleggerObiettivo.value, 10) || 300000;
