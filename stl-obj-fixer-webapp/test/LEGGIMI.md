@@ -22,13 +22,25 @@ stampa quanti sono verdi e quanti rossi.
 
 ## Il modello grande
 
-Sette test lavorano su `modelli/goku_vero.stl`, un personaggio da 395.000
+Otto test lavorano su `modelli/goku_vero.stl`, un personaggio da 395.000
 triangoli. Non e' nel repository perche' pesa 19 MB. Senza quel file quei
 test si **saltano da soli** scrivendolo a schermo, invece di fallire.
 
 Serve perche' i difetti veri saltano fuori solo sui modelli veri: su un cubo
 di dodici triangoli il taglio a nocciolo riesce sempre. Se ne hai uno di
 dimensioni simili, mettilo li' con quel nome e la batteria lo usa.
+
+## Come si misura l'arrotondamento del bordo
+
+`e2e-test-arrotonda.js` non si limita a guardare se la selezione cambia:
+prende una macchia pulita, la **sporca di proposito** con un dado a seme
+fisso (`window.__sporcaSelezione`) e misura poi quanto il contorno torna
+disteso. Il numero e' `perimetro / perimetro del cerchio di pari area`:
+vale 1 per un cerchio e sale quando il bordo serpeggia.
+
+Serve perche' il conteggio dei "dentini" da un triangolo, che si usava
+prima, non vedeva il difetto di cui si parlava: le **gobbe larghe**
+lasciavano il bordo bitorzoluto pur avendo zero dentini.
 
 ## `tolti/`
 

@@ -93,6 +93,9 @@
     smartSelChk: document.getElementById('smartSelChk'),
     smartSelAngle: document.getElementById('smartSelAngle'),
     smartSelAngleValue: document.getElementById('smartSelAngleValue'),
+    arrotondaForza: document.getElementById('arrotondaForza'),
+    arrotondaForzaValue: document.getElementById('arrotondaForzaValue'),
+    arrotondaBtn: document.getElementById('arrotondaBtn'),
     planeCutProBtn: document.getElementById('planeCutProBtn'),
     connAutoChk: document.getElementById('connAutoChk'),
     connGioco: document.getElementById('connGioco'),
@@ -812,6 +815,11 @@
   el.smartSelAngle.addEventListener('input', () => {
     el.smartSelAngleValue.textContent = el.smartSelAngle.value + '\u00b0';
   });
+  if (el.arrotondaForza) {
+    el.arrotondaForza.addEventListener('input', () => {
+      el.arrotondaForzaValue.textContent = el.arrotondaForza.value + '%';
+    });
+  }
   el.dettagliSens.addEventListener('input', () => {
     el.dettagliSensValue.textContent = el.dettagliSens.value;
   });
@@ -879,6 +887,12 @@
   // deve corrispondere a VERSIONE in ai-segmentation/taglia_pro.py: serve a
   // capire se sul PC gira ancora un companion vecchio (senza taglio locale)
   const TAGLIA_PRO_VERSIONE_ATTESA = 'pannello-sobrio-27';
+  // Versione del solo FILE HTML. E' separata da quella sopra apposta: quando si
+  // cambia soltanto la pagina (comandi, aspetto, selezione) la cartella sul PC
+  // va benissimo com'e', e alzare il numero di tutti e due farebbe comparire
+  // l'avviso "companion vecchio" per una cartella che non ha niente di vecchio.
+  // Sotto al titolo si leggono comunque tutte e due.
+  const APP_VERSIONE = 'giro-shift-28';
   // Versione scritta in chiaro sotto al titolo. Serve a capire al volo, da uno
   // screenshot, se il file aperto e' quello aggiornato: senza, quando qualcosa
   // non va non si sa nemmeno quale versione si sta guardando.
@@ -890,7 +904,7 @@
   function mostraVersione(companion) {
     const e = document.getElementById('versioneApp');
     if (!e) return;
-    e.textContent = 'app ' + TAGLIA_PRO_VERSIONE_ATTESA;
+    e.textContent = 'app ' + APP_VERSIONE;
     if (companion === undefined) return;
     const ok = companion === TAGLIA_PRO_VERSIONE_ATTESA;
     const s = document.createElement('span');
@@ -3104,7 +3118,7 @@
     // anche il lazo lascia un bordo a denti: si smussa come col pennello
     if (cutSelection && cutSelection.faces.size > 8) {
       const _p = currentResult.parts.find((x) => x.id === cutSelection.partId);
-      if (_p) arrotondaSelezione(_p, cutSelection.faces, 3);
+      if (_p) arrotondaSelezione(_p, cutSelection.faces, forzaArrotonda());
     }
     refreshCutHighlight();
     if (sel.altriPezzi && sel.altriPezzi.length) {
@@ -3182,6 +3196,35 @@
   // che non sempre riesce; qui basta un colpo. Il taglio a nocciolo lo
   // portava fino in fondo, e sul pezzo staccato quel lembo diventava
   // un'aletta.
+  // quanto smussare il bordo, in percentuale della macchia (cursore del pannello)
+  function forzaArrotonda() {
+    if (!el.arrotondaForza) return 12;
+    const v = parseFloat(el.arrotondaForza.value);
+    return isFinite(v) ? v : 12;
+  }
+
+  if (el.arrotondaBtn) {
+    el.arrotondaBtn.addEventListener('click', () => {
+      if (!cutSelection || !currentResult || cutSelection.faces.size < 12) {
+        alert('Prima seleziona una zona sul modello.');
+        return;
+      }
+      const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
+      if (!part) return;
+      pushCutHistory();          // cosi' "Annulla" riporta il bordo di prima
+      const prima = cutSelection.faces.size;
+      arrotondaSelezione(part, cutSelection.faces, forzaArrotonda());
+      refreshCutHighlight();
+      // niente finestrella quando funziona: il giallo che cambia si vede da se'.
+      // Si avvisa solo quando NON e' cambiato niente, altrimenti uno preme e
+      // resta li' a chiedersi se il pulsante ha fatto qualcosa.
+      if (cutSelection.faces.size === prima) {
+        alert('Il bordo e\' gia\' liscio a questo livello.\n\n' +
+              'Se vuoi arrotondare di piu\', alza il cursore "Arrotonda bordo" e ripremi.');
+      }
+    });
+  }
+
   if (el.soloMacchiaBtn) {
     el.soloMacchiaBtn.addEventListener('click', () => {
       if (!cutSelection || !currentResult) {
@@ -3664,7 +3707,134 @@
     const hit = viewer.raycastAt(e.clientX, e.clientY);
     if (hit && hit.partId === paintPartId) paintAt(hit);
   });
-  // ARROTONDA il bordo della selezione, senza allargarla.
+  // Somma delle aree dei triangoli di un insieme. Serve a misurare la macchia
+  // in unita' del modello invece che "in triangoli": due mesh della stessa
+  // forma ma con densita' diversa devono arrotondarsi allo stesso modo.
+  function areaFacce(part, sel) {
+    const pos = part.positions, idx = part.indices;
+    let tot = 0;
+    sel.forEach((f) => {
+      const a = idx[f * 3], b = idx[f * 3 + 1], c = idx[f * 3 + 2];
+      const ax = pos[a * 3], ay = pos[a * 3 + 1], az = pos[a * 3 + 2];
+      const ux = pos[b * 3] - ax, uy = pos[b * 3 + 1] - ay, uz = pos[b * 3 + 2] - az;
+      const vx = pos[c * 3] - ax, vy = pos[c * 3 + 1] - ay, vz = pos[c * 3 + 2] - az;
+      const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      tot += Math.sqrt(nx * nx + ny * ny + nz * nz) / 2;
+    });
+    return tot;
+  }
+
+  // ARROTONDA il bordo della selezione a una SCALA DECISA DA TE.
+  //
+  // Il vecchio smusso guardava solo i vicini immediati: toglieva i dentini da
+  // un triangolo, ma una gobba larga dieci triangoli restava tale e quale,
+  // perche' per ogni singolo triangolo di quella gobba "i conti tornavano".
+  // Ecco perche' il bordo sembrava ancora seguire le righe della mesh.
+  //
+  // Adesso si lavora sul CONTORNO come su una figura, non triangolo per
+  // triangolo: si da' valore 1 ai triangoli dentro e 0 a quelli fuori, si
+  // sfuma questo campo come si sfoca una foto, e si ridisegna il bordo dove
+  // il valore sfumato vale 0,5. Sfocare e poi ritagliare a meta' e' il modo
+  // classico di smussare una sagoma: le punte si consumano, le rientranze si
+  // riempiono, e un bordo gia' dritto non si muove di un millimetro (di qua e
+  // di la' la sfocatura e' simmetrica), quindi la macchia non cresce.
+  //
+  // Il raggio della sfocatura si misura in unita' del modello: e' una
+  // percentuale del raggio della macchia stessa. Cosi' una selezione piccola
+  // viene arrotondata poco e una grande molto, in proporzione, e il numero di
+  // triangoli della mesh non c'entra piu' niente.
+  function arrotondaSelezione(part, sel, percento) {
+    const topo = ensurePartTopology(part);
+    const nTris = part.indices.length / 3;
+    const forza = Math.max(0, Math.min(60, percento == null ? 12 : percento)) / 100;
+    if (!sel || sel.size < 12) return sel;
+    if (forza <= 0) return smussaDentiniSelezione(part, sel, 3);
+
+    const areaSel = areaFacce(part, sel);
+    if (!(areaSel > 0)) return smussaDentiniSelezione(part, sel, 3);
+    const lato = Math.sqrt(areaSel / sel.size);        // lato tipico di un triangolo
+    const raggioMacchia = Math.sqrt(areaSel / Math.PI); // raggio del cerchio di pari area
+    const raggio = forza * raggioMacchia;
+    // Ogni passata di sfumatura allarga il campo di poco piu' di mezzo
+    // triangolo: per arrivare a un raggio di k triangoli ne servono circa
+    // 1,35·k² (sarebbero 2,7·k² scrivendo su una copia, ma qui si scrive nello
+    // stesso campo e ne bastano la meta'). Il coefficiente e' misurato, non
+    // indovinato: con la formula ingenua k² il cursore saliva e il bordo
+    // rimaneva quello.
+    const k = raggio / Math.max(lato, 1e-9);
+    const passi = Math.max(2, Math.min(160, Math.round(1.35 * k * k)));
+    // La sfumatura si sente solo vicino al bordo, quindi si lavora in una
+    // fascia e il resto del modello non si tocca. La fascia deve essere piu'
+    // larga della sfumatura, se no i valori congelati ai suoi bordi fanno da
+    // muro e l'arrotondamento si blocca a meta' (era questo a rendere inutile
+    // alzare il cursore oltre il 4%).
+    const prof = Math.max(3, Math.min(60, Math.ceil(3 * k)));
+
+    // fascia attorno al bordo, per distanza in triangoli
+    const dist = new Int32Array(nTris).fill(-1);
+    const fascia = [];
+    sel.forEach((f) => {
+      const adj = topo.adjacency[f];
+      for (let i = 0; i < adj.length; i++) {
+        if (sel.has(adj[i])) continue;
+        if (dist[f] !== 0) { dist[f] = 0; fascia.push(f); }
+        if (dist[adj[i]] !== 0) { dist[adj[i]] = 0; fascia.push(adj[i]); }
+      }
+    });
+    if (fascia.length === 0) return sel;   // selezione senza bordo: niente da fare
+    for (let testa = 0; testa < fascia.length; testa++) {
+      const f = fascia[testa];
+      const d = dist[f];
+      if (d >= prof) continue;
+      const adj = topo.adjacency[f];
+      for (let i = 0; i < adj.length; i++) {
+        const nb = adj[i];
+        if (dist[nb] < 0) { dist[nb] = d + 1; fascia.push(nb); }
+      }
+    }
+
+    // sfumatura: media fra il triangolo e i suoi vicini, ripetuta "passi" volte.
+    // Fuori dalla fascia i valori restano fermi a 0 o 1 e fanno da sponda.
+    // Si scrive il risultato subito nello stesso campo, senza copia d'appoggio:
+    // cosi' la sfumatura si propaga gia' dentro la passata e ne bastano la
+    // meta'. Per non trascinare tutto nel verso in cui si scorre l'elenco, il
+    // verso si inverte a ogni passata.
+    const u = new Float32Array(nTris);
+    sel.forEach((f) => { u[f] = 1; });
+    for (let giro = 0; giro < passi; giro++) {
+      const avanti = (giro & 1) === 0;
+      for (let j = 0; j < fascia.length; j++) {
+        const f = fascia[avanti ? j : fascia.length - 1 - j];
+        const adj = topo.adjacency[f];
+        let s = u[f], n = 1;
+        for (let q = 0; q < adj.length; q++) { s += u[adj[q]]; n++; }
+        u[f] = s / n;
+      }
+    }
+
+    // ritaglio a meta': il nuovo bordo passa dove il campo sfumato vale 0,5
+    const prima = sel.size;
+    const salvata = new Set(sel);
+    for (let i = 0; i < fascia.length; i++) {
+      const f = fascia[i];
+      if (u[f] >= 0.5) sel.add(f); else sel.delete(f);
+    }
+    // rete di sicurezza: se lo smusso ha mangiato la macchia (puo' capitare su
+    // selezioni sottili tipo una cintura) si torna indietro invece di lasciare
+    // in mano un ritaglio dimezzato
+    if (sel.size < prima * 0.5 || sel.size < 8) {
+      sel.clear();
+      salvata.forEach((f) => sel.add(f));
+      return smussaDentiniSelezione(part, sel, 3);
+    }
+    // il ritaglio a meta' puo' lasciare qualche triangolo spaiato: si ripulisce
+    // come sempre (buchi tappati, frammenti staccati buttati) e si finisce con
+    // lo smusso fine, che toglie gli ultimi dentini da un triangolo solo
+    pulisciSelezione(part, sel, fascia);
+    return smussaDentiniSelezione(part, sel, 3, fascia);
+  }
+
+  // SMUSSO FINE, da un triangolo: toglie i dentini rimasti, senza allargare.
   // Due regole che si bilanciano, ripetute qualche volta:
   //   - un triangolo FUORI con due vicini dentro sta in un'intaccatura: entra;
   //   - un triangolo DENTRO con un solo vicino dentro e' una linguetta: esce.
@@ -3672,18 +3842,21 @@
   // dentro, uno appena dentro ne ha due), quindi la macchia non cresce: si
   // smussano solo i denti. La prima regola da sola, senza il taglio delle
   // linguette, contagerebbe invece tutto il pezzo.
-  function arrotondaSelezione(part, sel, giri) {
+  function smussaDentiniSelezione(part, sel, giri, candidati) {
     const topo = ensurePartTopology(part);
     const nTris = part.indices.length / 3;
+    const quanti = candidati ? candidati.length : nTris;
+    const quale = (i) => (candidati ? candidati[i] : i);
     for (let giro = 0; giro < (giri || 3); giro++) {
       let mosse = 0;
       const dentro = [];
-      for (let f = 0; f < nTris; f++) {
+      for (let i = 0; i < quanti; i++) {
+        const f = quale(i);
         if (sel.has(f)) continue;
         const adj = topo.adjacency[f];
         if (adj.length < 3) continue;
         let n = 0;
-        for (let i = 0; i < adj.length; i++) if (sel.has(adj[i])) n++;
+        for (let q = 0; q < adj.length; q++) if (sel.has(adj[q])) n++;
         if (n >= 2) dentro.push(f);
       }
       for (const f of dentro) { sel.add(f); mosse++; }
@@ -3708,7 +3881,7 @@
       const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
       if (part && cutSelection.faces.size > 8) {
         pulisciSelezione(part, cutSelection.faces);
-        arrotondaSelezione(part, cutSelection.faces, 3);
+        arrotondaSelezione(part, cutSelection.faces, forzaArrotonda());
         refreshCutHighlight();
       }
     }
@@ -3726,18 +3899,25 @@
   // Ripulisce una selezione dai buchi: i triangolini rimasti fuori in mezzo
   // alla zona scelta vengono inglobati, e i frammenti isolati fuori vengono
   // scartati. Sono quelli che lasciavano il bordo del taglio frastagliato.
-  function pulisciSelezione(part, sel) {
+  // "candidati" e' facoltativo: quando si sa gia' che i triangoli da guardare
+  // sono solo quelli vicini al bordo (la fascia dell'arrotondamento) si passa
+  // quell'elenco invece di riscorrere tutta la mesh. Su un modello da 400.000
+  // triangoli e' la differenza fra un decimo di secondo e un secondo.
+  function pulisciSelezione(part, sel, candidati) {
     const topo = ensurePartTopology(part);
     const nTris = part.indices.length / 3;
+    const quanti = candidati ? candidati.length : nTris;
+    const quale = (i) => (candidati ? candidati[i] : i);
     // 1) buchi DENTRO la selezione: un triangolo fuori, circondato da dentro
     for (let giro = 0; giro < 3; giro++) {
       const daAggiungere = [];
-      for (let f = 0; f < nTris; f++) {
+      for (let i = 0; i < quanti; i++) {
+        const f = quale(i);
         if (sel.has(f)) continue;
         const adj = topo.adjacency[f];
         if (adj.length === 0) continue;
         let dentro = 0;
-        for (let i = 0; i < adj.length; i++) if (sel.has(adj[i])) dentro++;
+        for (let q = 0; q < adj.length; q++) if (sel.has(adj[q])) dentro++;
         if (dentro >= adj.length - 0.5) daAggiungere.push(f);  // tutti i vicini dentro
       }
       if (daAggiungere.length === 0) break;
@@ -4336,13 +4516,165 @@
     return { facce: cutSelection.faces.size, bordo, denti,
       frazioneDenti: bordo ? denti / bordo : 0 };
   };
-  window.__arrotonda = (giri) => {
+  // Elenco dei triangoli scelti, e un modo per SPORCARE il bordo di proposito.
+  // Servono al banco di prova dell'arrotondamento: si parte da una macchia
+  // pulita, la si rovina in modo ripetibile (un dado con seme fisso) e si
+  // guarda quanto l'arrotondamento la riporta com'era. Senza un "com'era"
+  // di riferimento non si puo' dire se il bordo e' migliorato o solo cambiato.
+  window.__selFacce = () => (cutSelection ? Array.from(cutSelection.faces) : null);
+  window.__sporcaSelezione = (percento, seme) => {
     if (!cutSelection || !currentResult) return null;
     const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
     if (!part) return null;
-    arrotondaSelezione(part, cutSelection.faces, giri || 3);
+    const adj = ensurePartTopology(part).adjacency;
+    const sel = cutSelection.faces;
+    // fascia di due anelli attorno al bordo, di qua e di la'
+    const bordo = new Set();
+    sel.forEach((f) => {
+      const a = adj[f];
+      for (let i = 0; i < a.length; i++) if (!sel.has(a[i])) { bordo.add(f); bordo.add(a[i]); }
+    });
+    const fascia = new Set(bordo);
+    bordo.forEach((f) => {
+      const a = adj[f];
+      for (let i = 0; i < a.length; i++) fascia.add(a[i]);
+    });
+    let s = (seme || 12345) >>> 0;
+    const dado = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+    const quota = (percento == null ? 35 : percento) / 100;
+    let girati = 0;
+    fascia.forEach((f) => {
+      if (dado() > quota) return;
+      if (sel.has(f)) sel.delete(f); else sel.add(f);
+      girati++;
+    });
+    refreshCutHighlight();
+    return { girati, facce: sel.size };
+  };
+  window.__arrotonda = (percento) => {
+    if (!cutSelection || !currentResult) return null;
+    const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
+    if (!part) return null;
+    arrotondaSelezione(part, cutSelection.faces, percento == null ? forzaArrotonda() : percento);
     refreshCutHighlight();
     return cutSelection.faces.size;
+  };
+  // Quanto e' RUVIDO il contorno della selezione, guardato come figura e non
+  // triangolo per triangolo: lunghezza del bordo diviso quella di un cerchio
+  // della stessa area. Vale 1 per un cerchio perfetto e cresce quando il
+  // contorno serpeggia. E' la misura che vede le gobbe larghe, quelle che il
+  // conteggio dei dentini non notava.
+  window.__bordoRuvido = () => {
+    if (!cutSelection || !currentResult) return null;
+    const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
+    if (!part) return null;
+    const sel = cutSelection.faces;
+    const pos = part.positions, idx = part.indices;
+    const chiave = (a, b) => (a < b ? a + '_' + b : b + '_' + a);
+    const conta = new Map();
+    sel.forEach((f) => {
+      for (let k = 0; k < 3; k++) {
+        const a = idx[f * 3 + k], b = idx[f * 3 + ((k + 1) % 3)];
+        const c = chiave(a, b);
+        conta.set(c, (conta.get(c) || 0) + 1);
+      }
+    });
+    let perimetro = 0;
+    conta.forEach((n, c) => {
+      if (n !== 1) return;                 // spigolo interno: sta fra due facce scelte
+      const [a, b] = c.split('_').map(Number);
+      perimetro += Math.hypot(
+        pos[a * 3] - pos[b * 3], pos[a * 3 + 1] - pos[b * 3 + 1], pos[a * 3 + 2] - pos[b * 3 + 2]);
+    });
+    const area = areaFacce(part, sel);
+    const cerchio = 2 * Math.sqrt(Math.PI * area);
+
+    // ONDULAZIONE: quanto il contorno serpeggia da vicino. Si mette in fila il
+    // giro del bordo e si guarda, punto per punto, di quanto quel punto scarta
+    // dalla corda che unisce i due punti sei passi prima e sei dopo. Un
+    // contorno a zig-zag scarta tanto, uno disteso quasi niente. E' la misura
+    // che serve qui: la lunghezza del bordo, da sola, resta alta anche su un
+    // contorno perfetto solo perche' la superficie sotto e' grinzosa.
+    const vicini = new Map();
+    conta.forEach((n, c) => {
+      if (n !== 1) return;
+      const [a, b] = c.split('_').map(Number);
+      if (!vicini.has(a)) vicini.set(a, []);
+      if (!vicini.has(b)) vicini.set(b, []);
+      vicini.get(a).push(b);
+      vicini.get(b).push(a);
+    });
+    // Non si prova a mettere il bordo "in fila": su una mesh vera il giro si
+    // biforca (punti dove il contorno si tocca) e ogni tentativo di seguirlo
+    // in ordine si perde per strada. Si lavora invece sul grafo del bordo:
+    // per ogni punto si guardano i punti del bordo raggiungibili in K passi e
+    // si misura di quanto quel punto scarta dal loro centro. Su un tratto
+    // disteso il centro cade sul punto stesso e lo scarto e' zero; su un
+    // zig-zag no.
+    // Lo scarto va misurato SOLO di traverso, non in profondita': se la coscia
+    // e' tonda, un contorno perfettamente disteso segue comunque la curva del
+    // pezzo e "scarterebbe" dal centro anche se e' liscio come un vetro.
+    // Quindi per ogni punto si tiene la normale della superficie li' e si
+    // butta via la parte di scarto che va in quella direzione: resta il
+    // serpeggiare vero, quello che si vede come bordo seghettato.
+    const normali = new Map();
+    const nrm = ensurePartTopology(part).normals;
+    sel.forEach((f) => {
+      for (let k = 0; k < 3; k++) {
+        const v = idx[f * 3 + k];
+        const q = normali.get(v) || [0, 0, 0];
+        q[0] += nrm[f * 3]; q[1] += nrm[f * 3 + 1]; q[2] += nrm[f * 3 + 2];
+        normali.set(v, q);
+      }
+    });
+    let somma = 0, quanti = 0, massimo = 0;
+    const K = 6;
+    const segnati = new Map();
+    vicini.forEach((_, v0) => {
+      // giro breve attorno a v0 dentro il grafo del bordo
+      segnati.clear();
+      segnati.set(v0, 0);
+      const coda = [v0];
+      let sx = pos[v0 * 3], sy = pos[v0 * 3 + 1], sz = pos[v0 * 3 + 2], n = 1;
+      for (let i = 0; i < coda.length; i++) {
+        const v = coda[i];
+        const d = segnati.get(v);
+        if (d >= K) continue;
+        const vs = vicini.get(v) || [];
+        for (let j = 0; j < vs.length; j++) {
+          const w = vs[j];
+          if (segnati.has(w)) continue;
+          segnati.set(w, d + 1);
+          coda.push(w);
+          sx += pos[w * 3]; sy += pos[w * 3 + 1]; sz += pos[w * 3 + 2]; n++;
+        }
+      }
+      if (n < 2 * K) return;              // punto di bordo isolato: non dice niente
+      let dx = pos[v0 * 3] - sx / n, dy = pos[v0 * 3 + 1] - sy / n, dz = pos[v0 * 3 + 2] - sz / n;
+      const q = normali.get(v0);
+      if (q) {
+        const ql = Math.sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2]);
+        if (ql > 1e-9) {
+          const nx = q[0] / ql, ny = q[1] / ql, nz = q[2] / ql;
+          const lungo = dx * nx + dy * ny + dz * nz;
+          dx -= lungo * nx; dy -= lungo * ny; dz -= lungo * nz;
+        }
+      }
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      somma += d; quanti++;
+      if (d > massimo) massimo = d;
+    });
+    const giriTrovati = 1, giroPiuLungo = vicini.size;
+    const lato = sel.size > 0 ? Math.sqrt(area / sel.size) : 1;
+    return {
+      perimetro, area, facce: sel.size,
+      indice: cerchio > 0 ? perimetro / cerchio : null,
+      // in unita' del modello e in "triangoli", cosi' si legge in tutti e due i modi
+      onda: quanti ? somma / quanti : null,
+      ondaMax: massimo,
+      ondaTriangoli: quanti ? (somma / quanti) / lato : null,
+      giri: giriTrovati, giroPiuLungo, puntiBordo: vicini.size,
+    };
   };
   window.__misureParte = (nome) => {
     if (!currentResult) return null;

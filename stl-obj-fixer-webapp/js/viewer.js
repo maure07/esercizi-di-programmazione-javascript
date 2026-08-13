@@ -96,8 +96,11 @@
 
     canvas.style.touchAction = 'none';
     canvas.style.cursor = 'grab';
-    // col mouse: tasto destro / centrale / Shift-trascina = sposta (pan);
-    // tasto sinistro = ruota. Su touch resta un dito = ruota, due dita = zoom+pan.
+    // col mouse: SHIFT+sinistro e tasto centrale girano SEMPRE la telecamera,
+    // anche quando si sta selezionando e anche col cursore sopra il modello;
+    // tasto destro (o Ctrl/Cmd+sinistro) sposta (pan); il sinistro liscio
+    // ruota, oppure dipinge se la app se lo prende.
+    // Su touch resta un dito = ruota, due dita = zoom+pan.
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     // hook opzionale: se restituisce true la app "prende" questo pointer (per
     // dipingere la selezione), e il viewer NON ruota/sposta con quel dito.
@@ -106,11 +109,14 @@
 
     canvas.addEventListener('pointerdown', (e) => {
       canvas.setPointerCapture(e.pointerId);
-      // Mouse: destro o Shift = sposta (pan); CENTRALE = ruota sempre, anche
-      // sopra il modello (comodo quando sei zoomato e non hai sfondo da agganciare);
-      // sinistro = ruota, oppure dipinge se la app "prende" il tocco.
-      const pan = e.button === 2 || e.shiftKey;
-      const paintEligible = e.button === 0 && !pan;
+      // Mouse: destro (o Ctrl/Cmd+sinistro) = sposta (pan);
+      // CENTRALE e SHIFT+sinistro = girano la telecamera SEMPRE, anche sopra il
+      // modello mentre selezioni. Prima per girare bisognava zoomare indietro,
+      // trovare un punto vuoto, girare e rizoomare: con Shift si gira e basta.
+      // Sinistro liscio = ruota, oppure dipinge se la app "prende" il tocco.
+      const pan = e.button === 2 || (e.button === 0 && (e.ctrlKey || e.metaKey));
+      const orbita = e.button === 1 || (e.button === 0 && e.shiftKey);
+      const paintEligible = e.button === 0 && !pan && !orbita;
       let claimed = false;
       if (pointerDownHook && pointers.size === 0 && paintEligible) {
         claimed = !!pointerDownHook(e.clientX, e.clientY, e.pointerId);

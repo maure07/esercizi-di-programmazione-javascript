@@ -806,7 +806,7 @@
 <div id="viewerWrap">
   <canvas id="viewer"></canvas>
   <canvas id="lassoOverlay"></canvas>
-  <div id="viewerHint" style="display:none">Mouse: sinistro/centrale ruota rotellina zoom (verso il cursore) destro o Shift sposta <b>doppio clic centra sul punto</b> &nbsp;·&nbsp; Tasti: <b>1</b> fronte <b>2</b> retro <b>3</b>/<b>4</b> lati <b>7</b> sopra <b>9</b> sotto <b>F</b> inquadra &nbsp;·&nbsp; Touch: 1 dito ruota 2 dita zoom/sposta</div>
+  <div id="viewerHint" style="display:none">Mouse: sinistro/centrale ruota <b>Shift+sinistro ruota anche mentre selezioni</b> rotellina zoom (verso il cursore) destro o Ctrl sposta <b>doppio clic centra sul punto</b> &nbsp;·&nbsp; Tasti: <b>1</b> fronte <b>2</b> retro <b>3</b>/<b>4</b> lati <b>7</b> sopra <b>9</b> sotto <b>F</b> inquadra &nbsp;·&nbsp; Touch: 1 dito ruota 2 dita zoom/sposta</div>
   <button id="undoPartiBtn" style="display:none" title="Annulla l'ultima operazione sui pezzi">Annulla</button>
   <button id="frameBtn" style="display:none">Inquadra</button>
   <div id="emptyState">
@@ -933,7 +933,7 @@
     blocchetto e sede: lo scegli tu qui sotto in <b>“Come si uniscono i pezzi”</b>).
   </div>
   <div id="cutControls" style="display:none">
-    <div id="cutHint" class="spiega">Tocca il modello per selezionare (giallo). Raggio piccolo = tocchi precisi. Rimuovi cancella dove tocchi, Annulla: annulla l'ultimo tocco.</div>
+    <div id="cutHint" class="spiega">Tocca il modello per selezionare (giallo). Raggio piccolo = tocchi precisi. Rimuovi cancella dove tocchi, Annulla: annulla l'ultimo tocco. <b>Per girare il modello senza perdere la selezione tieni premuto Shift e trascina col tasto sinistro</b>: non serve pi&ugrave; zoomare indietro e agganciare lo sfondo.</div>
     <div class="cut-slider-row" id="brushRadiusRow">
       <label for="cutRadius">Raggio</label>
       <input type="range" id="cutRadius" min="0" max="1000" step="1" value="580" />
@@ -974,6 +974,23 @@
     </div>
     <div class="cut-actions" style="margin-bottom:8px">
       <button id="soloMacchiaBtn">Tieni solo la macchia principale</button>
+    </div>
+    <div class="cut-slider-row" id="arrotondaRow">
+      <label for="arrotondaForza">Arrotonda bordo</label>
+      <input type="range" id="arrotondaForza" min="0" max="25" step="1" value="12" />
+      <span id="arrotondaForzaValue">12%</span>
+    </div>
+    <div class="cut-actions" style="margin-bottom:8px">
+      <button id="arrotondaBtn">Arrotonda adesso</button>
+    </div>
+    <div class="spiega" style="font-size:11px;color:var(--text-dim);margin:-4px 0 8px 0;line-height:1.4">
+      Quando lasci il pennello (o chiudi il lazo) il bordo della selezione viene smussato da
+      solo di questa quantit&agrave;. &Egrave; una <b>percentuale della macchia</b>: 12% su una
+      zona grande smussa tanto, sulla stessa zona in piccolo smussa poco, sempre in proporzione.
+      Alza se il contorno ti resta ancora <b>seghettato o bitorzoluto</b>, abbassa se ti mangia
+      i dettagli che vuoi tenere. <b>0%</b> lascia il contorno com&rsquo;&egrave; (toglie solo i
+      dentini da un triangolo). Il pulsante lo riapplica quando vuoi: premuto due volte
+      arrotonda il doppio.
     </div>
     <div class="spiega" style="font-size:11px;color:var(--text-dim);margin:-4px 0 8px 0;line-height:1.4">
       Se oltre alla zona che vuoi è rimasto attaccato un <b>pezzetto staccato</b> da un'altra
