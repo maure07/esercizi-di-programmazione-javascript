@@ -72,7 +72,6 @@
     cutModeAddBtn: document.getElementById('cutModeAddBtn'),
     cutModeEraseBtn: document.getElementById('cutModeEraseBtn'),
     cutUndoBtn: document.getElementById('cutUndoBtn'),
-    soloMacchiaBtn: document.getElementById('soloMacchiaBtn'),
     cutCreateBtn: document.getElementById('cutCreateBtn'),
     cutCancelBtn: document.getElementById('cutCancelBtn'),
     selectExtras: document.getElementById('selectExtras'),
@@ -115,7 +114,6 @@
     lassoThroughChk: document.getElementById('lassoThroughChk'),
     flatCutChk: document.getElementById('flatCutChk'),
     flatCutModo: document.getElementById('flatCutModo'),
-    incastroModo: document.getElementById('incastroModo'),
     analysisPanel: document.getElementById('analysisPanel'),
     analysisReport: document.getElementById('analysisReport'),
     modelHeight: document.getElementById('modelHeight'),
@@ -140,133 +138,7 @@
     partsList: document.getElementById('partsList'),
     exportRow: document.getElementById('exportRow'),
     exportZipBtn: document.getElementById('exportZipBtn'),
-    profNocciolo: document.getElementById('profNocciolo'),
-    profNoccioloValue: document.getElementById('profNoccioloValue'),
-    profNoccioloRow: document.getElementById('profNoccioloRow'),
   };
-
-  // COMANDI TOLTI dal pannello perche' facevano doppione:
-  //  - la segmentazione sul PC (bastano quella nel browser e il taglio a mano);
-  //  - "Chiudi mantenendo i dettagli" e "Ricostruisci solido", che stanno gia'
-  //    nel menu della riparazione;
-  //  - lo strumento connettori a se' stante: perno e foro li mette il taglio.
-  // Il codice che li pilotava serve ancora al resto, quindi al posto degli
-  // elementi spariti si mette un segnaposto inerte che assorbe le chiamate.
-  // L'elenco e' esplicito apposta: un id scritto male da un'altra parte
-  // continua a dare errore, come deve.
-  const COMANDI_TOLTI = [
-    'segmentAiBtn', 'aiHint', 'dettagliChk', 'dettagliSens', 'dettagliSensValue',
-    'solidRow', 'closeLightBtn', 'solidifyAllBtn', 'solidQuality',
-    'connectorRow', 'connectorToggleBtn', 'connectorControls', 'connectorHint',
-    'connTypePegBtn', 'connTypePinBtn', 'connDiam', 'connDiamValue',
-    'connDepth', 'connDepthValue', 'connQuality', 'connUndoBtn', 'connDoneBtn',
-  ];
-  (function segnapostoInerti() {
-    const nulla = () => {};
-    COMANDI_TOLTI.forEach((id) => {
-      if (el[id]) return;
-      el[id] = {
-        tolto: true, value: '', checked: false, textContent: '', disabled: true,
-        style: {},
-        classList: { add: nulla, remove: nulla, toggle: nulla, contains: () => false },
-        addEventListener: nulla, removeEventListener: nulla,
-        appendChild: nulla, setAttribute: nulla, focus: nulla, click: nulla,
-        closest: () => null, querySelector: () => null,
-      };
-    });
-  })();
-
-  // ===================================================================
-  // COLONNA DI SINISTRA: I DATI DELLA MESH
-  // Triangoli, ingombro, volume, e soprattutto i DIFETTI (buchi, spigoli
-  // aperti, triangoli senza area). Prima stavano schiacciati nel riquadro
-  // dell'analisi, che sparisce appena si passa al passo dopo: li' servono
-  // proprio mentre si taglia, per sapere con che roba si ha a che fare.
-  const infoCorpo = document.getElementById('infoCorpo');
-  const infoVuoto = document.getElementById('infoVuoto');
-
-  function rigaInfo(etichetta, valore, tono) {
-    return '<div class="mesh-riga' + (tono ? ' ' + tono : '') + '">'
-      + '<span class="mesh-et">' + etichetta + '</span>'
-      + '<span class="mesh-val">' + valore + '</span></div>';
-  }
-  function gruppoInfo(titolo, righe) {
-    if (!righe) return '';
-    return '<div class="mesh-gruppo"><div class="mesh-titolo">' + titolo + '</div>' + righe + '</div>';
-  }
-
-  function aggiornaInfoMesh() {
-    if (!infoCorpo) return;
-    const a = currentAnalysis;
-    if (!a) {
-      infoCorpo.innerHTML = '';
-      if (infoVuoto) infoVuoto.style.display = '';
-      return;
-    }
-    if (infoVuoto) infoVuoto.style.display = 'none';
-
-    // dopo la riparazione e dopo il taglio i numeri cambiano: si mostra
-    // sempre l'ultimo stato, non quello di quando il file e' stato aperto
-    let nTris = a.nTris, size = a.size, chiusa = null, quantiPezzi = 0;
-    let volume = null;
-    if (currentResult && currentResult.parts.length) {
-      nTris = currentResult.parts.reduce((k, p) => k + p.indices.length / 3, 0);
-      quantiPezzi = currentResult.parts.length;
-      chiusa = currentResult.parts.every((p) => p.watertight);
-      volume = currentResult.parts.reduce((k, p) => k + Math.abs(p.stats.volume), 0);
-      const mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
-      currentResult.parts.forEach((p) => {
-        for (let i = 0; i < 3; i++) {
-          if (p.stats.bboxMin[i] < mn[i]) mn[i] = p.stats.bboxMin[i];
-          if (p.stats.bboxMax[i] > mx[i]) mx[i] = p.stats.bboxMax[i];
-        }
-      });
-      size = [0, 1, 2].map((i) => mx[i] - mn[i]);
-    } else if (currentRepaired) {
-      nTris = currentRepaired.indices.length / 3;
-      chiusa = currentRepaired.watertight;
-      volume = Math.abs(currentRepaired.stats.volume);
-      size = [0, 1, 2].map((i) => currentRepaired.stats.bboxMax[i] - currentRepaired.stats.bboxMin[i]);
-    }
-
-    let html = '';
-    let r = '';
-    r += rigaInfo('Triangoli', fmt(nTris, 0));
-    r += rigaInfo('Larghezza (X)', fmt(size[0], 1) + ' mm');
-    r += rigaInfo('Profondit&agrave; (Y)', fmt(size[1], 1) + ' mm');
-    r += rigaInfo('Altezza (Z)', fmt(size[2], 1) + ' mm');
-    if (volume !== null) {
-      r += rigaInfo('Volume', fmt(volume / 1000, 1) + ' cm&sup3;');
-      r += rigaInfo('Peso in PLA', '~' + fmt(volume / 1000 * 1.24, 0) + ' g');
-    }
-    html += gruppoInfo('Misure', r);
-
-    r = '';
-    if (quantiPezzi) r += rigaInfo('Pezzi tagliati', fmt(quantiPezzi, 0));
-    r += rigaInfo('Pezzi nel file', fmt(a.components, 0));
-    if (chiusa === true) r += rigaInfo('Superficie', 'chiusa', 'ok');
-    else if (chiusa === false) r += rigaInfo('Superficie', 'non chiusa', 'guai');
-    html += gruppoInfo('Composizione', r);
-
-    // i difetti: sempre elencati, anche a zero, cosi' si vede che sono stati
-    // guardati invece di dover indovinare se il controllo e' stato fatto
-    r = '';
-    const buchi = a.boundary ? a.boundary.loops.length : 0;
-    const bordi = a.boundary ? a.boundary.totalBoundaryEdges : 0;
-    r += rigaInfo('Buchi', fmt(buchi, 0), buchi ? 'guai' : 'ok');
-    r += rigaInfo('Spigoli aperti', fmt(bordi, 0), bordi ? 'guai' : 'ok');
-    r += rigaInfo('Triangoli senza area', fmt(a.nDegenerate, 0), a.nDegenerate ? 'guai' : 'ok');
-    r += rigaInfo('Spigoli doppi', fmt(a.nonManifold, 0), a.nonManifold ? 'guai' : 'ok');
-    html += gruppoInfo('Difetti al caricamento', r);
-
-    if (currentRepaired || currentResult) {
-      html += '<div class="mesh-nota">I difetti qui sopra sono quelli trovati quando hai '
-        + 'aperto il file. La riparazione li ha gi&agrave; affrontati: guarda la riga '
-        + '<b>Superficie</b> per sapere com&rsquo;&egrave; adesso.</div>';
-    }
-    infoCorpo.innerHTML = html;
-  }
-  window.__infoMesh = () => (infoCorpo ? infoCorpo.textContent.replace(/\s+/g, ' ').trim() : null);
 
   const viewer = createViewer(el.viewer);
 
@@ -407,7 +279,6 @@
       updateExportButtonState();
     }
     if (explodedOn && n !== 4) setExploded(false);
-    aggiornaInfoMesh();
     // il viewer mostra cio' che riguarda lo step corrente
     if (n === 3 && currentResult) {
       renderResult(currentResult);
@@ -447,20 +318,20 @@
         <span class="dim">${i + 1}.</span>
         <span style="width:14px;height:14px;border-radius:4px;background:${sw};border:1px solid rgba(255,255,255,0.2);flex-shrink:0"></span>
         <b>${cname}</b>
-        <span class="dim">${g.parts.length} ${g.parts.length === 1 ? 'pezzo' : 'pezzi'} ~${fmt(g.grams, 1)} g</span>
+        <span class="dim">· ${g.parts.length} ${g.parts.length === 1 ? 'pezzo' : 'pezzi'} · ~${fmt(g.grams, 1)} g</span>
       </div>`;
     }).join('');
     el.filamentSummary.innerHTML = `
       <div class="dim" style="margin-bottom:6px">Bobine da caricare (ordine consigliato: una alla volta, tutti i pezzi di quel colore):</div>
       ${html}
-      <div style="margin-top:6px"><span class="dim">Totale:</span> ~${fmt(totalG, 1)} g PLA ${currentResult.parts.filter((p) => p.included).length} pezzi</div>
+      <div style="margin-top:6px"><span class="dim">Totale:</span> ~${fmt(totalG, 1)} g PLA · ${currentResult.parts.filter((p) => p.included).length} pezzi</div>
     `;
   }
 
   function setExploded(on) {
     explodedOn = on;
     el.explodeBtn.classList.toggle('active', on);
-    el.explodeBtn.textContent = on ? 'Vista esplosa attiva' : 'Vista esplosa';
+    el.explodeBtn.textContent = on ? '💥 Vista esplosa attiva' : '💥 Vista esplosa';
     if (!currentResult) return;
     const parts = currentResult.parts;
     if (parts.length === 0) return;
@@ -708,12 +579,12 @@
     currentAnalysis = { positions, indices, nTris, nDegenerate, nonManifold, boundary, components: comp.componentCount, size, tol };
 
     const issues = [];
-    if (nDegenerate > 0) issues.push(`<div class="issue">Attenzione: ${fmt(nDegenerate, 0)} triangoli degeneri (senza area)</div>`);
-    if (nonManifold > 0) issues.push(`<div class="issue">Attenzione: ${fmt(nonManifold, 0)} spigoli non-manifold (geometria doppia o difettosa)</div>`);
-    if (boundary.totalBoundaryEdges > 0) issues.push(`<div class="issue">Attenzione: ${fmt(boundary.loops.length, 0)} buchi (${fmt(boundary.totalBoundaryEdges, 0)} spigoli di bordo): la superficie è aperta, non stampabile così</div>`);
+    if (nDegenerate > 0) issues.push(`<div class="issue">⚠ ${fmt(nDegenerate, 0)} triangoli degeneri (senza area)</div>`);
+    if (nonManifold > 0) issues.push(`<div class="issue">⚠ ${fmt(nonManifold, 0)} spigoli non-manifold (geometria doppia o difettosa)</div>`);
+    if (boundary.totalBoundaryEdges > 0) issues.push(`<div class="issue">⚠ ${fmt(boundary.loops.length, 0)} buchi (${fmt(boundary.totalBoundaryEdges, 0)} spigoli di bordo): la superficie è aperta, non stampabile così</div>`);
     const issuesHtml = issues.length > 0
       ? issues.join('') + '<div class="dim" style="margin-top:6px">Consiglio: passa da "Ripara e solidifica" prima di segmentare.</div>'
-      : '<div class="ok">Nessun problema rilevato: la mesh è già chiusa e pulita.</div>';
+      : '<div class="ok">✔ Nessun problema rilevato: la mesh è già chiusa e pulita.</div>';
 
     // stato colori/texture, mostrato subito allo step 1 (e' qui che l'utente
     // si accorge se il modello e' "grigio")
@@ -721,13 +592,13 @@
     const cp = currentParsed;
     if (cp) {
       if (cp.textureError) {
-        colorHtml = `<div class="issue" style="margin-top:6px">Attenzione: Non sono riuscito a leggere l'immagine texture: ${cp.textureError}. Il modello resta grigio.</div>`;
+        colorHtml = `<div class="issue" style="margin-top:6px">⚠ Non sono riuscito a leggere l'immagine texture: ${cp.textureError}. Il modello resta grigio.</div>`;
       } else if (cp.textureApplied) {
-        colorHtml = '<div class="ok" style="margin-top:6px">Texture caricata: il modello è mostrato con i suoi colori.</div>';
+        colorHtml = '<div class="ok" style="margin-top:6px">✔ Texture caricata: il modello è mostrato con i suoi colori.</div>';
       } else if (cp.hasTextureInfo) {
-        colorHtml = '<div class="issue" style="margin-top:6px">Attenzione: Questo .obj usa una texture ma non hai selezionato il file immagine (.png/.jpg). Per vedere i colori ricarica <b>insieme</b> .obj + .mtl + immagine (selezionali tutti nella stessa finestra).</div>';
+        colorHtml = '<div class="issue" style="margin-top:6px">⚠ Questo .obj usa una texture ma non hai selezionato il file immagine (.png/.jpg). Per vedere i colori ricarica <b>insieme</b> .obj + .mtl + immagine (selezionali tutti nella stessa finestra).</div>';
       } else if (cp.hasColorInfo) {
-        colorHtml = '<div class="ok" style="margin-top:6px">Colori del modello caricati.</div>';
+        colorHtml = '<div class="ok" style="margin-top:6px">✔ Colori del modello caricati.</div>';
       } else {
         colorHtml = '<div class="dim" style="margin-top:6px">Modello senza colori: verrà mostrato in grigio (normale per gli STL). Per i colori serve un .obj con texture.</div>';
       }
@@ -745,7 +616,6 @@
     el.viewerHint.style.display = '';
     el.frameBtn.style.display = '';
     el.stepper.style.display = 'flex';
-    aggiornaInfoMesh();
     goToStep(1);
     setLoading(false);
   }
@@ -761,9 +631,9 @@
       currentRepaired = repaired;
       const size = [0, 1, 2].map((i) => repaired.stats.bboxMax[i] - repaired.stats.bboxMin[i]);
       el.repairReport.innerHTML = `
-        ${repaired.log.map((l) => `<div>${/Attenzione|ancora aperta/.test(l) ? '<span class="issue">Attenzione: ' + l + '</span>' : '' + l}</div>`).join('')}
-        <div style="margin-top:6px">${repaired.watertight ? '<span class="ok">Modello chiuso e stampabile (watertight)</span>' : '<span class="issue">Attenzione: Restano bordi aperti: la stampa potrebbe comunque riuscire, lo slicer chiude i difetti piccoli</span>'}</div>
-        <div class="dim" style="margin-top:4px">${fmt(repaired.indices.length / 3, 0)} triangoli ${fmt(size[0], 1)}×${fmt(size[1], 1)}×${fmt(size[2], 1)}</div>
+        ${repaired.log.map((l) => `<div>${/Attenzione|ancora aperta/.test(l) ? '<span class="issue">⚠ ' + l + '</span>' : '· ' + l}</div>`).join('')}
+        <div style="margin-top:6px">${repaired.watertight ? '<span class="ok">✔ Modello chiuso e stampabile (watertight)</span>' : '<span class="issue">⚠ Restano bordi aperti: la stampa potrebbe comunque riuscire, lo slicer chiude i difetti piccoli</span>'}</div>
+        <div class="dim" style="margin-top:4px">${fmt(repaired.indices.length / 3, 0)} triangoli · ${fmt(size[0], 1)}×${fmt(size[1], 1)}×${fmt(size[2], 1)}</div>
       `;
       el.downloadRepairedBtn.style.display = 'block';
       // se il modello ha colori (texture/materiali), mostralo a colori anche
@@ -864,7 +734,7 @@
     if (ultimo) {
       // il numero dice quanti passi indietro restano: ogni clic ne toglie UNO,
       // non riporta tutto all'inizio
-      el.undoPartiBtn.textContent = `Annulla (${storiaParti.length})`;
+      el.undoPartiBtn.textContent = `↩ Annulla (${storiaParti.length})`;
       el.undoPartiBtn.title = `Annulla "${ultimo.etichetta}" (${storiaParti.length} passi indietro disponibili)`;
     }
   }
@@ -878,90 +748,14 @@
   }
   // deve corrispondere a VERSIONE in ai-segmentation/taglia_pro.py: serve a
   // capire se sul PC gira ancora un companion vecchio (senza taglio locale)
-  const TAGLIA_PRO_VERSIONE_ATTESA = 'pannello-sobrio-27';
+  const TAGLIA_PRO_VERSIONE_ATTESA = 'taglio-dentro-16';
   // Versione scritta in chiaro sotto al titolo. Serve a capire al volo, da uno
   // screenshot, se il file aperto e' quello aggiornato: senza, quando qualcosa
   // non va non si sa nemmeno quale versione si sta guardando.
-  // ...ma la versione dell'HTML da sola non basta e ha ingannato: il taglio lo
-  // fa la CARTELLA sul PC, e vedere scritta la versione nuova sotto al titolo
-  // faceva credere di essere a posto mentre il companion era rimasto indietro.
-  // Quindi si scrivono TUTTE E DUE, e quella della cartella si colora di rosso
-  // quando non combacia.
-  function mostraVersione(companion) {
+  (function mostraVersione() {
     const e = document.getElementById('versioneApp');
-    if (!e) return;
-    e.textContent = 'app ' + TAGLIA_PRO_VERSIONE_ATTESA;
-    if (companion === undefined) return;
-    const ok = companion === TAGLIA_PRO_VERSIONE_ATTESA;
-    const s = document.createElement('span');
-    s.textContent = ' \u00b7 companion ' + (companion || 'non raggiungibile');
-    s.style.color = ok ? '' : '#ff6b6b';
-    s.style.fontWeight = ok ? '' : '700';
-    s.title = ok ? 'i due pezzi combaciano'
-      : 'La cartella "ai-segmentation" sul PC e\' vecchia: e\' lei che fa il taglio. '
-        + 'Chiudi la finestra nera, sostituisci la cartella, riapri avvia.bat.';
-    e.appendChild(s);
-  }
-  mostraVersione();
-
-  // Col nocciolo la faccia di taglio piatta la fa il nocciolo stesso (il piano
-  // a meta' spessore), quindi il menu "Faccia di taglio piatta" non cambia
-  // NIENTE: misurato, i tre valori danno lo stesso identico pezzo — stesso
-  // volume (1.227.105) e stesse facce (7.622). Lasciarlo attivo vuol dire far
-  // scegliere una cosa che non conta, con due menu vicini che sembrano legati
-  // e non lo sono: e' il modo piu' rapido per far perdere fiducia nel pannello.
-  function aggiornaMenuFacciaPiatta() {
-    if (!el.incastroModo || !el.flatCutModo) return;
-    const nocciolo = /^nocciolo/.test(el.incastroModo.value);
-    el.flatCutModo.disabled = nocciolo;
-    const riga = el.flatCutModo.closest('label');
-    if (riga) riga.style.opacity = nocciolo ? '0.45' : '';
-    // e via anche la sua spiegazione lunga: leggere mezza pagina su una scelta
-    // che in quel momento non conta e' proprio quello che rende il pannello
-    // ingestibile
-    const spiega = riga && riga.nextElementSibling
-      && riga.nextElementSibling.id !== 'notaFacciaPiatta'
-      ? riga.nextElementSibling : (riga && riga.nextElementSibling
-        && riga.nextElementSibling.nextElementSibling);
-    if (spiega && spiega.id !== 'notaFacciaPiatta') {
-      spiega.style.display = nocciolo ? 'none' : '';
-    }
-    let nota = document.getElementById('notaFacciaPiatta');
-    if (!nota && riga && riga.parentNode) {
-      nota = document.createElement('div');
-      nota.id = 'notaFacciaPiatta';
-      nota.style.cssText = 'font-size:11px;color:var(--accent);margin:-4px 0 8px 0;line-height:1.4';
-      riga.parentNode.insertBefore(nota, riga.nextSibling);
-    }
-    if (nota) {
-      nota.textContent = nocciolo
-        ? 'Col nocciolo questo menu non serve: la faccia piatta la fa il nocciolo stesso, '
-          + 'tagliando a meta\' dello spessore. Lascialo dov\'e\'.'
-        : '';
-      nota.style.display = nocciolo ? '' : 'none';
-    }
-  }
-  // Il cursore della profondita' ha senso SOLO col nocciolo: col perno non
-  // vuol dire niente, e un cursore che non fa niente e' un cursore che fa
-  // perdere tempo.
-  function aggiornaProfNocciolo() {
-    if (!el.profNocciolo || !el.incastroModo) return;
-    if (el.profNoccioloValue) el.profNoccioloValue.textContent = el.profNocciolo.value + '%';
-    const nocciolo = /^nocciolo/.test(el.incastroModo.value) || el.incastroModo.value === 'auto';
-    if (el.profNoccioloRow) {
-      el.profNoccioloRow.style.opacity = nocciolo ? '' : '0.45';
-      const nota = el.profNoccioloRow.nextElementSibling;
-      if (nota) nota.style.display = nocciolo ? '' : 'none';
-    }
-    el.profNocciolo.disabled = !nocciolo;
-  }
-  if (el.profNocciolo) el.profNocciolo.addEventListener('input', aggiornaProfNocciolo);
-  if (el.incastroModo) el.incastroModo.addEventListener('change', () => {
-    aggiornaMenuFacciaPiatta();
-    aggiornaProfNocciolo();
-  });
-  aggiornaMenuFacciaPiatta();
-  aggiornaProfNocciolo();
+    if (e) e.textContent = 'app ' + TAGLIA_PRO_VERSIONE_ATTESA;
+  })();
   async function runAiSegmentation() {
     if (!currentParsed) {
       alert('Carica prima un modello.');
@@ -972,7 +766,6 @@
     try {
       const h = await fetch(AI_URL + '/health', { method: 'GET' });
       health = await h.json();
-      mostraVersione(health && health.taglia_pro_versione ? health.taglia_pro_versione : '');
     } catch (e) {
       alert('Companion non raggiungibile.\n\nApri la cartella "ai-segmentation" sul PC e fai doppio clic su "avvia.bat" (lascia la finestra nera aperta), poi riprova.');
       return;
@@ -1024,13 +817,8 @@
   async function companionHealth(silenzioso) {
     try {
       const h = await fetch(AI_URL + '/health', { method: 'GET' });
-      const dati = await h.json();
-      // ogni volta che si sente il companion si aggiorna la scritta sotto al
-      // titolo: cosi' basta uno screenshot per sapere quale dei due e' indietro
-      mostraVersione(dati && dati.taglia_pro_versione ? dati.taglia_pro_versione : '');
-      return dati;
+      return await h.json();
     } catch (e) {
-      mostraVersione('');
       if (!silenzioso) {
         alert('Companion non raggiungibile.\n\nApri la cartella "ai-segmentation" sul PC e fai doppio clic su "avvia.bat" (lascia la finestra nera aperta), poi riprova.');
       }
@@ -1098,10 +886,10 @@
       };
       const size = [0, 1, 2].map((i) => stats.bboxMax[i] - stats.bboxMin[i]);
       el.repairReport.innerHTML = `
-        <div style="color:#6be3ac;margin-bottom:4px"> Riparazione PRO (motore MeshLab + solido esatto)</div>
-        ${(out.log || []).map((l) => `<div>${l}</div>`).join('')}
-        <div style="margin-top:6px">${out.watertight ? '<span class="ok">Solido chiuso ed esatto: pronto per booleane e stampa</span>' : '<span class="issue">Attenzione: Restano bordi aperti</span>'}</div>
-        <div class="dim" style="margin-top:4px">${fmt(indices.length / 3, 0)} triangoli ${fmt(size[0], 1)}×${fmt(size[1], 1)}×${fmt(size[2], 1)}</div>
+        <div style="color:#6be3ac;margin-bottom:4px">🛠️ Riparazione PRO (motore MeshLab + solido esatto)</div>
+        ${(out.log || []).map((l) => `<div>· ${l}</div>`).join('')}
+        <div style="margin-top:6px">${out.watertight ? '<span class="ok">✔ Solido chiuso ed esatto: pronto per booleane e stampa</span>' : '<span class="issue">⚠ Restano bordi aperti</span>'}</div>
+        <div class="dim" style="margin-top:4px">${fmt(indices.length / 3, 0)} triangoli · ${fmt(size[0], 1)}×${fmt(size[1], 1)}×${fmt(size[2], 1)}</div>
       `;
       el.downloadRepairedBtn.style.display = 'block';
       if (!showMeshWithModelColors(currentParsed, positions, indices)) {
@@ -1131,7 +919,7 @@
         'Questo pulsante taglia DRITTO col piano rosso: la forma della selezione NON viene ' +
         'seguita, e quello che il piano incontra viene tranciato.\n\n' +
         'Per staccare esattamente la zona che hai scelto, annulla e usa in fondo al pannello ' +
-        '"Taglia SULLA SELEZIONE + connettore".\n\n' +
+        '"✂️ Taglia SULLA SELEZIONE + connettore".\n\n' +
         'Vuoi comunque tagliare dritto col piano?');
       if (!ok) return;
     }
@@ -1164,7 +952,7 @@
         return {
           id: 'part_pro_' + Date.now() + '_' + suff.replace(/\W/g, ''),
           name: part.name + ' ' + suff,
-          color: /perno|nocciolo|sopra|\(A\)/.test(suff) ? coloreNuovo() : part.color.slice(),
+          color: /perno|sopra|\(A\)/.test(suff) ? coloreNuovo() : part.color.slice(),
           sourceTriangleCount: indices.length / 3,
           positions, indices,
           log: out.log || [], watertight: !!p.watertight,
@@ -1400,7 +1188,7 @@
     el.connectorControls.style.display = on ? 'block' : 'none';
     el.viewerHint.textContent = on
       ? 'Connettori: tocca dove due pezzi si uniscono. (Trascina per ruotare)'
-      : 'Touch: 1 dito ruota 2 dita zoom/sposta     Mouse: sinistro/centrale ruota rotellina zoom (verso il cursore) destro o Shift sposta';
+      : 'Touch: 1 dito ruota · 2 dita zoom/sposta   ·   Mouse: sinistro/centrale ruota · rotellina zoom (verso il cursore) · destro o Shift sposta';
   }
   function setConnType(t) {
     connType = t;
@@ -1734,24 +1522,10 @@
     // tranciare tutto il pezzo, ma senza errori — e' silenzioso. Meglio
     // avvisare subito invece di far scoprire il problema dal risultato.
     if (health.taglia_pro_versione !== TAGLIA_PRO_VERSIONE_ATTESA) {
-      // Il messaggio DEVE dire quali due versioni non combaciano. Senza, chi
-      // legge vede "app nocciolo-liscio-21" scritto sotto al titolo, legge
-      // "versione vecchia" e conclude che l'avviso sia sbagliato — mentre la
-      // versione vecchia e' quella dell'ALTRO pezzo, la cartella sul PC.
       const continua = confirm(
-        'I due pezzi dell\'app non combaciano.\n\n' +
-        '  questo file HTML vuole:   ' + TAGLIA_PRO_VERSIONE_ATTESA + '\n' +
-        '  la cartella "ai-segmentation" sul PC e\':   ' +
-        (health.taglia_pro_versione || 'cosi\' vecchia che non lo dice') + '\n\n' +
-        'Il taglio lo fa la CARTELLA, non l\'HTML: finche\' resta quella vecchia il risultato ' +
-        'sara\' quello di prima, anche se sotto al titolo leggi la versione nuova.\n\n' +
-        'Cosa fare, in ordine:\n' +
-        '  1. chiudi la finestra nera del companion (la X, non basta ridurla a icona);\n' +
-        '  2. sostituisci la cartella "ai-segmentation" con quella nuova;\n' +
-        '  3. riapri "avvia.bat";\n' +
-        '  4. per controllare, apri in una scheda:  http://127.0.0.1:8760/health\n' +
-        '     deve dire  "taglia_pro_versione":"' + TAGLIA_PRO_VERSIONE_ATTESA + '"\n\n' +
-        'Vuoi provare comunque il taglio adesso (con la cartella vecchia)?'
+        'Il companion sul PC sembra una versione VECCHIA di "taglia_pro" (il taglio potrebbe tagliare tutto il pezzo invece che solo la zona selezionata).\n\n' +
+        'Chiudi la finestra nera del companion, sostituisci la cartella "ai-segmentation" con quella nuova e riavvia "avvia.bat" prima di continuare.\n\n' +
+        'Vuoi provare comunque il taglio adesso?'
       );
       if (!continua) return;
     }
@@ -1813,11 +1587,6 @@
         // 'auto' | 'sempre' | 'mai' (la vecchia casella resta per i test)
           bodySel.appiattisci = el.flatCutModo ? el.flatCutModo.value
             : (el.flatCutChk && el.flatCutChk.checked ? 'auto' : 'mai');
-          // 'auto' | 'nocciolo' | 'perno' | 'niente'
-          bodySel.incastro = el.incastroModo ? el.incastroModo.value : 'auto';
-          // quanto affonda il nocciolo, in frazione dello spessore li' sotto
-          bodySel.profondita_nocciolo = el.profNocciolo
-            ? parseInt(el.profNocciolo.value, 10) / 100 : 0.5;
         try {
           const r1 = await fetch(AI_URL + '/taglia_selezione', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1844,7 +1613,7 @@
         return {
           id: 'part_piatto_' + Date.now() + '_' + suff.replace(/\W/g, ''),
           name: part.name + ' ' + suff,
-          color: /perno|nocciolo|sopra|\(A\)/.test(suff) ? coloreNuovo() : part.color.slice(),
+          color: /perno|sopra|\(A\)/.test(suff) ? coloreNuovo() : part.color.slice(),
           sourceTriangleCount: m.indices.length / 3,
           positions: m.positions, indices: m.indices,
           log: (motivoRipiego
@@ -1855,14 +1624,7 @@
           included: true,
         };
       };
-      // I nomi devono dire com'e' venuto DAVVERO l'incastro, non com'era stato
-      // chiesto: col nocciolo non c'e' nessun perno da cercare sul pezzo, e
-      // chiamarlo "(perno)" mandava a cercare uno spinotto che non esiste.
-      const fattoNocciolo = (out.log || []).some((l) => /Taglio A NOCCIOLO/.test(l));
-      const senzaAggancio = (out.log || []).some((l) => /Nessun aggancio|niente perno \(|niente perno$/.test(l));
-      const nomeA = fattoNocciolo ? '(nocciolo)' : (conn && !senzaAggancio ? '(perno)' : '(A)');
-      const nomeB = fattoNocciolo ? '(sede)' : (conn && !senzaAggancio ? '(foro)' : '(B)');
-      currentResult.parts.splice(idx, 1, mk(out.b, nomeB), mk(out.a, nomeA));
+      currentResult.parts.splice(idx, 1, mk(out.b, conn ? '(foro)' : '(B)'), mk(out.a, conn ? '(perno)' : '(A)'));
       currentResult.parts.sort((a, b) => b.stats.volume - a.stats.volume);
       cutSelection = null;
       renderResult(currentResult);
@@ -1874,7 +1636,7 @@
               'Motivo: ' + motivoRipiego + '\n\n' +
               'Ho ripiegato sul taglio col PIANO, che taglia dritto e quindi ignora ' +
               'la forma della zona che avevi scelto. Se il risultato non va bene, ' +
-              'annulla con "Annulla" e ritocca la selezione.');
+              'annulla con "↩ Annulla" e ritocca la selezione.');
       } else {
         alert('Taglio piatto riuscito: le due facce che si toccano sono piane e combaciano.' +
               (out.connettore ? `\n\nConnettore: lato ${out.connettore.lato.toFixed(1)} mm, gioco ${out.connettore.gioco.toFixed(2)} mm.` : ''));
@@ -2040,23 +1802,18 @@
       ai: 'Segmentazione dal companion locale sul PC (motore per forma / AI su GPU).',
     }[result.mode];
 
-    // La riga informativa si disegna SOLO se ha qualcosa da dire. Per certi
-    // modi (per esempio "salta la segmentazione") la frase non esiste, e
-    // usciva una barra azzurra vuota: sembrava un difetto dell'app.
-    if (modeLabel) {
-      const infoWarn = document.createElement('div');
-      infoWarn.className = 'warning-box';
-      infoWarn.style.background = 'rgba(76,141,255,0.10)';
-      infoWarn.style.borderColor = 'rgba(76,141,255,0.35)';
-      infoWarn.style.color = '#9fbaff';
-      infoWarn.textContent = modeLabel;
-      el.warnings.appendChild(infoWarn);
-    }
+    const infoWarn = document.createElement('div');
+    infoWarn.className = 'warning-box';
+    infoWarn.style.background = 'rgba(91,140,255,0.12)';
+    infoWarn.style.borderColor = 'rgba(91,140,255,0.4)';
+    infoWarn.style.color = '#9db6ff';
+    infoWarn.textContent = modeLabel;
+    el.warnings.appendChild(infoWarn);
 
     result.warnings.forEach((w) => {
       const box = document.createElement('div');
       box.className = 'warning-box';
-      box.textContent = 'Attenzione: ' + w;
+      box.textContent = '⚠️ ' + w;
       el.warnings.appendChild(box);
     });
 
@@ -2065,12 +1822,12 @@
     } else if (currentParsed && currentParsed.textureError) {
       const box = document.createElement('div');
       box.className = 'warning-box';
-      box.textContent = 'Attenzione: Non sono riuscito a leggere la texture: ' + currentParsed.textureError;
+      box.textContent = '⚠️ Non sono riuscito a leggere la texture: ' + currentParsed.textureError;
       el.warnings.appendChild(box);
     } else if (currentParsed && currentParsed.hasTextureInfo && !currentParsed.textureApplied) {
       const box = document.createElement('div');
       box.className = 'warning-box';
-      box.textContent = 'Questo modello ha una texture (mappa UV) ma non hai selezionato il file immagine insieme a .obj e .mtl: caricali di nuovo tutti e tre insieme per segmentare per colore.';
+      box.textContent = '💡 Questo modello ha una texture (mappa UV) ma non hai selezionato il file immagine insieme a .obj e .mtl: caricali di nuovo tutti e tre insieme per segmentare per colore.';
       el.warnings.appendChild(box);
     } else if (currentParsed && currentParsed.textureApplied) {
       const box = document.createElement('div');
@@ -2078,11 +1835,10 @@
       box.style.background = 'rgba(63,208,138,0.12)';
       box.style.borderColor = 'rgba(63,208,138,0.4)';
       box.style.color = '#6be3ac';
-      box.textContent = 'Colori letti dalla texture del modello.';
+      box.textContent = '✔ Colori letti dalla texture del modello.';
       el.warnings.appendChild(box);
     }
 
-    aggiornaInfoMesh();
     el.partsTitle.textContent = `Parti rilevate (${result.parts.length})`;
 
     result.parts.forEach((part) => addPartToScene(part));
@@ -2110,22 +1866,6 @@
     return [0, 1, 2].map((i) => part.stats.bboxMax[i] - part.stats.bboxMin[i]);
   }
 
-  // Allunga o stringe un pezzo sui tre assi, tenendo fermo il suo centro.
-  // Fattori diversi fra loro deformano il pezzo: e' voluto (serve per esempio
-  // a compensare il ritiro della stampa su un asse), ma se il pezzo ha un
-  // incastro l'accoppiamento non torna piu' — per quello si avvisa prima.
-  function ridimensionaParte(part, f) {
-    const c = [0, 1, 2].map((i) => (part.stats.bboxMin[i] + part.stats.bboxMax[i]) / 2);
-    const P = part.positions;
-    for (let i = 0; i < P.length; i += 3) {
-      P[i] = c[0] + (P[i] - c[0]) * f[0];
-      P[i + 1] = c[1] + (P[i + 1] - c[1]) * f[1];
-      P[i + 2] = c[2] + (P[i + 2] - c[2]) * f[2];
-    }
-    part.stats = MeshCore.computeStats(part.positions, part.indices);
-    part._topo = null;   // la topologia del ritaglio non vale piu'
-  }
-
   function buildPartCard(part) {
     const card = document.createElement('div');
     card.className = 'part-card';
@@ -2146,12 +1886,7 @@
 
     const visBtn = document.createElement('button');
     visBtn.className = 'visibility-toggle active';
-    // occhio disegnato, non una lettera a caso: si capisce a colpo d'occhio
-    // che quel bottone mostra e nasconde
-    visBtn.innerHTML = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" '
-      + 'stroke-width="1.6"><path d="M1.5 10S4.5 4.5 10 4.5 18.5 10 18.5 10 15.5 15.5 10 15.5 '
-      + '1.5 10 1.5 10Z"/><circle cx="10" cy="10" r="2.6"/></svg>';
-    visBtn.title = 'Mostra o nascondi questo pezzo';
+    visBtn.textContent = '👁';
     visBtn.addEventListener('click', () => {
       part.visible = part.visible === false ? true : false;
       visBtn.classList.toggle('active', part.visible !== false);
@@ -2165,8 +1900,8 @@
     stats.className = 'part-stats';
     const size = bboxSizeMm(part);
     const watertightBadge = part.watertight
-      ? '<span>solido chiuso</span>'
-      : '<span class="bad">Attenzione: non completamente chiuso</span>';
+      ? '<span>✔ solido chiuso</span>'
+      : '<span class="bad">⚠ non completamente chiuso</span>';
     stats.innerHTML = `
       <span>${fmt(part.stats.volume / 1000, 1)} cm³</span>
       <span>~${fmt(weightGrams(part), 1)} g PLA</span>
@@ -2175,85 +1910,6 @@
       ${watertightBadge}
     `;
     card.appendChild(stats);
-
-    // MISURE: si scrivono i millimetri che si vogliono e il pezzo ci si adatta.
-    // E' quello che serve davvero prima di stampare — non un fattore di scala
-    // astratto, ma "questo pezzo deve essere alto tanto".
-    {
-      const box = document.createElement('details');
-      box.className = 'part-misure';
-      const capo = document.createElement('summary');
-      capo.textContent = 'Misure (mm)';
-      box.appendChild(capo);
-      const riga = document.createElement('div');
-      riga.className = 'misure-riga';
-      const campi = [];
-      ['X', 'Y', 'Z'].forEach((asse, i) => {
-        const et = document.createElement('label');
-        et.textContent = asse;
-        const inp = document.createElement('input');
-        inp.type = 'number';
-        inp.step = '0.1';
-        inp.min = '0.1';
-        inp.value = bboxSizeMm(part)[i].toFixed(1);
-        campi.push(inp);
-        et.appendChild(inp);
-        riga.appendChild(et);
-      });
-      box.appendChild(riga);
-      const legame = document.createElement('label');
-      legame.className = 'misure-legame';
-      const chk = document.createElement('input');
-      chk.type = 'checkbox';
-      chk.checked = true;
-      legame.appendChild(chk);
-      legame.appendChild(document.createTextNode(' mantieni le proporzioni'));
-      box.appendChild(legame);
-      // con le proporzioni legate, toccarne una muove le altre due
-      campi.forEach((inp, i) => {
-        inp.addEventListener('input', () => {
-          if (!chk.checked) return;
-          const ora = bboxSizeMm(part);
-          const nuovo = parseFloat(inp.value);
-          if (!(nuovo > 0) || !(ora[i] > 0)) return;
-          const k = nuovo / ora[i];
-          campi.forEach((altro, j) => {
-            if (j !== i) altro.value = (ora[j] * k).toFixed(1);
-          });
-        });
-      });
-      const riga2 = document.createElement('div');
-      riga2.className = 'part-actions';
-      const applica = document.createElement('button');
-      applica.textContent = 'Applica misure';
-      applica.addEventListener('click', () => {
-        const ora = bboxSizeMm(part);
-        const f = campi.map((inp, i) => {
-          const v = parseFloat(inp.value);
-          return (v > 0 && ora[i] > 0) ? v / ora[i] : 1;
-        });
-        if (f.every((x) => Math.abs(x - 1) < 1e-6)) return;
-        const storto = Math.max.apply(null, f) / Math.min.apply(null, f) > 1.001;
-        if (storto && !confirm(
-          'Stai allungando il pezzo in modo diverso sui tre assi.\n\n' +
-          'Il pezzo si deforma, e se ha un incastro (nocciolo o perno) non ' +
-          'combaciera\' piu\' con l\'altro pezzo: quello va ridimensionato ' +
-          'nello stesso identico modo.\n\nVado avanti?')) return;
-        pushStoriaParti('misure');
-        ridimensionaParte(part, f);
-        renderResult(currentResult);
-      });
-      riga2.appendChild(applica);
-      const ripristina = document.createElement('button');
-      ripristina.textContent = 'Rimetti quelle di adesso';
-      ripristina.addEventListener('click', () => {
-        const ora = bboxSizeMm(part);
-        campi.forEach((inp, i) => { inp.value = ora[i].toFixed(1); });
-      });
-      riga2.appendChild(ripristina);
-      box.appendChild(riga2);
-      card.appendChild(box);
-    }
 
     const actions = document.createElement('div');
     actions.className = 'part-actions';
@@ -2271,58 +1927,28 @@
     actions.appendChild(excludeBtn);
 
     const downloadBtn = document.createElement('button');
-    downloadBtn.textContent = 'Scarica STL';
+    downloadBtn.textContent = '⬇️ STL';
     downloadBtn.addEventListener('click', () => downloadPart(part));
     actions.appendChild(downloadBtn);
 
     card.appendChild(actions);
 
-    // IL RESOCONTO DEL TAGLIO. Il motore scrive riga per riga cosa ha deciso e
-    // perche' (che incastro ha messo, quanto e' spesso il pezzo, se ha dovuto
-    // ripiegare e su cosa), ma finora quelle righe non comparivano da nessuna
-    // parte: restavano in memoria. Chiedere "mandami le righe di diagnostica"
-    // era chiedere una cosa impossibile. Qui si aprono con un clic e si
-    // copiano con un altro, per poterle incollare a chi puo' leggerle.
-    if (part.log && part.log.length) {
-      const box = document.createElement('details');
-      box.style.cssText = 'margin-top:8px;font-size:11.5px;color:var(--text-dim)';
-      const capo = document.createElement('summary');
-      capo.textContent = 'Resoconto del taglio (' + part.log.length
-        + (part.log.length === 1 ? ' riga)' : ' righe)');
-      capo.style.cssText = 'cursor:pointer;color:var(--accent);font-size:12px';
-      box.appendChild(capo);
-      const testo = document.createElement('pre');
-      testo.textContent = part.log.join('\n');
-      testo.style.cssText = 'white-space:pre-wrap;word-break:break-word;margin:6px 0 0;'
-        + 'background:var(--panel2);border-radius:8px;padding:8px;max-height:220px;overflow:auto';
-      box.appendChild(testo);
-      const copia = document.createElement('button');
-      copia.textContent = 'Copia il resoconto';
-      copia.style.cssText = 'margin-top:6px;font-size:12px';
-      copia.addEventListener('click', async () => {
-        const t = part.log.join('\n');
-        try {
-          await navigator.clipboard.writeText(t);
-          copia.textContent = 'copiato';
-        } catch (e) {
-          // file:// senza permessi: si ripiega sulla selezione manuale
-          const r = document.createRange();
-          r.selectNodeContents(testo);
-          const s = window.getSelection();
-          s.removeAllRanges(); s.addRange(r);
-          copia.textContent = 'selezionato: premi Ctrl+C';
-        }
-        setTimeout(() => { copia.textContent = 'Copia il resoconto'; }, 2500);
-      });
-      box.appendChild(copia);
-      card.appendChild(box);
+    // Connettore AUTOMATICO: si sceglie il pezzo dall'elenco e basta. Il punto
+    // dove mettere perno e foro lo trova da solo (dove i due pezzi si toccano),
+    // e la booleana e' esatta: il resto della mesh non viene toccato.
+    if (currentResult && currentResult.parts.length > 1) {
+      const connRow = document.createElement('div');
+      connRow.className = 'part-actions';
+      connRow.style.marginTop = '8px';
+      const connBtn = document.createElement('button');
+      connBtn.textContent = '🔩 Aggiungi perno e foro (automatico)';
+      connBtn.style.background = 'linear-gradient(90deg,#3fd08a,#2f9bd0)';
+      connBtn.style.color = '#fff';
+      connBtn.style.border = 'none';
+      connBtn.addEventListener('click', () => connettoreAutomatico(part));
+      connRow.appendChild(connBtn);
+      card.appendChild(connRow);
     }
-
-    // Qui c'era "Aggiungi perno e foro (automatico)". Tolto: l'aggancio lo
-    // sceglie e lo mette il taglio, col menu "Come si uniscono i pezzi".
-    // Rifarlo dopo, su un pezzo gia' tagliato, voleva dire due strade per la
-    // stessa cosa, e su un pezzo col nocciolo avrebbe aggiunto un perno che
-    // non c'entra niente.
 
     const isMainPart = currentResult && currentResult.parts.length > 0 && currentResult.parts[0] === part;
     if (currentResult && currentResult.parts.length > 1 && !isMainPart) {
@@ -2330,7 +1956,7 @@
       mergeRow.className = 'part-actions';
       mergeRow.style.marginTop = '8px';
       const mergeBtn = document.createElement('button');
-      mergeBtn.textContent = 'Unisci con la parte principale';
+      mergeBtn.textContent = '🔗 Unisci con la parte principale';
       mergeBtn.addEventListener('click', () => mergePartIntoMain(part));
       mergeRow.appendChild(mergeBtn);
       card.appendChild(mergeRow);
@@ -2447,7 +2073,7 @@
   function setCutMode(active) {
     cutMode = active;
     el.cutToggleBtn.classList.toggle('active', active);
-    el.cutToggleBtn.textContent = active ? 'Ritaglio attivo — dipingi sul modello' : 'Ritaglio manuale';
+    el.cutToggleBtn.textContent = active ? '✂️ Ritaglio attivo — dipingi sul modello' : '✂️ Ritaglio manuale';
     el.cutControls.style.display = active ? 'block' : 'none';
     if (active) setCutTool(cutTool); // imposta il messaggio d'aiuto giusto
     else { resetCutSelection(); viewer.hideCutPlane(); }
@@ -2472,7 +2098,7 @@
     let label = (pct < 1 ? pct.toFixed(2) : pct.toFixed(1)) + '%';
     if (currentResult && currentResult.parts.length > 0) {
       const mm = computeOverallMaxDimension(currentResult.parts) * (pct / 100);
-      label += ' diam. ' + (mm * 2 < 1 ? (mm * 2).toFixed(2) : fmt(mm * 2, 1)) + ' mm';
+      label += ' · ⌀' + (mm * 2 < 1 ? (mm * 2).toFixed(2) : fmt(mm * 2, 1)) + ' mm';
     }
     el.cutRadiusValue.textContent = label;
   }
@@ -2551,7 +2177,7 @@
         + 'Il "Taglio dritto" taglia col piano e NON segue il contorno che hai disegnato: '
         + 'passando a questo strumento la selezione viene persa.\n\n'
         + 'Se volevi staccare proprio quella zona, annulla e usa in fondo al pannello '
-        + '"Taglia SULLA SELEZIONE + connettore".\n\n'
+        + '"✂️ Taglia SULLA SELEZIONE + connettore".\n\n'
         + 'Vuoi passare comunque al taglio dritto?');
       if (!ok) return;
     }
@@ -2577,7 +2203,7 @@
     copertaPosiziona = false;
     if (el.copertaPosizionaBtn) {
       el.copertaPosizionaBtn.classList.remove('active');
-      el.copertaPosizionaBtn.textContent = 'Metti dove clicco';
+      el.copertaPosizionaBtn.textContent = '📍 Metti dove clicco';
     }
     if (isCoperta) { popolaCopertaParti(); creaCoperta(); }
     else viewer.nascondiCoperta();
@@ -2588,7 +2214,7 @@
           ? 'Coperta: trascina i pallini per piegare il telo e stringerne il contorno. Il telo taglia SOLO dove passa, quindi puoi staccare un polso senza toccare il resto. Verdi = bordo, gialli = interno.'
         : tool === 'plane'
           ? 'Taglio dritto: scegli il pezzo, l\'asse e la posizione del piano rosso, poi "Taglia qui". Le due facce vengono PIATTE e identiche, così i pezzi si incastrano perfettamente. Aggiungi poi i connettori per bloccarli.'
-          : 'Pennello: TRASCINA il dito/mouse sul modello per dipingere la selezione (giallo) esattamente dove passi. Ruoti la vista trascinando fuori dal modello (sfondo). Regola il Raggio; Rimuovi fa da gomma.';
+          : 'Pennello: TRASCINA il dito/mouse sul modello per dipingere la selezione (giallo) esattamente dove passi. Ruoti la vista trascinando fuori dal modello (sfondo). Regola il Raggio; ➖ Rimuovi fa da gomma.';
   }
 
 
@@ -2700,7 +2326,7 @@
     copertaPosiziona = !copertaPosiziona;
     el.copertaPosizionaBtn.classList.toggle('active', copertaPosiziona);
     el.copertaPosizionaBtn.textContent = copertaPosiziona
-      ? 'Clicca sul modello…' : 'Metti dove clicco';
+      ? '📍 Clicca sul modello…' : '📍 Metti dove clicco';
   });
   el.copertaPart.addEventListener('change', () => creaCoperta());
   el.copertaScala.addEventListener('input', () => {
@@ -2739,7 +2365,7 @@
         return {
           id: 'part_coperta_' + Date.now() + '_' + suff.replace(/\W/g, ''),
           name: part.name + ' ' + suff,
-          color: /perno|nocciolo|sopra|\(A\)/.test(suff) ? coloreNuovo() : part.color.slice(),
+          color: /perno|sopra|\(A\)/.test(suff) ? coloreNuovo() : part.color.slice(),
           sourceTriangleCount: m.indices.length / 3,
           positions: m.positions, indices: m.indices,
           log: out.log || [], watertight: !!p.watertight,
@@ -2892,7 +2518,7 @@
         const mk = (rep, suff) => ({
           id: 'part_plane_' + Date.now() + '_' + suff,
           name: part.name + ' ' + suff,
-          color: /perno|nocciolo|sopra|\(A\)/.test(suff) ? coloreNuovo() : part.color.slice(),
+          color: /perno|sopra|\(A\)/.test(suff) ? coloreNuovo() : part.color.slice(),
           sourceTriangleCount: rep.indices.length / 3,
           positions: rep.positions, indices: rep.indices,
           log: rep.log, watertight: rep.watertight, stats: rep.stats, included: true,
@@ -3101,11 +2727,6 @@
     } else {
       cutSelection = sel;
     }
-    // anche il lazo lascia un bordo a denti: si smussa come col pennello
-    if (cutSelection && cutSelection.faces.size > 8) {
-      const _p = currentResult.parts.find((x) => x.id === cutSelection.partId);
-      if (_p) arrotondaSelezione(_p, cutSelection.faces, 3);
-    }
     refreshCutHighlight();
     if (sel.altriPezzi && sel.altriPezzi.length) {
       const mio = (currentResult.parts.find((p) => p.id === sel.partId) || {}).name || 'il pezzo';
@@ -3176,52 +2797,6 @@
     el.cutUndoBtn.disabled = cutHistory.length === 0;
     refreshCutHighlight();
   });
-  // TIENI SOLO LA MACCHIA PRINCIPALE. Capita che, oltre alla zona voluta,
-  // resti attaccato un lembo staccato da un'altra parte (un pezzo di pantalone
-  // sotto la coscia). Cancellarlo a mano col pennello e' un lavoro di pazienza
-  // che non sempre riesce; qui basta un colpo. Il taglio a nocciolo lo
-  // portava fino in fondo, e sul pezzo staccato quel lembo diventava
-  // un'aletta.
-  if (el.soloMacchiaBtn) {
-    el.soloMacchiaBtn.addEventListener('click', () => {
-      if (!cutSelection || !currentResult) {
-        alert('Prima seleziona una zona sul modello.');
-        return;
-      }
-      const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
-      if (!part) return;
-      const adj = ensurePartTopology(part).adjacency;
-      const resto = new Set(cutSelection.faces);
-      let migliore = null;
-      while (resto.size) {
-        const s = resto.values().next().value;
-        resto.delete(s);
-        const isola = [s];
-        const pila = [s];
-        while (pila.length) {
-          const f = pila.pop();
-          const a = adj[f];
-          for (let i = 0; i < a.length; i++) {
-            if (resto.has(a[i])) { resto.delete(a[i]); pila.push(a[i]); isola.push(a[i]); }
-          }
-        }
-        if (!migliore || isola.length > migliore.length) migliore = isola;
-      }
-      if (!migliore) return;
-      const prima = cutSelection.faces.size;
-      if (migliore.length === prima) {
-        alert('La selezione e\' gia\' tutta attaccata: non c\'e\' niente da buttare via.');
-        return;
-      }
-      pushCutHistory();
-      cutSelection = { partId: cutSelection.partId, faces: new Set(migliore) };
-      refreshCutHighlight();
-      alert('Tolti ' + (prima - migliore.length) + ' triangoli staccati.\n\n' +
-            'Restano ' + migliore.length + ' triangoli, tutti attaccati fra loro.\n\n' +
-            'Se hai buttato via troppo, premi Annulla: per tornare indietro.');
-    });
-  }
-
   el.cutRadius.addEventListener('input', updateCutRadiusLabel);
 
   // topologia per-parte (adiacenza + normali + centroidi), calcolata al primo
@@ -3603,7 +3178,7 @@
           spostaCopertaSu(hit.point);
           copertaPosiziona = false;
           el.copertaPosizionaBtn.classList.remove('active');
-          el.copertaPosizionaBtn.textContent = 'Metti dove clicco';
+          el.copertaPosizionaBtn.textContent = '📍 Metti dove clicco';
           return true;
         }
       }
@@ -3664,51 +3239,12 @@
     const hit = viewer.raycastAt(e.clientX, e.clientY);
     if (hit && hit.partId === paintPartId) paintAt(hit);
   });
-  // ARROTONDA il bordo della selezione, senza allargarla.
-  // Due regole che si bilanciano, ripetute qualche volta:
-  //   - un triangolo FUORI con due vicini dentro sta in un'intaccatura: entra;
-  //   - un triangolo DENTRO con un solo vicino dentro e' una linguetta: esce.
-  // Su un bordo dritto non succede niente (uno appena fuori ha un solo vicino
-  // dentro, uno appena dentro ne ha due), quindi la macchia non cresce: si
-  // smussano solo i denti. La prima regola da sola, senza il taglio delle
-  // linguette, contagerebbe invece tutto il pezzo.
-  function arrotondaSelezione(part, sel, giri) {
-    const topo = ensurePartTopology(part);
-    const nTris = part.indices.length / 3;
-    for (let giro = 0; giro < (giri || 3); giro++) {
-      let mosse = 0;
-      const dentro = [];
-      for (let f = 0; f < nTris; f++) {
-        if (sel.has(f)) continue;
-        const adj = topo.adjacency[f];
-        if (adj.length < 3) continue;
-        let n = 0;
-        for (let i = 0; i < adj.length; i++) if (sel.has(adj[i])) n++;
-        if (n >= 2) dentro.push(f);
-      }
-      for (const f of dentro) { sel.add(f); mosse++; }
-      const fuori = [];
-      sel.forEach((f) => {
-        const adj = topo.adjacency[f];
-        if (adj.length < 3) return;
-        let n = 0;
-        for (let i = 0; i < adj.length; i++) if (sel.has(adj[i])) n++;
-        if (n <= 1) fuori.push(f);
-      });
-      for (const f of fuori) { sel.delete(f); mosse++; }
-      if (mosse === 0) break;
-    }
-    return sel;
-  }
-
   function chiudiTratto() {
-    // fine del tratto a pennello: ripulisci i triangolini sfuggiti e smussa il
-    // bordo, cosi' la selezione a mano non arriva al taglio tutta a denti
+    // fine del tratto a pennello: ripulisci i triangolini sfuggiti
     if (painting && cutSelection && currentResult) {
       const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
       if (part && cutSelection.faces.size > 8) {
         pulisciSelezione(part, cutSelection.faces);
-        arrotondaSelezione(part, cutSelection.faces, 3);
         refreshCutHighlight();
       }
     }
@@ -4049,10 +3585,7 @@
     });
   };
   window.__lassoCount = () => lassoPoints.length;
-  // il volume serve a controllare nei test che tagliando non SPARISCA
-  // materiale: e' successo davvero, la sede scavava un pezzo che al pezzo
-  // staccato non corrispondeva e quella roba non finiva da nessuna parte
-  window.__partsInfo = () => currentResult ? currentResult.parts.map((p) => ({ name: p.name, tris: p.indices.length / 3, wt: !!p.watertight, vol: p.stats ? p.stats.volume : null, log: p.log })) : null;
+  window.__partsInfo = () => currentResult ? currentResult.parts.map((p) => ({ name: p.name, tris: p.indices.length / 3, wt: !!p.watertight, log: p.log })) : null;
   window.__partsBBox = () => currentResult ? currentResult.parts.map((p) => ({ name: p.name, bboxMin: p.stats.bboxMin, bboxMax: p.stats.bboxMax, vol: p.stats.volume })) : null;
   window.__sceneInfo = () => {
     const out = [];
@@ -4231,131 +3764,6 @@
     cutSelection = scelta;
     refreshCutHighlight();
     return scelta.faces.size;
-  };
-  // Come __smartDaPunto, ma la selezione la APPLICA davvero: serve a provare
-  // nei test il giro che fa l'utente vero (clic magico e poi taglio), che con
-  // la sola sonda non si poteva riprodurre.
-  window.__selSmart = (punto, estensione) => {
-    if (!currentResult) return 0;
-    let part = null, best = -1, bestD = Infinity;
-    for (const p of currentResult.parts) {
-      const topo = ensurePartTopology(p);
-      const nT = p.indices.length / 3;
-      for (let t = 0; t < nT; t++) {
-        const d = Math.hypot(topo.centroids[t * 3] - punto[0],
-          topo.centroids[t * 3 + 1] - punto[1], topo.centroids[t * 3 + 2] - punto[2]);
-        if (d < bestD) { bestD = d; best = t; part = p; }
-      }
-    }
-    if (!part) return 0;
-    const sel = pulisciSelezione(part, smartSelect(part, best, estensione, 0.85));
-    if (!sel || sel.size === 0) return 0;
-    cutSelection = { partId: part.id, faces: sel };
-    refreshCutHighlight();
-    return sel.size;
-  };
-  // Quanto e' piana la faccia di taglio di un pezzo. Si prende la direzione
-  // verso cui guarda piu' superficie (la faccia di taglio e' la piu' grande
-  // superficie piana del pezzo), si sommano le aree dei triangoli che guardano
-  // esattamente di la', e si guarda se stanno tutti su una quota sola.
-  window.__facciaPiatta = (nome) => {
-    if (!currentResult) return null;
-    const p = currentResult.parts.find((x) => x.name === nome);
-    if (!p) return null;
-    const nT = p.indices.length / 3;
-    const nx = new Float64Array(nT), ny = new Float64Array(nT), nz = new Float64Array(nT);
-    const area = new Float64Array(nT);
-    for (let f = 0; f < nT; f++) {
-      const a = p.indices[f * 3], b = p.indices[f * 3 + 1], c = p.indices[f * 3 + 2];
-      const ux = p.positions[b * 3] - p.positions[a * 3];
-      const uy = p.positions[b * 3 + 1] - p.positions[a * 3 + 1];
-      const uz = p.positions[b * 3 + 2] - p.positions[a * 3 + 2];
-      const vx = p.positions[c * 3] - p.positions[a * 3];
-      const vy = p.positions[c * 3 + 1] - p.positions[a * 3 + 1];
-      const vz = p.positions[c * 3 + 2] - p.positions[a * 3 + 2];
-      const cx = uy * vz - uz * vy, cy = uz * vx - ux * vz, cz = ux * vy - uy * vx;
-      const L = Math.hypot(cx, cy, cz) || 1;
-      nx[f] = cx / L; ny[f] = cy / L; nz[f] = cz / L; area[f] = L / 2;
-    }
-    // direzione dominante: quella del triangolo con piu' area attorno
-    let mi = 0, mA = -1;
-    for (let f = 0; f < nT; f++) {
-      if (area[f] > mA) { mA = area[f]; mi = f; }
-    }
-    let dx = nx[mi], dy = ny[mi], dz = nz[mi], areaMax = -1;
-    for (let giro = 0; giro < 3; giro++) {
-      let sx = 0, sy = 0, sz = 0, sa = 0;
-      for (let f = 0; f < nT; f++) {
-        if (nx[f] * dx + ny[f] * dy + nz[f] * dz > 0.98) {
-          sx += nx[f] * area[f]; sy += ny[f] * area[f]; sz += nz[f] * area[f]; sa += area[f];
-        }
-      }
-      if (sa <= 0) break;
-      const L = Math.hypot(sx, sy, sz) || 1;
-      dx = sx / L; dy = sy / L; dz = sz / L; areaMax = sa;
-    }
-    let qmin = Infinity, qmax = -Infinity, areaTot = 0;
-    for (let f = 0; f < nT; f++) {
-      areaTot += area[f];
-      if (nx[f] * dx + ny[f] * dy + nz[f] * dz <= 0.98) continue;
-      for (let k = 0; k < 3; k++) {
-        const v = p.indices[f * 3 + k];
-        const q = p.positions[v * 3] * dx + p.positions[v * 3 + 1] * dy + p.positions[v * 3 + 2] * dz;
-        if (q < qmin) qmin = q;
-        if (q > qmax) qmax = q;
-      }
-    }
-    const ing = MeshCore.computeStats(p.positions, p.indices);
-    const diag = Math.hypot(ing.bboxMax[0] - ing.bboxMin[0],
-      ing.bboxMax[1] - ing.bboxMin[1], ing.bboxMax[2] - ing.bboxMin[2]) || 1;
-    return {
-      direzione: [dx, dy, dz],
-      areaPiana: areaMax, areaTotale: areaTot,
-      quota: areaMax > 0 ? qmax - qmin : null,
-      // spessore della fetta in cui sta la faccia piana, in millesimi
-      // dell'ingombro del pezzo: sotto l'1% e' un piano vero
-      spessoreRelativo: areaMax > 0 ? (qmax - qmin) / diag : null,
-    };
-  };
-  // Quanto e' frastagliato il bordo della selezione: quanti triangoli di
-  // bordo hanno UN SOLO vicino dentro (i denti) sul totale di quelli di bordo.
-  window.__denti = () => {
-    if (!cutSelection || !currentResult) return null;
-    const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
-    if (!part) return null;
-    const adj = ensurePartTopology(part).adjacency;
-    let bordo = 0, denti = 0;
-    cutSelection.faces.forEach((f) => {
-      const a = adj[f];
-      if (a.length < 3) return;
-      let n = 0;
-      for (let i = 0; i < a.length; i++) if (cutSelection.faces.has(a[i])) n++;
-      if (n < 3) bordo++;
-      if (n <= 1) denti++;
-    });
-    return { facce: cutSelection.faces.size, bordo, denti,
-      frazioneDenti: bordo ? denti / bordo : 0 };
-  };
-  window.__arrotonda = (giri) => {
-    if (!cutSelection || !currentResult) return null;
-    const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
-    if (!part) return null;
-    arrotondaSelezione(part, cutSelection.faces, giri || 3);
-    refreshCutHighlight();
-    return cutSelection.faces.size;
-  };
-  window.__misureParte = (nome) => {
-    if (!currentResult) return null;
-    const p = currentResult.parts.find((x) => x.name === nome);
-    return p ? bboxSizeMm(p) : null;
-  };
-  window.__ridimensiona = (nome, f) => {
-    if (!currentResult) return null;
-    const p = currentResult.parts.find((x) => x.name === nome);
-    if (!p) return null;
-    ridimensionaParte(p, f);
-    renderResult(currentResult);
-    return bboxSizeMm(p);
   };
   window.__pianoTest = () => {
     if (!cutSelection || !currentResult) return null;

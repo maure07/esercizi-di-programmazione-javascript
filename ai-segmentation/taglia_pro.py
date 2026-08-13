@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "pannello-sobrio-27"
+VERSIONE = "taglio-dentro-16"
 
 
 # ---------------------------------------------------------------------------
@@ -672,16 +672,7 @@ def _controllore_pelle(V_orig, F_orig, scatola, margine):
         P = np.asarray(punti, dtype=np.float64).reshape(-1, 3)
         if not len(P):
             return 0, 0.0
-        try:
-            vicino, _, tri = trimesh.proximity.closest_point(patch, P)
-        except Exception:
-            # `closest_point` si appoggia a rtree, che e' una libreria in piu' e
-            # sul PC di chi usa l'app puo' non esserci. Questo controllo e' solo
-            # una MISURA di quanto il tappo sporge: la garanzia vera che i pezzi
-            # restino dentro alla pelle la da' la booleana di ritaglio, piu'
-            # sotto. Meglio rinunciare alla misura che far saltare tutto il
-            # taglio per una libreria mancante.
-            return None
+        vicino, _, tri = trimesh.proximity.closest_point(patch, P)
         # segno: se il punto sta dalla parte della normale, e' fuori dal solido
         fuori = np.einsum('ij,ij->i', P - vicino, normali[tri])
         pos = fuori[fuori > 0]
@@ -1003,613 +994,9 @@ def taglia_a_fustella(V, F, sel, anelli, log):
     return ma, mb
 
 
-# ---------------------------------------------------------------------------
-# TAGLIO A NOCCIOLO (incastro a sede, senza perno)
-# ---------------------------------------------------------------------------
-# L'idea arriva da come sono fatti i pupazzi stampati bene: il musetto non e'
-# tenuto da un perno, e' un blocchetto che entra in una SEDE scavata nella
-# testa, della sua identica forma. Si posiziona da solo e non scivola.
-#
-# Da noi risolve il caso che non veniva: una macchia dipinta sul fianco di una
-# coscia, chiusa col tappo, dava una buccia da 1,6 mm — troppo sottile perfino
-# per metterci il perno. Qui invece la pelle selezionata viene portata verso
-# l'interno dello spessore scelto e chiusa di lato: il pezzo esce un solido
-# vero, la pelle esterna resta intatta al millesimo, e nell'altro pezzo si
-# scava la sede corrispondente.
-def _nocciolo(V, F, sel, anelli, profondita, ritiro, normali_v):
-    """Costruisce il solido "nocciolo": la pelle selezionata + la stessa pelle
-    spostata all'interno di `profondita`, chiuse da una parete sul contorno.
-
-    ritiro : di quanto stringere il nocciolo (gioco di accoppiamento). Zero per
-             scavare la sede, il gioco vero per il pezzo che ci deve entrare.
-    """
-    facce = [F[f] for f in sorted(sel)]
-    usati = sorted({int(x) for f in facce for x in f})
-    interno = {v: i for i, v in enumerate(usati)}
-    n_u = len(usati)
-    # vertici del contorno: li si stringe anche di lato, verso il centro della
-    # macchia, altrimenti il pezzo entrerebbe nella sede solo a martellate
-    bordo = {int(a) for anello in anelli for e in anello for a in e}
-    centro_patch = V[usati].mean(axis=0)
-    Vn = [V[v] for v in usati]                      # pelle esterna
-    for v in usati:
-        nv = normali_v[v]
-        p = V[v] - nv * profondita
-        if ritiro > 0:
-            verso = centro_patch - V[v]
-            verso = verso - nv * float(verso @ nv)   # solo di lato, non in fuori
-            ln = float(np.linalg.norm(verso))
-            if ln > 1e-9:
-                p = p + verso * (ritiro / ln)
-                if v in bordo:
-                    pass
-        Vn.append(p)
-    Vn = np.asarray(Vn, dtype=np.float64)
-    Fn = []
-    for f in facce:                                  # pelle esterna, come sta
-        a, b, c = interno[int(f[0])], interno[int(f[1])], interno[int(f[2])]
-        Fn.append([a, b, c])
-        Fn.append([n_u + c, n_u + b, n_u + a])       # schiena, al rovescio
-    for anello in anelli:                            # parete laterale
-        for a, b in anello:
-            ia, ib = interno[int(a)], interno[int(b)]
-            Fn.append([ib, ia, n_u + ia])
-            Fn.append([ib, n_u + ia, n_u + ib])
-    return Vn, np.asarray(Fn, dtype=np.int64)
-
-
-def _prisma_selezione(V, F, sel, anelli, n, lunghezza, dilata=0.0):
-    """Solido ottenuto TRASCINANDO la pelle selezionata lungo -n, dritto.
-
-    E' il pezzo chiave del nocciolo a fondo piatto. Rispetto al vecchio
-    nocciolo (che copiava la pelle spostandola lungo la normale di ogni
-    vertice) qui lo spostamento e' UGUALE per tutti: la faccia di dietro nasce
-    dritta invece di ripetere le gobbe della pelle, e soprattutto le normali
-    non si incrociano piu' — erano loro a produrre quelle punte sul fondo.
-
-    dilata : allarga il contorno di lato (per scavare la sede un filo piu'
-             larga del pezzo che ci deve entrare). La pelle davanti NON si
-             tocca mai: quella e' la superficie del modello.
-    """
-    facce = [F[f] for f in sorted(sel)]
-    usati = sorted({int(x) for f in facce for x in f})
-    idx = {v: i for i, v in enumerate(usati)}
-    nu = len(usati)
-    P = V[usati].astype(np.float64).copy()
-    if dilata > 0:
-        bordo = {int(a) for anello in anelli for e in anello for a in e}
-        centro = P.mean(axis=0)
-        for v in usati:
-            if v not in bordo:
-                continue
-            d = V[v] - centro
-            d = d - n * float(d @ n)        # solo di lato, non lungo il trascinamento
-            ln = float(np.linalg.norm(d))
-            if ln > 1e-9:
-                P[idx[v]] = V[v] + d * (dilata / ln)
-    Vn = np.vstack([P, P - n * lunghezza])
-    Fn = []
-    for f in facce:
-        a, b, c = idx[int(f[0])], idx[int(f[1])], idx[int(f[2])]
-        Fn.append([a, b, c])
-        Fn.append([nu + c, nu + b, nu + a])      # fondo, al rovescio
-    for anello in anelli:
-        for a, b in anello:
-            ia, ib = idx[int(a)], idx[int(b)]
-            Fn.append([ib, ia, nu + ia])
-            Fn.append([ib, nu + ia, nu + ib])
-    return Vn, np.asarray(Fn, dtype=np.int64)
-
-
-def _inviluppo_convesso(P):
-    """Inviluppo convesso di una nuvola di punti 2D (catena monotona).
-    Scritto a mano per non dipendere da scipy, che sul PC potrebbe non esserci."""
-    pts = sorted({(float(a), float(b)) for a, b in P})
-    if len(pts) < 3:
-        return np.asarray(pts, dtype=np.float64)
-
-    def croce(o, a, b):
-        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
-
-    basso = []
-    for p in pts:
-        while len(basso) >= 2 and croce(basso[-2], basso[-1], p) <= 0:
-            basso.pop()
-        basso.append(p)
-    alto = []
-    for p in reversed(pts):
-        while len(alto) >= 2 and croce(alto[-2], alto[-1], p) <= 0:
-            alto.pop()
-        alto.append(p)
-    return np.asarray(basso[:-1] + alto[:-1], dtype=np.float64)
-
-
-def _ricampiona(poly, k):
-    """Ridistribuisce i punti di un contorno chiuso a passo costante."""
-    chiusa = np.vstack([poly, poly[:1]])
-    d = np.linalg.norm(np.diff(chiusa, axis=0), axis=1)
-    s = np.concatenate([[0.0], np.cumsum(d)])
-    if s[-1] <= 1e-12:
-        return poly
-    t = np.linspace(0.0, s[-1], k, endpoint=False)
-    return np.column_stack([np.interp(t, s, chiusa[:, 0]),
-                            np.interp(t, s, chiusa[:, 1])])
-
-
-def _contorno_semplice(P2, lati=128, giri=8, dilata=0.0):
-    """Contorno LISCIO attorno a una macchia, guardata da dritto.
-
-    E' la differenza fra il nostro taglio e quello del coniglio di Bing: li'
-    la tasca ha un contorno semplice, da noi seguiva il bordo grezzo della
-    selezione, che cammina sugli spigoli dei triangoli. Su un modello da
-    395.000 triangoli quel bordo e' una sega con centinaia di denti, e sono i
-    denti a far sembrare storto un pezzo che ha il fondo perfettamente piano.
-
-    Si prende l'inviluppo convesso della macchia schiacciata sul piano di
-    taglio, lo si ricampiona a passo costante e lo si arrotonda; poi lo si
-    riapre quel tanto che basta perche' contenga di nuovo tutta la macchia
-    (arrotondare stringe, e un contorno che stringe taglierebbe via pezzi di
-    quello che hai scelto).
-    """
-    H = _inviluppo_convesso(P2)
-    if len(H) < 3:
-        return None
-    R = _ricampiona(H, max(lati, 16))
-    S = R.copy()
-    for _ in range(giri):
-        S = 0.5 * S + 0.25 * np.roll(S, 1, axis=0) + 0.25 * np.roll(S, -1, axis=0)
-    c = S.mean(axis=0)
-    rs = np.linalg.norm(S - c, axis=1)
-    rr = np.linalg.norm(R - c, axis=1)
-    buoni = rs > 1e-9
-    if buoni.any():
-        k = float(np.max(rr[buoni] / rs[buoni]))
-        S = c + (S - c) * max(1.0, k)
-    if dilata:
-        rs = np.linalg.norm(S - c, axis=1)
-        rs[rs < 1e-9] = 1.0
-        S = c + (S - c) * (1.0 + dilata / rs)[:, None]
-    return S
-
-
-def _area_poligono(P):
-    """Area (col segno) di un poligono chiuso, formula del laccio di scarpa."""
-    if P is None or len(P) < 3:
-        return 0.0
-    x, y = np.asarray(P)[:, 0], np.asarray(P)[:, 1]
-    return 0.5 * float(np.sum(x * np.roll(y, -1) - np.roll(x, -1) * y))
-
-
-def _poligono_semplice(P):
-    """Il contorno si taglia da solo? Un poligono che si incrocia non puo'
-    diventare una fustella: manifold3d lo rifiuta e si perde il taglio."""
-    k = len(P)
-    if k < 4:
-        return True
-
-    def _incrocia(a, b, c, d):
-        def _o(p, q, r):
-            w = (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
-            return 0 if abs(w) < 1e-12 else (1 if w > 0 else -1)
-        return (_o(a, b, c) != _o(a, b, d)) and (_o(c, d, a) != _o(c, d, b))
-
-    for i in range(k):
-        a, b = P[i], P[(i + 1) % k]
-        for j in range(i + 2, k):
-            if i == 0 and j == k - 1:
-                continue                    # lati adiacenti attorno alla chiusura
-            if _incrocia(a, b, P[j], P[(j + 1) % k]):
-                return False
-    return True
-
-
-def _chaikin(P, giri=3):
-    """Smussa un poligono chiuso tagliandone gli angoli (Chaikin). A differenza
-    della media mobile NON schiaccia le rientranze: serve per le selezioni a
-    mezzaluna o a elle, dove l'inviluppo convesso prenderebbe troppo."""
-    Q = np.asarray(P, dtype=np.float64)
-    for _ in range(giri):
-        A = Q
-        B = np.roll(Q, -1, axis=0)
-        Q = np.empty((2 * len(A), 2), dtype=np.float64)
-        Q[0::2] = 0.75 * A + 0.25 * B
-        Q[1::2] = 0.25 * A + 0.75 * B
-        if len(Q) > 512:
-            break
-    return Q
-
-
-def _contorno_morbido(P2, lati=128, dilata=0.0):
-    """Contorno CONCAVO ammorbidito: parte dal bordo vero della selezione
-    (gia' proiettato e messo in fila) e ne toglie i denti, senza chiudere le
-    rientranze. Se il bordo proiettato si incrocia da solo — capita quando la
-    selezione gira attorno al modello — restituisce None e si ripiega
-    sull'inviluppo convesso."""
-    if P2 is None or len(P2) < 8:
-        return None
-    R = _ricampiona(np.asarray(P2, dtype=np.float64), max(lati, 32))
-    if not _poligono_semplice(R):
-        return None
-    S = _ricampiona(_chaikin(R, 3), max(lati, 32))
-    if not _poligono_semplice(S):
-        return None
-    if dilata:
-        c = S.mean(axis=0)
-        rs = np.linalg.norm(S - c, axis=1)
-        rs[rs < 1e-9] = 1.0
-        S = c + (S - c) * (1.0 + dilata / rs)[:, None]
-        if not _poligono_semplice(S):
-            return None
-    return S
-
-
-def _prisma_da_contorno(S2, u, v, n, q_alto, q_basso):
-    """Fustella dritta: il contorno 2D esteso fra due quote lungo n."""
-    k = len(S2)
-    if k < 3 or q_alto <= q_basso:
-        return None
-    # verso antiorario nel piano (u, v): serve perche' le facce guardino fuori
-    area2 = float(np.sum(S2[:, 0] * np.roll(S2[:, 1], -1) - np.roll(S2[:, 0], -1) * S2[:, 1]))
-    if area2 < 0:
-        S2 = S2[::-1].copy()
-    su = np.outer(S2[:, 0], u) + np.outer(S2[:, 1], v)
-    sopra = su + n * q_alto
-    sotto = su + n * q_basso
-    c2 = S2.mean(axis=0)
-    cs = c2[0] * u + c2[1] * v
-    V = np.vstack([sopra, sotto, (cs + n * q_alto)[None, :], (cs + n * q_basso)[None, :]])
-    ct, cb = 2 * k, 2 * k + 1
-    Fc = []
-    for i in range(k):
-        j = (i + 1) % k
-        Fc.append([ct, i, j])                       # tappo sopra
-        Fc.append([cb, k + j, k + i])               # tappo sotto
-        Fc.append([i, k + i, k + j])                # parete
-        Fc.append([i, k + j, j])
-    return V, np.asarray(Fc, dtype=np.int64)
-
-
-def _semispazio(n, quota, taglia):
-    """Blocco enorme che tiene tutto quello che sta OLTRE il piano x·n = quota
-    (cioe' dalla parte di n). Serve a segare il nocciolo con una faccia piana."""
-    u, v, nn = _base_da_normale(n)
-    w = 4.0 * taglia
-    return _cubo([w, w, w], np.asarray(n, dtype=np.float64) * (quota + w * 0.5), u, v, nn)
-
-
-def _solo_con_la_pelle(solido, punti, tol, quota_minima=0.10):
-    """Fra i tocchi separati tiene SOLO quelli che poggiano sulla pelle scelta.
-
-    Il prisma del nocciolo scende dritto dentro il modello e si porta via tutto
-    quello che incontra nella sua colonna: sotto una macchia sulla coscia
-    c'e' anche il bordo del pantalone, che finisce nel pezzo staccato come un
-    lembo a parte. Non e' un errore della selezione — la selezione e' giusta —
-    ed e' per questo che pulirla a mano non serviva a niente: quel lembo
-    nasceva dopo, dalla booleana.
-
-    Si tiene un tocco solo se una fetta consistente dei punti della pelle
-    scelta ci poggia sopra: il blocco vero ce li ha quasi tutti, il lembo di
-    pantalone nessuno.
-    """
-    try:
-        pezzi = [p for p in solido.decompose() if p.status().name == "NoError"]
-    except Exception:
-        pezzi = []
-    if len(pezzi) <= 1:
-        return solido, len(pezzi) or 1
-    P = np.asarray(punti, dtype=np.float64)
-    if len(P) > 300:
-        P = P[np.linspace(0, len(P) - 1, 300).astype(int)]
-    if not len(P):
-        return solido, len(pezzi)
-    p2 = (P * P).sum(axis=1)
-    tenuti = []
-    for p in pezzi:
-        try:
-            Vc, Fc = _to_arrays(p)
-        except Exception:
-            continue
-        if not len(Fc):
-            continue
-        vicino = np.full(len(P), np.inf)
-        for i in range(0, len(Vc), 4000):
-            B = Vc[i:i + 4000]
-            d2 = p2[:, None] + (B * B).sum(axis=1)[None, :] - 2.0 * (P @ B.T)
-            vicino = np.minimum(vicino, d2.min(axis=1))
-        if float((vicino < tol * tol).mean()) >= quota_minima:
-            tenuti.append(p)
-    if not tenuti:
-        return solido, len(pezzi)
-    fuso = tenuti[0]
-    for p in tenuti[1:]:
-        fuso = fuso + p
-    if fuso.status().name != "NoError":
-        return solido, len(pezzi)
-    return fuso, len(pezzi)
-
-
-def _senza_briciole(solido, quota_minima=0.05):
-    """Butta via i tocchi minuscoli di una booleana.
-
-    Il prisma che scende dalla selezione sfiora la pelle di striscio lungo il
-    contorno e produce decine di schegge da pochi millesimi di volume (su una
-    coscia: 117 tocchi, di cui uno da 6,5 milioni e tutti gli altri sotto
-    settecento). Sono loro le bavette e le punte che si vedevano sul pezzo.
-    Si tengono solo i tocchi che valgono almeno una frazione del piu' grosso,
-    cosi' una selezione fatta apposta in due parti resta in due parti.
-    """
-    try:
-        pezzi = [p for p in solido.decompose() if p.status().name == "NoError"]
-    except Exception:
-        pezzi = []
-    if len(pezzi) <= 1:
-        return solido
-    voli = [abs(float(p.volume())) for p in pezzi]
-    massimo = max(voli) or 1.0
-    tenuti = [p for p, v in zip(pezzi, voli) if v >= quota_minima * massimo]
-    if not tenuti:
-        return solido
-    fuso = tenuti[0]
-    for p in tenuti[1:]:
-        fuso = fuso + p
-    return fuso if fuso.status().name == "NoError" else solido
-
-
-def _spessore_sotto(Vb, Fb, punti, n, eps):
-    """Quanto e' spesso il modello sotto la macchia: si sparano dei raggi
-    dalla pelle verso l'interno e si guarda dove escono dall'altra parte.
-
-    Serve perche' il prisma della selezione ATTRAVERSA tutto il personaggio:
-    misurando l'ingombro del solido tagliato si ottiene la larghezza del
-    bacino (288) invece dello spessore della coscia (~100), e la faccia
-    piatta finiva a meta' del corpo.
-
-    I raggi sono scritti QUI, a mano, e non chiesti a trimesh. Il suo motore
-    di raggi si appoggia a `rtree`, che e' una libreria in piu' e sul PC di chi
-    usa l'app non c'era: la misura falliva con "No module named 'rtree'", il
-    nocciolo si arrendeva in silenzio e usciva il taglio normale col perno —
-    per giorni, mentre qui i test passavano perche' rtree era installato.
-    Una funzione che sta in venti righe non vale una dipendenza che puo'
-    mancare.
-
-    Si tira contro il SOLIDO GIA' RITAGLIATO sotto la macchia (poche migliaia
-    di triangoli), non contro tutto il modello: cosi' anche a forza bruta
-    e' questione di un attimo.
-    """
-    Vb = np.asarray(Vb, dtype=np.float64)
-    Fb = np.asarray(Fb, dtype=np.int64)
-    if not len(Fb) or not len(punti):
-        return None
-    d = -np.asarray(n, dtype=np.float64)
-    v0 = Vb[Fb[:, 0]]
-    e1 = Vb[Fb[:, 1]] - v0
-    e2 = Vb[Fb[:, 2]] - v0
-    # con una direzione sola questi non cambiano da raggio a raggio
-    h = np.cross(np.broadcast_to(d, e2.shape), e2)
-    a = np.einsum('ij,ij->i', e1, h)
-    vale = np.abs(a) > 1e-12
-    inv = np.zeros(len(Fb), dtype=np.float64)
-    inv[vale] = 1.0 / a[vale]
-    distanze = []
-    for p in np.asarray(punti, dtype=np.float64):
-        s = p - v0
-        u = inv * np.einsum('ij,ij->i', s, h)
-        q = np.cross(s, e1)
-        v = inv * (q @ d)
-        t = inv * np.einsum('ij,ij->i', e2, q)
-        buoni = vale & (u >= -1e-9) & (v >= -1e-9) & (u + v <= 1.0 + 1e-9) & (t > eps)
-        if buoni.any():
-            distanze.append(float(t[buoni].min()))
-    if not distanze:
-        return None
-    return float(np.median(distanze))
-
-
-def taglia_a_nocciolo_piatto(V, F, sel, anelli, log, gioco, frazione=0.5,
-                             contorno="liscio"):
-    """Nocciolo con la FACCIA DI TAGLIO PIANA.
-
-    Il pezzo che si stacca e': la pelle originale davanti (intatta), una faccia
-    piatta dietro, e le pareti che scendono dritte. In pratica si affetta la
-    coscia: se la gamba li' e' spessa 4 cm, il pezzo viene spesso 2
-    (`frazione`), togliendo materiale alla gamba. Nel resto del modello si
-    scava la sede corrispondente, un filo piu' larga.
-
-    contorno : "liscio" -> le pareti seguono un contorno semplice e arrotondato
-                           (come la tasca del coniglio di Bing). Il pezzo prende
-                           un filo di materiale in piu' di quello selezionato,
-                           ma non ha piu' il bordo a merletto ne' le alette.
-               "esatto" -> le pareti seguono il bordo della selezione, dente per
-                           dente. Massima fedelta', peggior aspetto.
-    """
-    import trimesh
-    T = V[F[sorted(sel)]]
-    nf = np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0])
-    n = _normalizza(nf.sum(axis=0))          # da che parte "guarda" la macchia
-    diag = float(np.linalg.norm(V.max(axis=0) - V.min(axis=0))) or 1.0
-    L = 3.0 * diag                            # abbastanza per uscire dall'altra parte
-
-    Mo = trimesh.Trimesh(vertices=V, faces=F, process=True)
-    Mo.update_faces(Mo.nondegenerate_faces())
-    Mo.remove_unreferenced_vertices()
-    Orig = _manifold(np.asarray(Mo.vertices), np.asarray(Mo.faces))
-
-    # il contorno della macchia, guardata da dritto
-    _pm = V[sorted({int(x) for f in F[sorted(sel)] for x in f})]
-    u_, v_, _ = _base_da_normale(n)
-    P2 = np.column_stack([_pm @ u_, _pm @ v_])
-    q_alto = float((_pm @ n).max()) + 0.05 * diag
-    q_basso = float((V @ n).min()) - 0.05 * diag
-
-    # il bordo VERO della selezione, messo in fila e schiacciato sul piano:
-    # serve sia al contorno morbido sia al confronto di area nel resoconto
-    B2 = None
-    if anelli:
-        _giro = _ordina_anello(max(anelli, key=len))
-        if _giro and len(_giro) >= 8:
-            _bp = V[[int(x) for x in _giro]]
-            B2 = np.column_stack([_bp @ u_, _bp @ v_])
-    log.append(f"[diagnostica] macchia: {len(sel)} triangoli, {len(_pm)} vertici; "
-               f"bordo proiettato: {0 if B2 is None else len(B2)} punti; "
-               f"area del contorno grezzo {abs(_area_poligono(B2)):.0f}")
-
-    def _profilo(dil):
-        """Il contorno 2D da usare come sezione della fustella."""
-        if contorno == "morbido":
-            S = _contorno_morbido(B2, dilata=dil)
-            if S is not None:
-                return S, "morbido"
-            log.append("[diagnostica] contorno morbido scartato (il bordo "
-                       "proiettato si incrocia): passo all'inviluppo")
-        if contorno in ("liscio", "morbido"):
-            S = _contorno_semplice(P2, dilata=dil)
-            if S is not None:
-                return S, "liscio"
-        return None, "esatto"
-
-    def _fustella(dil):
-        S, come = _profilo(dil)
-        if S is not None:
-            pf = _prisma_da_contorno(S, u_, v_, n, q_alto, q_basso)
-            if pf is not None:
-                m = _manifold(pf[0], pf[1])
-                if m.status().name == "NoError" and abs(float(m.volume())) > 1e-9:
-                    if dil == 0.0:
-                        log.append(f"[diagnostica] contorno {come}: {len(S)} punti, "
-                                   f"area {abs(_area_poligono(S)):.0f}")
-                    return m
-                log.append(f"[diagnostica] fustella {come} non valida "
-                           f"({m.status().name}): ripiego sul contorno grezzo")
-        Vx, Fx = _prisma_selezione(V, F, sel, anelli, n, L, dil)
-        m = _manifold(Vx, Fx)
-        return m if m.status().name == "NoError" else None
-
-    Pr = _fustella(0.0)
-    if Orig.status().name != "NoError" or Pr is None:
-        log.append(f"(nocciolo piatto non utilizzabile: modello {Orig.status().name})")
-        return None
-
-    Blocco = Pr ^ Orig                        # tutta la carne sotto la macchia
-    if Blocco.status().name != "NoError":
-        return None
-
-    # QUANTO FONDO. Non si puo' misurare l'ingombro del blocco: il prisma esce
-    # dall'altra parte del personaggio e quello che si misura e' la larghezza
-    # del bacino, non lo spessore della coscia. Si spara una manciata di raggi
-    # dalla macchia verso l'interno e si prende la prima uscita.
-    # ...e i raggi si sparano SOLO dai triangoli che guardano dritti come la
-    # macchia. Quelli sul fianco escono subito perche' rasentano la pelle, e
-    # tirano giu' la misura: sulla coscia facevano venire il pezzo fondo 8
-    # invece di una quarantina.
-    _tf = V[F[sorted(sel)]]
-    _nfv = np.cross(_tf[:, 1] - _tf[:, 0], _tf[:, 2] - _tf[:, 0])
-    _ln = np.linalg.norm(_nfv, axis=1)
-    _ln[_ln < 1e-12] = 1.0
-    _dritti = np.where((_nfv / _ln[:, None]) @ n > 0.7)[0]
-    if len(_dritti) < 8:
-        _dritti = np.arange(len(_tf))
-    campione = _tf[_dritti].mean(axis=1)
-    if len(campione) > 200:
-        campione = campione[np.linspace(0, len(campione) - 1, 200).astype(int)]
-    # I raggi si tirano contro il BLOCCO gia' ritagliato sotto la macchia, non
-    # contro tutto il modello: sono qualche migliaio di triangoli invece di
-    # quattrocentomila, e la misura resta la stessa perche' il blocco e'
-    # proprio la carne che si vuole misurare.
-    _vb, _fb = _to_arrays(Blocco)
-    _eps = 1e-4 * diag
-    campione = campione - n * _eps      # stacca l'origine dalla pelle
-    spess = _spessore_sotto(_vb, _fb, campione, n, _eps)
-    if spess is None or spess <= 1e-6:
-        log.append(f"(nocciolo piatto: non riesco a misurare quanto e' spesso il "
-                   f"modello sotto la macchia: {len(campione)} raggi contro "
-                   f"{len(_fb)} triangoli, nessuna uscita trovata)")
-        return None
-    alto = float((V[sorted({int(x) for f in F[sorted(sel)] for x in f})] @ n).max())
-    quota = alto - frazione * spess           # dove passa la faccia piatta
-
-    # I punti della PELLE SCELTA: servono a riconoscere, fra i tocchi che la
-    # booleana tira fuori, quali sono davvero il pezzo che hai selezionato e
-    # quali invece sono roba finita per caso nella colonna del prisma (sotto
-    # una macchia sulla coscia ci passa anche il bordo del pantalone).
-    _pelle = _tf.mean(axis=1)
-    if len(_pelle) > 300:
-        _pelle = _pelle[np.linspace(0, len(_pelle) - 1, 300).astype(int)]
-    _tol = 0.01 * diag
-
-    _tagliato = Blocco ^ _semispazio(n, quota, diag)
-    A, _corpi = _solo_con_la_pelle(_tagliato, _pelle, _tol)
-    A = _senza_briciole(A)
-    _corpi_dopo = 1
-    try:
-        _corpi_dopo = len(list(A.decompose()))
-    except Exception:
-        pass
-    log.append(f"[diagnostica] spessore stimato {spess:.1f}, piano a quota "
-               f"{quota:.1f} (cioe' {frazione * spess:.1f} sotto la pelle); "
-               f"corpi dopo la booleana {_corpi}, tenuti quelli che poggiano "
-               f"sulla pelle scelta: {_corpi_dopo}")
-
-    # LA SEDE SI RICAVA DAL PEZZO, non da una seconda booleana per conto suo.
-    # Calcolandole separate le due potevano non combaciare: la sede prendeva un
-    # tocco (il bordo del pantalone sotto la coscia) che il pezzo non aveva, e
-    # quel materiale spariva — un buco nel modello che nessuno aveva chiesto.
-    # Cosi' invece la sede e' il pezzo stesso strisciato all'indietro di un
-    # gioco: e' garantito che contenga il pezzo e niente di piu', quindi
-    # l'unico materiale che si perde e' la fettina di gioco in fondo alla
-    # tasca, che e' esattamente quella che serve perche' il pezzo ci entri.
-    try:
-        Sede = A + A.translate(list(-np.asarray(n, dtype=float) * gioco))
-    except Exception as _e:
-        log.append(f"(sede non ricavabile dal pezzo: {_e}; uso il pezzo com'e')")
-        Sede = A
-    if Sede.status().name != "NoError":
-        Sede = A
-    B = Orig - Sede
-    if A.status().name != "NoError" or B.status().name != "NoError":
-        return None
-    va, fa = _to_arrays(A)
-    vb, fb = _to_arrays(B)
-    if not len(fa) or not len(fb):
-        return None
-    ma = trimesh.Trimesh(vertices=va, faces=fa, process=False)
-    mb = trimesh.Trimesh(vertices=vb, faces=fb, process=False)
-    return ma, mb
-
-
-def taglia_a_nocciolo(V, F, sel, anelli, log, profondita, gioco, normali_v):
-    """Stacca la zona selezionata come nocciolo e ne scava la sede nel resto."""
-    import trimesh
-    Vp, Fp = _nocciolo(V, F, sel, anelli, profondita, gioco, normali_v)
-    Vs, Fs = _nocciolo(V, F, sel, anelli, profondita, 0.0, normali_v)
-    Mo = trimesh.Trimesh(vertices=V, faces=F, process=True)
-    Mo.update_faces(Mo.nondegenerate_faces())
-    Mo.remove_unreferenced_vertices()
-    Orig = _manifold(np.asarray(Mo.vertices), np.asarray(Mo.faces))
-    Pezzo = _manifold(Vp, Fp)
-    Sede = _manifold(Vs, Fs)
-    if any(x.status().name != "NoError" for x in (Orig, Pezzo, Sede)):
-        log.append(f"(nocciolo non utilizzabile: modello {Orig.status().name}, "
-                   f"pezzo {Pezzo.status().name}, sede {Sede.status().name})")
-        return None
-    A = Pezzo ^ Orig                 # il nocciolo non puo' uscire dal modello
-    B = Orig - Sede
-    if A.status().name != "NoError" or B.status().name != "NoError":
-        return None
-    va, fa = _to_arrays(A)
-    vb, fb = _to_arrays(B)
-    if not len(fa) or not len(fb):
-        return None
-    ma = trimesh.Trimesh(vertices=va, faces=fa, process=False)
-    mb = trimesh.Trimesh(vertices=vb, faces=fb, process=False)
-    # Il resoconto lo scrive chi chiama: qui si prova piu' di una profondita' e
-    # una riga per tentativo sarebbe solo confusione.
-    return ma, mb
-
-
 def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.20,
                            lato=None, profondita=None, scala_connettore=1.0,
-                           appiattisci=True, incastro_modo="auto",
-                           profondita_nocciolo=0.5):
+                           appiattisci=True):
     """Stacca ESATTAMENTE i triangoli selezionati, chiudendo entrambi i pezzi
     con un tappo sull'anello di bordo.
 
@@ -1619,17 +1006,6 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
                   spostamento e' identico sui due pezzi, quindi combaciano
                   comunque. Se l'anello e' molto storto si rinuncia, per non
                   deformare il modello.
-    incastro_modo : come si uniscono i due pezzi.
-                  "auto"     decide l'app (nocciolo dove il pezzo verrebbe una
-                             buccia, perno altrove);
-                  "nocciolo" lo chiedi tu: la zona scelta diventa un blocchetto
-                             e nell'altro pezzo se ne scava la sede;
-                  "perno"    mai nocciolo, sempre e solo il perno quadro;
-                  "niente"   nessun aggancio, i pezzi si incollano.
-    profondita_nocciolo : quanto affonda il nocciolo, come frazione dello
-                  spessore del modello sotto la macchia. 0,5 = meta' (il
-                  predefinito: gamba spessa 4 cm, pezzo spesso 2). Piu' basso
-                  = pezzo piu' sottile e sede meno profonda.
     """
     log = [f"[{VERSIONE}] taglio esattamente sulla selezione"]
     import trimesh
@@ -1878,7 +1254,6 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
 
     # costruito al primo bisogno: dice se un punto sta fuori dalla pelle
     quanto_fuori = None
-    niente_perno = False   # col nocciolo l'incastro c'e' gia'
     tappo_a = []          # facce aggiunte come tappo (per il controllo sporgenze)
     normali_tappo = []
     centri_tappo = []
@@ -2017,15 +1392,7 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
                     migliore = (0, 0.0, q_try, fatto_k)
                     break
                 Vp = np.vstack([V, np.asarray(extra, dtype=np.float64)]) if extra else V
-                _misura = quanto_fuori(_campiona_facce(Vp, tri_b))
-                if _misura is None:
-                    # niente rtree sul PC: si rinuncia a scegliere il piano
-                    # sulla sporgenza e si tiene il primo, tanto le sporgenze le
-                    # toglie comunque la booleana di ritaglio piu' sotto
-                    quanto_fuori = None
-                    migliore = (0, 0.0, q_try, fatto_k)
-                    break
-                n_fuori, sporgenza = _misura
+                n_fuori, sporgenza = quanto_fuori(_campiona_facce(Vp, tri_b))
                 if migliore is None or n_fuori < migliore[0]:
                     migliore = (n_fuori, sporgenza, q_try, fatto_k)
                 if n_fuori == 0:
@@ -2167,172 +1534,27 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
         _T = V[F[sorted(sel)]]
         _nf = np.cross(_T[:, 1] - _T[:, 0], _T[:, 2] - _T[:, 0])
         _dir = float(np.linalg.norm(_nf.sum(axis=0)) / (np.linalg.norm(_nf, axis=1).sum() or 1.0))
-        # Il nocciolo puo' essere CHIESTO ("nocciolo") o VIETATO ("perno",
-        # "niente"). In automatico parte solo dove il pezzo verrebbe una buccia.
-        # Prima esisteva solo l'automatico e non c'era modo di chiederlo: chi
-        # voleva l'incastro a sede su una zona un po' piu' spessa non aveva
-        # nessun bottone da premere.
-        _chiesto = incastro_modo in ("nocciolo", "nocciolo_esatto", "nocciolo_ovale")
-        # "liscio" = contorno semplice e arrotondato, come la tasca del coniglio
-        # di Bing; "esatto" = dente per dente come l'hai disegnato.
-        # Il predefinito e' il contorno SMUSSATO, non l'inviluppo convesso.
-        # Misurato sulla macchia della coscia: il contorno vero copre un'area di
-        # 18.780, quello smussato 18.728 (praticamente identico, ma senza i
-        # denti), l'inviluppo convesso 48.842 — quasi il triplo di materiale
-        # portato via al modello. L'inviluppo resta come scelta esplicita, per
-        # chi vuole una tasca semplicissima, e come ripiego automatico quando il
-        # contorno vero non si puo' usare.
-        _cont = {"nocciolo_esatto": "esatto",
-                 "nocciolo_ovale": "liscio"}.get(incastro_modo, "morbido")
-        _vietato = incastro_modo in ("perno", "niente")
-        _buccia = (_gr > 0 and _sp < 0.12 * _gr and _dir > 0.35)
-        if not _vietato and (_chiesto or _buccia):
-            if _chiesto:
-                log.append("Incastro A NOCCIOLO richiesto da te: la zona scelta "
-                           "diventa un blocchetto e nell'altro pezzo se ne scava "
-                           "la sede.")
-            else:
-                log.append(f"Il pezzo verrebbe una buccia (spessa {_sp:.1f} mm su "
-                           f"{_gr:.0f} mm di larghezza, selezione tutta da un lato "
-                           f"{_dir:.2f}): rifaccio il taglio a nocciolo")
-            # PROFONDITA' DEL NOCCIOLO: non si indovina, si prova.
-            # Prima era un numero solo (0,22 volte la larghezza della macchia) e
-            # su una macchia larga sbagliava di brutto: spingendo la pelle verso
-            # l'interno di mezza larghezza, su una superficie curva la pelle
-            # spostata si incrocia con se' stessa e quel che resta dopo il
-            # ritaglio dentro al modello e' piu' SOTTILE del taglio normale
-            # (misurato sulla coscia: 10,6 mm invece di 17,0, cioe' il nocciolo
-            # veniva scartato proprio dove serviva).
-            # Anche in millimetri fissi sarebbe sbagliato: le unita' del modello
-            # non sono millimetri di stampa (su questo Goku ce ne vogliono quasi
-            # dieci per un millimetro stampato).
-            # Quindi se ne provano poche, ben distanziate, e si tiene quella che
-            # da' il blocchetto piu' spesso. Costa qualche secondo in piu' e
-            # toglie di mezzo una costante da tarare a mano.
-            _fu, _sp2, _pv, _piatto = None, -1.0, 0.0, False
-            _muto = []          # i tentativi non devono riempire il resoconto
-            # PRIMA il nocciolo a FONDO PIATTO: la pelle davanti resta quella
-            # del modello, dietro c'e' un piano, le pareti scendono dritte.
-            # E' quello giusto da stampare, e non ha le punte che faceva il
-            # vecchio (che copiava la pelle curva e incrociava le normali).
-            # La diagnostica del fondo piatto va tenuta da parte: se il nocciolo
-            # viene accettato la si rimette nel resoconto (serve a capire cosa
-            # ha deciso il motore senza dover leggere il codice), se viene
-            # scartato non deve sporcare la relazione di un taglio normale.
-            _diag = []
-            _pi = taglia_a_nocciolo_piatto(V, F, sel, anelli, _diag, gioco,
-                                           frazione=float(profondita_nocciolo),
-                                           contorno=_cont)
-            _muto.extend(l for l in _diag if not l.startswith("[diagnostica]"))
-            # Se il nocciolo l'hai chiesto TU, la diagnostica va nel resoconto
-            # comunque, riuscito o no: e' l'unico modo per capire da lontano
-            # perche' e' venuto quello che e' venuto.
-            if _chiesto:
-                log.extend(_diag)
-            if _pi is not None:
-                _fu = _pi
-                _sp2 = 4.0 * abs(float(_pi[0].volume)) / (float(_pi[0].area) or 1.0)
-                _piatto = True
-            # QUANDO LO CHIEDI TU, NIENTE RIPIEGHI DI NASCOSTO.
-            # Il vecchio nocciolo a guscio (pelle copiata e spinta in dentro
-            # lungo le normali) e' proprio quello che faceva le costine radiali
-            # sul bordo e il fondo ondulato. Prima veniva ripescato ogni volta
-            # che il fondo piatto usciva piu' sottile del taglio normale: chi
-            # sceglieva "a NOCCIOLO" nel menu si ritrovava in mano il pezzo
-            # vecchio senza che niente glielo dicesse, e sembrava che la
-            # correzione non fosse mai stata fatta.
-            # Adesso il guscio resta solo per la scelta AUTOMATICA. Se lo hai
-            # chiesto tu: o esce il fondo piatto, o te lo dico e si fa il taglio
-            # normale col perno.
-            if _fu is None and _chiesto:
-                log.append("Il nocciolo a faccia piatta non e' riuscito su questa "
-                           "selezione (vedi le righe di diagnostica qui sopra). "
-                           "NON ripiego sul vecchio nocciolo a guscio, che darebbe "
-                           "il bordo a costine: faccio il taglio normale col perno.")
-            elif not _chiesto and (_fu is None or _sp2 <= _sp):
-                for _k in (0.05, 0.10, 0.18, 0.30):
-                    _p = _k * _gr
-                    _try = taglia_a_nocciolo(V, F, sel, anelli, _muto, _p, gioco, normali_v)
-                    if _try is None:
-                        continue
-                    _s = 4.0 * abs(float(_try[0].volume)) / (float(_try[0].area) or 1.0)
-                    if _s > _sp2:
-                        _fu, _sp2, _pv, _piatto = _try, _s, _p, False
+        if _gr > 0 and _sp < 0.12 * _gr and _dir > 0.35:
+            log.append(f"Il pezzo verrebbe una buccia (spessa {_sp:.1f} mm su "
+                       f"{_gr:.0f} mm di larghezza, selezione tutta da un lato "
+                       f"{_dir:.2f}): rifaccio il taglio a fustella")
+            _fu = taglia_a_fustella(V, F, sel, anelli, log)
             if _fu is not None:
-                # Se l'hai chiesto tu si tiene comunque, purche' i due pezzi
-                # siano chiusi: sei tu a sapere come lo vuoi stampare. In
-                # automatico invece si tiene solo se migliora DAVVERO (non per
-                # un pelo: rifare il taglio in un altro modo per guadagnare
-                # mezzo millimetro non vale il rischio).
-                _sano = bool(_fu[0].is_watertight and _fu[1].is_watertight)
-                _ok = (_sp2 > 1.05 * _sp) if not _chiesto else _sano
-                if _ok:
+                # si accetta SOLO se il pezzo esce davvero piu' massiccio. Se il
+                # contorno disegnato serpeggia in tre dimensioni (misurato sulla
+                # coscia: 274 punti sparsi su tutti e tre gli assi) la fustella
+                # collassa e darebbe un pezzo peggiore di quello di partenza.
+                _sp2 = 4.0 * abs(float(_fu[0].volume)) / (float(_fu[0].area) or 1.0)
+                if _sp2 > _sp:
                     ma, mb = _fu
-                    niente_perno = True
-                    if _piatto:
-                        _tit = {
-                            "liscio": "Taglio A NOCCIOLO con la FACCIA PIATTA e CONTORNO OVALE",
-                            "morbido": "Taglio A NOCCIOLO con la FACCIA PIATTA e CONTORNO LISCIO",
-                        }.get(_cont, "Taglio A NOCCIOLO con la FACCIA PIATTA e CONTORNO ESATTO")
-                        _dic = {
-                            "liscio": "un ovale che racchiude tutta la zona scelta "
-                                      "(tasca semplicissima, ma porta via piu' materiale)",
-                            "morbido": "il tuo contorno smussato: stessa forma e "
-                                       "stessa area di quello che hai scelto, "
-                                       "senza i denti dei triangoli",
-                        }.get(_cont, "il contorno che hai scelto, dente per dente")
-                        if not _chiesto:
-                            log.extend(_diag)     # se l'hai chiesto tu e' gia' scritta sopra
-                        log.append(
-                            f"{_tit}: davanti resta "
-                            f"la pelle del modello, dietro c'e' un piano e le pareti "
-                            f"scendono dritte seguendo {_dic}. Il "
-                            f"blocchetto viene spesso {_sp2:.1f} invece di {_sp:.1f} "
-                            f"(meta' dello spessore del modello li' sotto) e "
-                            f"nell'altro pezzo si scava la sua sede, con {gioco:.2f} "
-                            f"di gioco. Si incastra da solo: niente perno. "
-                            f"Stampa il pezzo con la faccia piatta appoggiata al piatto.")
-                    else:
-                        log.append(
-                            f"Taglio A NOCCIOLO: la zona scelta diventa un blocchetto "
-                            f"spesso {_sp2:.1f} mm invece di {_sp:.1f} (affondato "
-                            f"{_pv:.1f} mm, profondita' scelta provandone quattro) e "
-                            f"nell'altro pezzo si scava la sua sede, con {gioco:.2f} mm "
-                            f"di gioco. Si incastra da solo: niente perno.")
-                    if _sp2 < _sp:
-                        # Succede quando la selezione AVVOLGE il pezzo invece di
-                        # essere una macchia su un lato: il nocciolo e' un guscio
-                        # spinto in dentro, e su un anello diventa un manicotto
-                        # vuoto. Misurato sulla coscia: 32 mm invece di 106.
-                        log.append(
-                            "ATTENZIONE: qui il nocciolo SVUOTA il pezzo, non lo "
-                            "ingrossa. La zona che hai scelto gira attorno al "
-                            "modello, e per una zona cosi' va meglio il perno: "
-                            "rimetti \"decidi tu\" e rifai il taglio.")
-                elif _chiesto:
-                    log.append(f"Nocciolo scartato: i due pezzi non venivano chiusi "
-                               f"({_fu[0].is_watertight}/{_fu[1].is_watertight}). "
-                               f"Taglio normale col perno.")
+                    log.append(f"Fustella accettata: spessore da {_sp:.1f} a {_sp2:.1f} mm")
                 else:
-                    log.append(f"Nocciolo scartato: non migliora ({_sp2:.1f} mm "
-                               f"invece di {_sp:.1f}). Taglio normale col perno.")
-            elif _chiesto:
-                if _muto:
-                    log.append(_muto[0])
-                log.append("Nocciolo non riuscito su questa selezione: taglio "
-                           "normale col perno. Se la zona scelta e' un anello "
-                           "attorno a un arto il nocciolo non serve, serve il perno.")
+                    log.append(f"Fustella scartata: darebbe un pezzo ancora piu' sottile "
+                               f"({_sp2:.1f} mm invece di {_sp:.1f}). Il contorno che hai "
+                               "disegnato serpeggia troppo per essere estruso: per dividere "
+                               "un arto conviene il taglio col PIANO.")
             else:
-                # ripiego: la vecchia fustella
-                _fu2 = taglia_a_fustella(V, F, sel, anelli, log)
-                if _fu2 is not None:
-                    _sp3 = 4.0 * abs(float(_fu2[0].volume)) / (float(_fu2[0].area) or 1.0)
-                    if _sp3 > _sp:
-                        ma, mb = _fu2
-                        log.append(f"Fustella accettata: spessore da {_sp:.1f} a {_sp3:.1f} mm")
-                    else:
-                        log.append("Il contorno che hai disegnato serpeggia troppo per essere "
-                                   "estruso: per dividere un arto conviene il taglio col PIANO.")
+                log.append("(la fustella non e' riuscita: tenuto il taglio precedente)")
     except Exception as _e:
         log.append(f"(controllo buccia non eseguito: {_e})")
 
@@ -2376,10 +1598,7 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
                 f"anelli={[len(x) for x in anelli]}; selezione={len(sel)}/{len(F)} triangoli"
             )
 
-    if not connettore or incastro_modo == "niente":
-        if incastro_modo == "niente":
-            log.append("Nessun aggancio (l'hai chiesto tu): le due facce "
-                       "combaciano, si uniscono con la colla.")
+    if not connettore:
         return {"a": _pack(np.asarray(ma.vertices), np.asarray(ma.faces)),
                 "b": _pack(np.asarray(mb.vertices), np.asarray(mb.faces)), "log": log}
 
@@ -2414,10 +1633,6 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
     # modello. Prima un `max(4.0, ...)` scavalcava il limite e su una lamina da
     # 1,7 mm usciva comunque un perno da 4 mm.
     tetto = 0.33 * spessore
-    if niente_perno:
-        log.append("Nessun perno: il pezzo si incastra da solo nella sua sede.")
-        return {"a": _pack(np.asarray(ma.vertices), np.asarray(ma.faces)),
-                "b": _pack(np.asarray(mb.vertices), np.asarray(mb.faces)), "log": log}
     if lato is None and profondita is None and tetto < 2.0:
         log.append(f"Pezzo staccato spesso solo {spessore:.1f} mm: niente perno "
                    "(sarebbe piu' grosso del pezzo). I due pezzi combaciano "
