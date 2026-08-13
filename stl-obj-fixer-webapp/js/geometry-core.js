@@ -77,34 +77,88 @@
       const cx = uy * vz - uz * vy, cy = uz * vx - ux * vz, cz = ux * vy - uy * vx;
       area += Math.sqrt(cx * cx + cy * cy + cz * cz) * 0.5;
     }
+    // Il 2,6 non e' teorico: col 2 secco, chiedendo 300.000 triangoli ne
+    // uscivano 395.000. Misurato e corretto.
     const T = Math.max(1000, triangoliObiettivo || 300000);
-    return { passo: Math.sqrt((2 * area) / T), area };
+    return { passo: Math.sqrt((2.6 * area) / T), area };
   };
 
   // Alleggerisce e riporta anche COSA e' sopravvissuto, cosi' chi chiama puo'
   // portarsi dietro i colori e le coordinate della texture dei triangoli
   // rimasti invece di buttarli.
-  MeshCore.alleggerisci = function (rawPositions, passo, areaEpsilon) {
-    const w = MeshCore.weldVertices(rawPositions, passo);
-    const deg = MeshCore.removeDegenerateTriangles(w.positions, w.indices,
-      areaEpsilon === undefined ? passo * passo * 1e-4 : areaEpsilon);
-    // rawPositions "espanse": tre vertici per triangolo, com'e' il formato che
-    // gira nel resto dell'app
-    const n = deg.indices.length / 3;
-    const fuori = new Float64Array(n * 9);
-    for (let t = 0; t < n; t++) {
-      for (let k = 0; k < 3; k++) {
-        const v = deg.indices[t * 3 + k];
-        fuori[t * 9 + k * 3] = w.positions[v * 3];
-        fuori[t * 9 + k * 3 + 1] = w.positions[v * 3 + 1];
-        fuori[t * 9 + k * 3 + 2] = w.positions[v * 3 + 2];
+  // NB: qui NON si riusa weldVertices. Quella lavora con una chiave di testo
+  // per ogni punto ("12,-4,88"): su un modello normale non si nota, ma su
+  // 7,9 milioni di punti vuol dire 7,9 milioni di stringhe da creare e
+  // buttare, e la prima versione di questa funzione ci metteva un quarto
+  // d'ora. Qui la casella della griglia diventa un NUMERO, e i risultati
+  // vanno in tabelle di dimensione fissa invece che in liste che crescono.
+  MeshCore.alleggerisci = function (rawPositions, passo) {
+    const nPunti = rawPositions.length / 3;
+    const nTrisIn = nPunti / 3;
+    // riquadro del modello: serve a numerare le caselle a partire da zero
+    let mnx = Infinity, mny = Infinity, mnz = Infinity;
+    let mxx = -Infinity, mxy = -Infinity, mxz = -Infinity;
+    for (let i = 0; i < rawPositions.length; i += 3) {
+      const x = rawPositions[i], y = rawPositions[i + 1], z = rawPositions[i + 2];
+      if (x < mnx) mnx = x; if (x > mxx) mxx = x;
+      if (y < mny) mny = y; if (y > mxy) mxy = y;
+      if (z < mnz) mnz = z; if (z > mxz) mxz = z;
+    }
+    const inv = 1 / passo;
+    const nx = Math.floor((mxx - mnx) * inv) + 2;
+    const ny = Math.floor((mxy - mny) * inv) + 2;
+
+    // Di ogni casella si tiene solo QUALE punto ci e' arrivato per primo, non
+    // le sue tre coordinate: un numero invece di tre, cioe' 30 MB invece di
+    // 190 su un modello di questa stazza. Le coordinate si rileggono dopo.
+    const nuovoIndice = new Int32Array(nPunti);      // punto -> vertice tenuto
+    const primoPunto = new Int32Array(nPunti);       // vertice tenuto -> punto di partenza
+    const celle = new Map();                         // chiave numerica -> vertice
+    let nVert = 0;
+    for (let i = 0; i < nPunti; i++) {
+      const ix = Math.floor((rawPositions[i * 3] - mnx) * inv);
+      const iy = Math.floor((rawPositions[i * 3 + 1] - mny) * inv);
+      const iz = Math.floor((rawPositions[i * 3 + 2] - mnz) * inv);
+      const chiave = ix + iy * nx + iz * nx * ny;    // numero, non stringa
+      let v = celle.get(chiave);
+      if (v === undefined) {
+        v = nVert++;
+        celle.set(chiave, v);
+        primoPunto[v] = i;
       }
+      nuovoIndice[i] = v;
+    }
+    celle.clear();
+
+    // Triangoli sopravvissuti: spariscono quelli che si sono schiacciati, cioe'
+    // quelli con due o tre angoli finiti nella stessa casella. Si contano prima
+    // e si scrive dopo, cosi' la tabella dei risultati nasce della misura
+    // giusta invece che grande quanto il modello di partenza.
+    let n = 0;
+    for (let t = 0; t < nTrisIn; t++) {
+      const a = nuovoIndice[t * 3], b = nuovoIndice[t * 3 + 1], c = nuovoIndice[t * 3 + 2];
+      if (a !== b && b !== c && a !== c) n++;
+    }
+    const fuori = new Float64Array(n * 9);
+    const tenuti = new Int32Array(n);
+    let m = 0;
+    for (let t = 0; t < nTrisIn; t++) {
+      const a = nuovoIndice[t * 3], b = nuovoIndice[t * 3 + 1], c = nuovoIndice[t * 3 + 2];
+      if (a === b || b === c || a === c) continue;
+      const o = m * 9;
+      const pa = primoPunto[a] * 3, pb = primoPunto[b] * 3, pc = primoPunto[c] * 3;
+      fuori[o] = rawPositions[pa]; fuori[o + 1] = rawPositions[pa + 1]; fuori[o + 2] = rawPositions[pa + 2];
+      fuori[o + 3] = rawPositions[pb]; fuori[o + 4] = rawPositions[pb + 1]; fuori[o + 5] = rawPositions[pb + 2];
+      fuori[o + 6] = rawPositions[pc]; fuori[o + 7] = rawPositions[pc + 1]; fuori[o + 8] = rawPositions[pc + 2];
+      tenuti[m] = t;
+      m++;
     }
     return {
       rawPositions: fuori,
-      triangoliPrima: rawPositions.length / 9,
+      triangoliPrima: nTrisIn,
       triangoliDopo: n,
-      tenuti: deg.keptTriOriginalIndex,   // indice del triangolo di partenza
+      tenuti,                          // indice del triangolo di partenza
+      vertici: nVert,
     };
   };
 
