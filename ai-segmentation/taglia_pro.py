@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "difetti-di-partenza-32"
+VERSIONE = "piano-sul-modello-33"
 
 
 # ---------------------------------------------------------------------------
@@ -1558,12 +1558,26 @@ def _prisma_da_contorno(S2, u, v, n, q_alto, q_basso):
     return V, np.asarray(Fc, dtype=np.int64)
 
 
-def _semispazio(n, quota, taglia):
+def _semispazio(n, quota, taglia, centro=None):
     """Blocco enorme che tiene tutto quello che sta OLTRE il piano x·n = quota
-    (cioe' dalla parte di n). Serve a segare il nocciolo con una faccia piana."""
+    (cioe' dalla parte di n). Serve a segare il nocciolo con una faccia piana.
+
+    `centro` e' un punto qualsiasi del modello, e non e' un dettaglio: senza,
+    il blocco veniva costruito attorno all'ORIGINE degli assi. Su un modello
+    salvato lontano dallo zero - il caso di una testa ritagliata da una scena
+    piu' grande - il blocco non arrivava nemmeno a sfiorarlo, l'intersezione
+    veniva vuota e il nocciolo falliva senza un motivo visibile. Misurato:
+    modello fra -209 e -128 lungo n, piano a -160, e semispazio ^ modello = 0.
+    """
     u, v, nn = _base_da_normale(n)
     w = 4.0 * taglia
-    return _cubo([w, w, w], np.asarray(n, dtype=np.float64) * (quota + w * 0.5), u, v, nn)
+    n = np.asarray(n, dtype=np.float64)
+    # posizione LUNGO n data dalla quota; di traverso si sta dove sta il modello
+    fianco = np.zeros(3, dtype=float)
+    if centro is not None:
+        c = np.asarray(centro, dtype=np.float64)
+        fianco = c - float(c @ n) * n
+    return _cubo([w, w, w], fianco + n * (quota + w * 0.5), u, v, nn)
 
 
 def _solo_con_la_pelle(solido, punti, tol, quota_minima=0.10):
@@ -1945,7 +1959,7 @@ def taglia_a_nocciolo_piatto(V, F, sel, anelli, log, gioco, frazione=0.5,
         _pelle = _pelle[np.linspace(0, len(_pelle) - 1, 300).astype(int)]
     _tol = 0.01 * diag
 
-    _tagliato = Blocco ^ _semispazio(n, quota, diag)
+    _tagliato = Blocco ^ _semispazio(n, quota, diag, centro=V.mean(axis=0))
     if _fondo_forzato is not None:
         # Rilievo appoggiato: il secondo corpo NON poggia sulla pelle scelta -
         # c'e' il vuoto in mezzo - ma e' proprio la carne in cui il blocchetto

@@ -180,6 +180,21 @@
       tenuti[m] = t;
       m++;
     }
+    // NOTA su cosa questo NON fa. Schiacciando il modello sulla griglia capita
+    // che due lembi di superficie diversi finiscano nella stessa casella, e li'
+    // nasce uno spigolo diviso da tre o quattro triangoli. Misurato sul modello
+    // vero: il file di partenza aveva ZERO spigoli doppi, dopo l'alleggerimento
+    // ne aveva 3370.
+    //
+    // Ho provato a toglierli buttando via i triangoli di troppo: e' andata
+    // molto peggio. Su questo modello quel rimedio scartava 133.909 facce su
+    // 187.000 e apriva 92.212 bordi, perche' gli spigoli affollati sono tanti e
+    // scartare una faccia ne rende affollati altri, a catena. Meglio 3370
+    // spigoli doppi che un modello sbriciolato.
+    //
+    // Quindi qui non si tocca niente, e chi chiama viene avvisato: e' meglio
+    // saperlo e poter scegliere se alleggerire, che ricevere di nascosto un
+    // modello peggiore di quello di partenza.
     return {
       rawPositions: fuori,
       triangoliPrima: nTrisIn,
