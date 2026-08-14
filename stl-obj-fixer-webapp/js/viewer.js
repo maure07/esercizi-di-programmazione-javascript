@@ -313,6 +313,7 @@
       numeratori.forEach((n) => n.geom.dispose());
       numeratori.clear();
       setHighlight(null);
+      clearZones();
     }
 
     // --- piano di taglio (anteprima) ---
@@ -830,6 +831,47 @@
       scene.add(highlightMesh);
     }
 
+    // --- ZONE PROPOSTE: piu' macchie insieme, ognuna col suo colore ---
+    //
+    // setHighlight qui sopra tiene UNA sola macchia, gialla, e ogni chiamata
+    // cancella la precedente: va benissimo per la selezione su cui si sta
+    // lavorando, ma non per far vedere dieci zone proposte tutte insieme.
+    // Queste stanno per conto loro, piu' trasparenti (0,45 contro 0,85), cosi'
+    // quando una diventa la selezione gialla si distingue a colpo d'occhio.
+    const zoneMesh = new Map();
+    function clearZones() {
+      zoneMesh.forEach((m) => {
+        scene.remove(m);
+        m.geometry.dispose();
+        m.material.dispose();
+      });
+      zoneMesh.clear();
+    }
+    function setZones(elenco) {
+      clearZones();
+      if (!elenco || !elenco.length) return;
+      elenco.forEach((z) => {
+        if (!z || !z.positions || !z.positions.length) return;
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.Float32BufferAttribute(z.positions, 3));
+        g.computeVertexNormals();
+        const c = z.colore || [1, 1, 1];
+        const mat = new THREE.MeshBasicMaterial({
+          color: new THREE.Color(c[0], c[1], c[2]),
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: z.spenta ? 0.22 : 0.45,
+          depthTest: true,
+          polygonOffset: true,
+          polygonOffsetFactor: -2,
+          polygonOffsetUnits: -2,
+        });
+        const mesh = new THREE.Mesh(g, mat);
+        scene.add(mesh);
+        zoneMesh.set(z.id, mesh);
+      });
+    }
+
     function frameAll() {
       const box = new THREE.Box3();
       let has = false;
@@ -851,7 +893,7 @@
 
     function getTarget() { return [target.x, target.y, target.z]; }
 
-    return { scene, camera, renderer, clearParts, addPart, setPartVisible, setPartOffset, frameAll, resize, raycastAt, setHighlight, projectToScreen, getCameraPosition, getTarget, setPointerDownHook, showCutPlane, hideCutPlane, impostaVista, animaVerso,
+    return { scene, camera, renderer, clearParts, addPart, setPartVisible, setPartOffset, frameAll, resize, raycastAt, setHighlight, setZones, clearZones, projectToScreen, getCameraPosition, getTarget, setPointerDownHook, showCutPlane, hideCutPlane, impostaVista, animaVerso,
       mostraCoperta, nascondiCoperta, maniglieSotto, puntoSulPianoVista, proiettaTanti, facceVisibili };
   }
 

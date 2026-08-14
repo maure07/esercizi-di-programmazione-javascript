@@ -966,6 +966,43 @@
            Il codice resta (motore e maniglie), basta rimettere il pulsante. -->
       <button id="cutToolCopertaBtn" style="display:none">Coperta</button>
     </div>
+
+    <div id="zoneBox" style="margin:8px 0;padding:10px;border:1px solid var(--border);border-radius:4px">
+      <div style="font-size:12.5px;color:var(--text);font-weight:600;margin-bottom:6px">Zone proposte</div>
+      <div class="spiega" style="font-size:11px;color:var(--text-dim);line-height:1.45;margin-bottom:8px">
+        Il computer ti <b>propone</b> le zone, non decide: le colora sul modello, tu ne scegli una,
+        diventa la selezione gialla e da l&igrave; la ritocchi col pennello e col lazo come sempre.
+        Poi scegli il tipo di aggancio e tagli.
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <select id="zoneMotore" style="flex:1;min-width:0">
+          <option value="veloce" selected>veloce &mdash; nel browser, immediata</option>
+          <option value="accurata">accurata &mdash; dal PC locale, vede occhi e sopracciglia</option>
+        </select>
+      </div>
+      <div class="cut-slider-row">
+        <label for="zoneQuante">Quante zone</label>
+        <input type="range" id="zoneQuante" min="4" max="20" step="1" value="8" />
+        <span id="zoneQuanteValue">8</span>
+      </div>
+      <div class="cut-actions" style="margin:8px 0">
+        <button id="zoneProponiBtn">Proponi le zone</button>
+        <button id="zoneViaBtn" style="display:none">Togli i colori</button>
+      </div>
+      <div id="zoneElenco" style="display:none;max-height:190px;overflow-y:auto;margin-bottom:8px"></div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-dim)">
+        <input type="checkbox" id="zoneCoda" />
+        Prepara pi&ugrave; zone e taglia alla fine
+      </label>
+      <div id="zoneCodaBox" style="display:none;margin-top:8px">
+        <div id="zoneCodaElenco" style="font-size:11.5px;color:var(--text-dim);margin-bottom:6px"></div>
+        <div class="cut-actions">
+          <button id="zoneTagliaTutteBtn">Taglia tutte le zone in coda</button>
+          <button id="zoneCodaSvuotaBtn">Svuota la coda</button>
+        </div>
+      </div>
+    </div>
+
     <div id="smartSelBox" style="margin:8px 0;padding:10px;border:1px solid var(--border);border-radius:4px">
       <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text);cursor:pointer">
         <input type="checkbox" id="smartSelChk" checked />

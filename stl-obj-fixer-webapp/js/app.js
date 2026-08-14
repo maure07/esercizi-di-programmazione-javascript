@@ -97,6 +97,18 @@
     arrotondaForza: document.getElementById('arrotondaForza'),
     arrotondaForzaValue: document.getElementById('arrotondaForzaValue'),
     arrotondaBtn: document.getElementById('arrotondaBtn'),
+    zoneBox: document.getElementById('zoneBox'),
+    zoneMotore: document.getElementById('zoneMotore'),
+    zoneQuante: document.getElementById('zoneQuante'),
+    zoneQuanteValue: document.getElementById('zoneQuanteValue'),
+    zoneProponiBtn: document.getElementById('zoneProponiBtn'),
+    zoneViaBtn: document.getElementById('zoneViaBtn'),
+    zoneElenco: document.getElementById('zoneElenco'),
+    zoneCoda: document.getElementById('zoneCoda'),
+    zoneCodaBox: document.getElementById('zoneCodaBox'),
+    zoneCodaElenco: document.getElementById('zoneCodaElenco'),
+    zoneTagliaTutteBtn: document.getElementById('zoneTagliaTutteBtn'),
+    zoneCodaSvuotaBtn: document.getElementById('zoneCodaSvuotaBtn'),
     planeCutProBtn: document.getElementById('planeCutProBtn'),
     connAutoChk: document.getElementById('connAutoChk'),
     connGioco: document.getElementById('connGioco'),
@@ -1005,7 +1017,7 @@
   // Se le due si scollano l'app si blocca dando la colpa alla meta' sbagliata,
   // quindi il montaggio del file unico (test/build-artifact.js) le confronta e
   // si rifiuta di partire se non combaciano.
-  const TAGLIA_PRO_VERSIONE_ATTESA = 'piano-sul-modello-33';
+  const TAGLIA_PRO_VERSIONE_ATTESA = 'zone-proposte-34';
 
   // Le versioni di questo progetto finiscono con un numero che cresce
   // ("...-27", "...-29"): basta quello per sapere QUALE delle due meta' e'
@@ -1813,9 +1825,14 @@
   // Ritagliare gruppi di triangoli lascia sempre un bordo frastagliato: qui
   // invece si taglia il solido con il PIANO medio del bordo della selezione,
   // quindi le due facce che si toccano sono piatte e combaciano davvero.
-  async function tagliaPiattoSullaSelezione() {
+  // opzioni.silenzioso: usato dal taglio in serie delle zone in coda, dove le
+  // finestrelle una per taglio sarebbero solo da chiudere a mano dieci volte.
+  // In quel caso gli errori vengono RILANCIATI, cosi' chi chiama sa quale zona
+  // e' saltata e perche' invece di scoprirlo dal risultato.
+  async function tagliaPiattoSullaSelezione(opzioni) {
+    const silenzioso = !!(opzioni && opzioni.silenzioso);
     if (!cutSelection || cutSelection.faces.size < 4 || !currentResult) {
-      alert('Prima seleziona una zona sul modello.');
+      if (!silenzioso) alert('Prima seleziona una zona sul modello.');
       return;
     }
     const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
@@ -2050,8 +2067,11 @@
       currentResult.parts.splice(idx, 1, mk(out.b, nomeB), mk(out.a, nomeA));
       currentResult.parts.sort((a, b) => b.stats.volume - a.stats.volume);
       cutSelection = null;
+      // Il taglio rinumera i triangoli: le zone proposte adesso puntano da
+      // tutt'altra parte. Meglio toglierle che lasciarle cliccabili e sbagliate.
+      viaLeZone();
       renderResult(currentResult);
-      if (motivoRipiego) {
+      if (motivoRipiego && !silenzioso) {
         // Il taglio col piano taglia DRITTO: ignora la forma della selezione.
         // Va detto, altrimenti sembra che la selezione sia stata buttata via
         // senza motivo.
@@ -2061,11 +2081,12 @@
               'la forma della zona che avevi scelto. Se il risultato non va bene, ' +
               'annulla con "Annulla" e ritocca la selezione.');
       } else {
-        alert('Taglio piatto riuscito: le due facce che si toccano sono piane e combaciano.' +
+        if (!silenzioso) alert('Taglio piatto riuscito: le due facce che si toccano sono piane e combaciano.' +
               (out.connettore ? `\n\nConnettore: lato ${out.connettore.lato.toFixed(1)} mm, gioco ${out.connettore.gioco.toFixed(2)} mm.` : ''));
       }
     } catch (err) {
       console.error(err);
+      if (silenzioso) throw err;
       alert('Errore nel taglio piatto: ' + err.message);
     } finally {
       setLoading(false);
@@ -3375,6 +3396,54 @@
     return isFinite(v) ? v : 20;
   }
 
+  // --- collegamenti delle zone proposte ---
+  if (el.zoneProponiBtn) {
+    el.zoneProponiBtn.addEventListener('click', () => proponiZone());
+    el.zoneViaBtn.addEventListener('click', () => viaLeZone());
+    el.zoneQuante.addEventListener('input', () => {
+      el.zoneQuanteValue.textContent = el.zoneQuante.value;
+    });
+    el.zoneCoda.addEventListener('change', () => aggiornaCoda());
+    el.zoneCodaSvuotaBtn.addEventListener('click', () => {
+      zoneCoda.length = 0;
+      aggiornaCoda();
+    });
+    el.zoneTagliaTutteBtn.addEventListener('click', () => tagliaLaCoda());
+  }
+
+  // Taglia una dopo l'altra le zone messe da parte. Ogni taglio rinumera i
+  // triangoli, quindi PRIMA di ciascuno si ritrova la zona sul pezzo di adesso
+  // partendo dai punti salvati (vedi zonaSuParteCorrente).
+  async function tagliaLaCoda() {
+    if (!zoneCoda.length) { alert('Non c\'e\' nessuna zona in coda.'); return; }
+    if (!confirm('Taglio ' + zoneCoda.length + ' zone una dopo l\'altra.\n\n'
+      + 'Su un modello pesante ci vuole qualche minuto per ognuna. Vado?')) return;
+    const fatte = [], saltate = [];
+    for (const q of zoneCoda.slice()) {
+      const part = currentResult.parts.find((p) => p.id === q.partId)
+        || currentResult.parts.slice().sort((a, b) => b.stats.volume - a.stats.volume)[0];
+      if (!part) { saltate.push(q.nome + ' (pezzo sparito)'); continue; }
+      const facce = zonaSuParteCorrente(part, q.centri);
+      if (facce.size < 20) { saltate.push(q.nome + ' (non l\'ho piu\' ritrovata)'); continue; }
+      cutSelection = { partId: part.id, faces: facce };
+      q.partId = part.id;
+      if (el.incastroModo) el.incastroModo.value = q.incastro;
+      if (el.profNocciolo) el.profNocciolo.value = String(Math.round(q.profondita * 100));
+      refreshCutHighlight();
+      try {
+        await tagliaPiattoSullaSelezione({ silenzioso: true });
+        fatte.push(q.nome);
+      } catch (e) {
+        saltate.push(q.nome + ' (' + (e && e.message ? e.message : e) + ')');
+      }
+    }
+    zoneCoda.length = 0;
+    aggiornaCoda();
+    viaLeZone();
+    alert('Zone tagliate: ' + (fatte.join(', ') || 'nessuna')
+      + (saltate.length ? '\n\nSaltate: ' + saltate.join('; ') : ''));
+  }
+
   if (el.arrotondaBtn) {
     el.arrotondaBtn.addEventListener('click', () => {
       if (!cutSelection || !currentResult || cutSelection.faces.size < 12) {
@@ -3514,6 +3583,301 @@
       }
     }
     return selected;
+  }
+
+  // =====================================================================
+  // ZONE PROPOSTE
+  //
+  // La segmentazione automatica, finora, DECIDEVA: spezzava il modello in
+  // pezzi e ti metteva davanti il risultato, da prendere o buttare. Sui
+  // modelli veri non ci prendeva quasi mai, e infatti non la usava nessuno.
+  //
+  // Qui la stessa macchina non taglia niente: PROPONE. Colora le zone sul
+  // modello, tu ne scegli una, quella diventa la selezione gialla di sempre e
+  // da li' in poi vale tutto quello che c'e' gia' - pennello, lazo, arrotonda,
+  // tipo di aggancio, taglio. Il computer da' il punto di partenza, l'ultima
+  // parola resta a te.
+  // =====================================================================
+  let zoneProposte = null;   // { partId, gruppi: [...] }
+  let zoneScelta = null;     // id della zona attualmente presa
+  const zoneCoda = [];       // zone messe da parte per tagliarle tutte alla fine
+
+  // colori ben distinti fra loro: si gira sulla ruota dei colori a passi
+  // grandi, cosi' due zone vicine non finiscono con la stessa tinta
+  function coloreZona(i) {
+    const h = (i * 0.618033988749895) % 1;      // sezione aurea: sparpaglia
+    const s = 0.62, l = i % 2 ? 0.46 : 0.60;
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x = c * (1 - Math.abs(((h * 6) % 2) - 1));
+    const m = l - c / 2;
+    const t = Math.floor(h * 6) % 6;
+    const rgb = [[c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x]][t];
+    return [rgb[0] + m, rgb[1] + m, rgb[2] + m];
+  }
+
+  function faccePosizioni(part, facce) {
+    const pos = new Float32Array(facce.length * 9);
+    for (let i = 0; i < facce.length; i++) {
+      const t = facce[i];
+      for (let k = 0; k < 3; k++) {
+        const vi = part.indices[t * 3 + k];
+        pos[i * 9 + k * 3] = part.positions[vi * 3];
+        pos[i * 9 + k * 3 + 1] = part.positions[vi * 3 + 1];
+        pos[i * 9 + k * 3 + 2] = part.positions[vi * 3 + 2];
+      }
+    }
+    return pos;
+  }
+
+  // Da un'etichetta per triangolo ai gruppi mostrabili. Le zone minuscole si
+  // buttano: una zona da dieci triangoli non e' una scelta, e' rumore.
+  function zoneDaEtichette(part, etichette) {
+    const per = new Map();
+    for (let t = 0; t < etichette.length; t++) {
+      const e = etichette[t];
+      if (e < 0) continue;
+      if (!per.has(e)) per.set(e, []);
+      per.get(e).push(t);
+    }
+    const minimo = Math.max(30, Math.round(etichette.length * 0.002));
+    const gruppi = [];
+    per.forEach((facce) => {
+      if (facce.length < minimo) return;
+      gruppi.push({ facce });
+    });
+    gruppi.sort((a, b) => b.facce.length - a.facce.length);
+    return gruppi.slice(0, 24).map((g, i) => {
+      // misure in millimetri veri: e' il dato su cui si decide se una zona
+      // vale la pena di essere stampata a parte
+      let mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+      g.facce.forEach((t) => {
+        for (let k = 0; k < 3; k++) {
+          const vi = part.indices[t * 3 + k];
+          for (let a = 0; a < 3; a++) {
+            const v = part.positions[vi * 3 + a];
+            if (v < mn[a]) mn[a] = v;
+            if (v > mx[a]) mx[a] = v;
+          }
+        }
+      });
+      const mis = [0, 1, 2].map((a) => (mx[a] - mn[a]) * currentScaleFactor);
+      return {
+        id: i,
+        facce: g.facce,
+        colore: coloreZona(i),
+        misureMm: mis,
+        nome: `Zona ${i + 1}`,
+      };
+    });
+  }
+
+  function disegnaZone() {
+    if (!zoneProposte || !currentResult) { viewer.clearZones(); return; }
+    const part = currentResult.parts.find((p) => p.id === zoneProposte.partId);
+    if (!part) { viewer.clearZones(); return; }
+    viewer.setZones(zoneProposte.gruppi.map((z) => ({
+      id: z.id,
+      colore: z.colore,
+      // la zona presa in mano si spegne: al suo posto si vede il giallo della
+      // selezione, se no i due colori si accavallano e non si capisce niente
+      spenta: zoneScelta === z.id,
+      positions: faccePosizioni(part, z.facce),
+    })));
+  }
+
+  function elencoZone() {
+    if (!el.zoneElenco) return;
+    if (!zoneProposte || !zoneProposte.gruppi.length) {
+      el.zoneElenco.style.display = 'none';
+      el.zoneElenco.innerHTML = '';
+      if (el.zoneViaBtn) el.zoneViaBtn.style.display = 'none';
+      return;
+    }
+    el.zoneElenco.style.display = '';
+    if (el.zoneViaBtn) el.zoneViaBtn.style.display = '';
+    el.zoneElenco.innerHTML = zoneProposte.gruppi.map((z) => {
+      const c = z.colore.map((x) => Math.round(x * 255)).join(',');
+      const mis = z.misureMm.map((x) => x.toFixed(0)).join('×');
+      const presa = zoneScelta === z.id;
+      return `<div class="zona-riga" data-zona="${z.id}" style="display:flex;align-items:center;gap:8px;` +
+        `padding:6px 8px;border-radius:4px;cursor:pointer;font-size:12px;` +
+        `background:${presa ? 'var(--accent-soft)' : 'transparent'};` +
+        `border:1px solid ${presa ? 'var(--accent-bordo)' : 'transparent'}">` +
+        `<span style="width:12px;height:12px;border-radius:2px;flex-shrink:0;background:rgb(${c})"></span>` +
+        `<span style="flex:1;min-width:0;color:var(--text)">${z.nome}</span>` +
+        `<span style="color:var(--text-dim);white-space:nowrap">${mis} mm · ${fmt(z.facce.length, 0)} tri</span>` +
+        `</div>`;
+    }).join('');
+    el.zoneElenco.querySelectorAll('.zona-riga').forEach((riga) => {
+      riga.addEventListener('click', () => prendiZona(parseInt(riga.dataset.zona, 10)));
+    });
+  }
+
+  // Una zona diventa la selezione gialla: da qui in poi e' identica a una
+  // selezione fatta a mano, quindi tutti gli strumenti gia' pronti valgono.
+  function prendiZona(id) {
+    if (!zoneProposte || !currentResult) return;
+    const z = zoneProposte.gruppi.find((x) => x.id === id);
+    const part = currentResult.parts.find((p) => p.id === zoneProposte.partId);
+    if (!z || !part) return;
+    pushCutHistory();
+    cutSelection = { partId: part.id, faces: new Set(z.facce) };
+    // il bordo di una zona automatica e' seghettato quanto quello di una
+    // dipinta a mano: si smussa con lo stesso cursore
+    arrotondaSelezione(part, cutSelection.faces, forzaArrotonda());
+    zoneScelta = id;
+    refreshCutHighlight();
+    disegnaZone();
+    elencoZone();
+    if (el.zoneCoda && el.zoneCoda.checked) accodaZona(z, part);
+  }
+
+  async function proponiZone() {
+    if (!currentResult) { alert('Prima carica un modello e vai al ritaglio.'); return; }
+    const part = (cutSelection && currentResult.parts.find((p) => p.id === cutSelection.partId))
+      || currentResult.parts.find((p) => p.included !== false)
+      || currentResult.parts[0];
+    if (!part) return;
+    const quante = parseInt(el.zoneQuante.value, 10) || 8;
+    const daPc = el.zoneMotore && el.zoneMotore.value === 'accurata';
+    setLoading(true, daPc ? 'Chiedo le zone al PC locale…' : 'Cerco le zone…');
+    await new Promise((r) => setTimeout(r, 30));
+    try {
+      let etichette = null;
+      if (daPc) {
+        const body = meshToPayload(part.positions, part.indices);
+        body.target_parts = quante;
+        body.dettagli = true;          // e' questa che trova occhi e sopracciglia
+        const resp = await fetch(AI_URL + '/segment', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const out = await resp.json();
+        if (out.error) throw new Error(out.error);
+        etichette = out.labels;
+      } else {
+        const r = Segmentation.segmentByGeometry(part.positions, part.indices, quante, {
+          faceColors: part.faceColors || null,
+        });
+        etichette = r.labelIds;
+      }
+      const gruppi = zoneDaEtichette(part, etichette);
+      if (!gruppi.length) {
+        alert('Non sono riuscito a distinguere delle zone su questo pezzo.\n\n'
+          + 'Prova ad alzare "Quante zone", oppure seleziona a mano col pennello.');
+        return;
+      }
+      zoneProposte = { partId: part.id, gruppi };
+      zoneScelta = null;
+      disegnaZone();
+      elencoZone();
+    } catch (err) {
+      console.error(err);
+      alert('Non sono riuscito a proporre le zone: ' + err.message
+        + (daPc ? '\n\nSe hai scelto "accurata", serve il companion avviato (avvia.bat).' : ''));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function viaLeZone() {
+    zoneProposte = null;
+    zoneScelta = null;
+    viewer.clearZones();
+    elencoZone();
+  }
+
+  // --- la coda: prepara piu' zone, tagliale alla fine ---
+  //
+  // Le zone in coda NON si possono tenere come elenchi di numeri: dopo ogni
+  // taglio il pezzo viene sostituito da due pezzi nuovi e i triangoli si
+  // rinumerano, quindi quei numeri punterebbero da tutt'altra parte. Si
+  // tengono i PUNTI nello spazio (il centro di ogni triangolo) e prima di ogni
+  // taglio si ritrova la zona sul pezzo aggiornato.
+  function centriDelle(part, facce) {
+    const c = new Float64Array(facce.length * 3);
+    for (let i = 0; i < facce.length; i++) {
+      const t = facce[i];
+      let x = 0, y = 0, z = 0;
+      for (let k = 0; k < 3; k++) {
+        const vi = part.indices[t * 3 + k];
+        x += part.positions[vi * 3]; y += part.positions[vi * 3 + 1]; z += part.positions[vi * 3 + 2];
+      }
+      c[i * 3] = x / 3; c[i * 3 + 1] = y / 3; c[i * 3 + 2] = z / 3;
+    }
+    return c;
+  }
+
+  function accodaZona(z, part) {
+    if (zoneCoda.some((q) => q.nome === z.nome && q.partId === part.id)) return;
+    zoneCoda.push({
+      nome: z.nome,
+      partId: part.id,
+      centri: centriDelle(part, [...cutSelection.faces]),
+      incastro: el.incastroModo ? el.incastroModo.value : 'auto',
+      profondita: el.profNocciolo ? parseInt(el.profNocciolo.value, 10) / 100 : 0.5,
+    });
+    aggiornaCoda();
+  }
+
+  function aggiornaCoda() {
+    if (!el.zoneCodaBox) return;
+    const attiva = el.zoneCoda && el.zoneCoda.checked;
+    el.zoneCodaBox.style.display = attiva ? '' : 'none';
+    if (!el.zoneCodaElenco) return;
+    el.zoneCodaElenco.textContent = zoneCoda.length
+      ? 'In coda: ' + zoneCoda.map((q) => q.nome + ' (' + q.incastro + ')').join(', ')
+      : 'Nessuna zona in coda: clicca le zone che vuoi tagliare.';
+  }
+
+  // Ritrova una zona sul pezzo di adesso, partendo dai punti salvati. Griglia a
+  // caselle invece di confrontare tutti con tutti: su un pezzo da mezzo milione
+  // di triangoli la differenza e' fra un attimo e un minuto.
+  function zonaSuParteCorrente(part, centri) {
+    const nT = part.indices.length / 3;
+    let mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+    const cen = new Float64Array(nT * 3);
+    for (let t = 0; t < nT; t++) {
+      let x = 0, y = 0, z = 0;
+      for (let k = 0; k < 3; k++) {
+        const vi = part.indices[t * 3 + k];
+        x += part.positions[vi * 3]; y += part.positions[vi * 3 + 1]; z += part.positions[vi * 3 + 2];
+      }
+      cen[t * 3] = x / 3; cen[t * 3 + 1] = y / 3; cen[t * 3 + 2] = z / 3;
+      for (let a = 0; a < 3; a++) {
+        if (cen[t * 3 + a] < mn[a]) mn[a] = cen[t * 3 + a];
+        if (cen[t * 3 + a] > mx[a]) mx[a] = cen[t * 3 + a];
+      }
+    }
+    const diag = Math.hypot(mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]) || 1;
+    const passo = diag / 64;
+    const casella = (x, y, z) => Math.floor((x - mn[0]) / passo) + ',' +
+      Math.floor((y - mn[1]) / passo) + ',' + Math.floor((z - mn[2]) / passo);
+    const griglia = new Map();
+    for (let t = 0; t < nT; t++) {
+      const k = casella(cen[t * 3], cen[t * 3 + 1], cen[t * 3 + 2]);
+      if (!griglia.has(k)) griglia.set(k, []);
+      griglia.get(k).push(t);
+    }
+    const facce = new Set();
+    const limite = passo * passo * 4;
+    for (let i = 0; i < centri.length / 3; i++) {
+      const px = centri[i * 3], py = centri[i * 3 + 1], pz = centri[i * 3 + 2];
+      const ix = Math.floor((px - mn[0]) / passo), iy = Math.floor((py - mn[1]) / passo),
+        iz = Math.floor((pz - mn[2]) / passo);
+      let best = -1, bestD = Infinity;
+      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
+        const lista = griglia.get((ix + dx) + ',' + (iy + dy) + ',' + (iz + dz));
+        if (!lista) continue;
+        for (let j = 0; j < lista.length; j++) {
+          const t = lista[j];
+          const d = (cen[t * 3] - px) ** 2 + (cen[t * 3 + 1] - py) ** 2 + (cen[t * 3 + 2] - pz) ** 2;
+          if (d < bestD) { bestD = d; best = t; }
+        }
+      }
+      if (best >= 0 && bestD <= limite) facce.add(best);
+    }
+    return facce;
   }
 
   function refreshCutHighlight() {
@@ -4717,6 +5081,27 @@
   // pulita, la si rovina in modo ripetibile (un dado con seme fisso) e si
   // guarda quanto l'arrotondamento la riporta com'era. Senza un "com'era"
   // di riferimento non si puo' dire se il bordo e' migliorato o solo cambiato.
+  // accessi di sola lettura per la prova automatica delle zone
+  window.__zoneMostrate = () => (zoneProposte ? zoneProposte.gruppi.length : 0);
+  window.__zoneFacce = (i) => (zoneProposte && zoneProposte.gruppi[i]
+    ? zoneProposte.gruppi[i].facce : []);
+  // una pennellata sul bordo della selezione: serve a controllare che una zona
+  // presa dall'elenco resti modificabile a mano
+  window.__pennelloVicino = () => {
+    if (!cutSelection || !currentResult) return 0;
+    const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
+    if (!part) return 0;
+    const adj = ensurePartTopology(part).adjacency;
+    pushCutHistory();
+    const giro = [];
+    cutSelection.faces.forEach((f) => {
+      const a = adj[f];
+      for (let i = 0; i < a.length; i++) if (!cutSelection.faces.has(a[i])) giro.push(a[i]);
+    });
+    giro.slice(0, 200).forEach((f) => cutSelection.faces.add(f));
+    refreshCutHighlight();
+    return cutSelection.faces.size;
+  };
   window.__selFacce = () => (cutSelection ? Array.from(cutSelection.faces) : null);
   window.__sporcaSelezione = (percento, seme) => {
     if (!cutSelection || !currentResult) return null;
