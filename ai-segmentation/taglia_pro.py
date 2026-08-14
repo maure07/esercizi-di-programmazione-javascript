@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "pannello-sobrio-27"
+VERSIONE = "ripara-e-taglia-29"
 
 
 # ---------------------------------------------------------------------------
@@ -46,6 +46,282 @@ def _manifold(V, F):
         vert_properties=np.asarray(V, dtype=np.float32),
         tri_verts=np.asarray(F, dtype=np.uint32),
     ))
+
+
+def _gruppi_spigoli(F):
+    """Gli spigoli della mesh, raggruppati.
+
+    Restituisce, per ogni spigolo distinto: la faccia che lo usa, da che parte
+    lo percorre, e dove cominciano e finiscono le sue occorrenze. Tutto con
+    numpy e un ordinamento, senza dizionari: su un modello da tre milioni di
+    triangoli la differenza fra i due modi e' fra due secondi e un minuto.
+    """
+    n = len(F)
+    E = np.concatenate([F[:, [0, 1]], F[:, [1, 2]], F[:, [2, 0]]], axis=0)
+    facce = np.tile(np.arange(n, dtype=np.int64), 3)
+    lo = np.minimum(E[:, 0], E[:, 1])
+    hi = np.maximum(E[:, 0], E[:, 1])
+    verso = E[:, 0] < E[:, 1]            # True se la faccia va da lo verso hi
+    ordine = np.lexsort((hi, lo))
+    lo, hi, facce, verso = lo[ordine], hi[ordine], facce[ordine], verso[ordine]
+    # inizio di ogni gruppo di spigoli uguali
+    nuovo = np.empty(len(lo), dtype=bool)
+    nuovo[0] = True
+    nuovo[1:] = (lo[1:] != lo[:-1]) | (hi[1:] != hi[:-1])
+    inizi = np.flatnonzero(nuovo)
+    quanti = np.diff(np.append(inizi, len(lo)))
+    return lo, hi, facce, verso, inizi, quanti
+
+
+def _togli_spigoli_multipli(V, F):
+    """Butta via le facce di troppo sugli spigoli divisi da PIU' di due facce.
+
+    E' il difetto del modello segnalato: "spigoli doppi 727", nessun buco. Un
+    solo spigolo con tre facce basta a far rifiutare tutta la mesh, e nel
+    resoconto usciva solo un secco "NotManifold". Di ogni spigolo affollato si
+    tengono le due facce piu' grandi (le altre sono quasi sempre schegge o
+    copie sovrapposte) e si scartano le altre.
+    """
+    _lo, _hi, facce, _verso, inizi, quanti = _gruppi_spigoli(F)
+    affollati = np.flatnonzero(quanti > 2)
+    if not len(affollati):
+        return F, 0
+    T = V[F]
+    aree = 0.5 * np.linalg.norm(
+        np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0]), axis=1)
+    da_togliere = set()
+    for i in affollati:
+        s = int(inizi[i])
+        cand = [int(x) for x in facce[s:s + int(quanti[i])] if int(x) not in da_togliere]
+        if len(cand) <= 2:
+            continue
+        cand.sort(key=lambda f: -aree[f])
+        da_togliere.update(cand[2:])
+    if not da_togliere:
+        return F, 0
+    tieni = np.ones(len(F), dtype=bool)
+    tieni[sorted(da_togliere)] = False
+    return F[tieni], len(da_togliere)
+
+
+def _versi_coerenti(F):
+    """Gira tutte le facce nello stesso verso.
+
+    Due facce che si dividono uno spigolo sono d'accordo se lo percorrono in
+    direzioni opposte (come due mattonelle affiancate). Si parte da una faccia,
+    si passa ai vicini e si gira chi non e' d'accordo, finche' non si e' visto
+    tutto. Serve perche' manifold3d rifiuta una superficie con le facce
+    mescolate, e i modelli usciti dall'IA le hanno spesso cosi'.
+
+    trimesh avrebbe `repair.fix_winding`, ma si appoggia a networkx, che sul PC
+    di chi usa l'app non c'e': la stessa storia di rtree. Quindi a mano.
+    """
+    n = len(F)
+    _lo, _hi, facce, verso, inizi, quanti = _gruppi_spigoli(F)
+    # coppie di facce che condividono uno spigolo "sano" (esattamente due)
+    coppie = np.flatnonzero(quanti == 2)
+    if not len(coppie):
+        return F, 0
+    s = inizi[coppie]
+    f1, f2 = facce[s], facce[s + 1]
+    v1, v2 = verso[s], verso[s + 1]
+    daccordo = v1 != v2               # versi opposti = d'accordo
+    # elenco dei vicini, in forma compatta (chi comincia dove)
+    a = np.concatenate([f1, f2])
+    b = np.concatenate([f2, f1])
+    d = np.concatenate([daccordo, daccordo])
+    ordine = np.argsort(a, kind="stable")
+    a, b, d = a[ordine], b[ordine], d[ordine]
+    inizio = np.searchsorted(a, np.arange(n + 1))
+
+    gira = np.zeros(n, dtype=bool)
+    visto = np.zeros(n, dtype=bool)
+    for partenza in range(n):
+        if visto[partenza]:
+            continue
+        visto[partenza] = True
+        pila = [partenza]
+        while pila:
+            f = pila.pop()
+            for k in range(inizio[f], inizio[f + 1]):
+                g = int(b[k])
+                if visto[g]:
+                    continue
+                visto[g] = True
+                gira[g] = gira[f] if d[k] else (not gira[f])
+                pila.append(g)
+    quante = int(gira.sum())
+    if quante == 0:
+        return F, 0
+    F = F.copy()
+    F[gira] = F[gira][:, ::-1]
+    return F, quante
+
+
+def _tappa_buchi(V, F):
+    """Chiude le aperture cucendo un ventaglio di triangoli su ogni giro di bordo.
+
+    Il bordo e' fatto dagli spigoli usati da una faccia sola. Si mettono in
+    fila fino a chiudere il giro e si riempie con un ventaglio che parte dal
+    centro del giro. E' lo stesso lavoro che l'app fa gia' nel browser quando
+    "solidifica", rifatto qui perche' il taglio gira dall'altra parte.
+    """
+    lo, hi, facce, verso, inizi, quanti = _gruppi_spigoli(F)
+    soli = np.flatnonzero(quanti == 1)
+    if not len(soli):
+        return V, F, 0
+    s = inizi[soli]
+    # lo spigolo nel verso in cui lo percorre la sua unica faccia: e' quel verso
+    # che dice da che parte guarda il buco, e quindi come girare le toppe
+    da = np.where(verso[s], lo[s], hi[s])
+    a = np.where(verso[s], hi[s], lo[s])
+    # Si seguono i giri consumando gli SPIGOLI, non segnando i vertici: un
+    # vertice puo' stare su due giri diversi (o due volte sullo stesso, dove il
+    # bordo si strozza), e segnando i vertici il giro si interrompeva a meta'.
+    # Era per questo che al primo tentativo restavano aperti meta' dei bordi.
+    aperti = {}
+    rimasti = 0
+    for x, y in zip(da.tolist(), a.tolist()):
+        aperti.setdefault(int(x), []).append(int(y))
+        rimasti += 1
+
+    nuove = []
+    nuovi_punti = []
+    partenze = [k for k, v in aperti.items() if v]
+    for partenza in partenze:
+        while aperti.get(partenza):
+            giro = []
+            cur = partenza
+            for _ in range(rimasti + 1):
+                uscite = aperti.get(cur)
+                if not uscite:
+                    break
+                giro.append(cur)
+                cur = uscite.pop()
+                if cur == partenza:
+                    break
+            if len(giro) < 3:
+                continue
+            centro = V[giro].mean(axis=0)
+            ic = len(V) + len(nuovi_punti)
+            nuovi_punti.append(centro)
+            for k in range(len(giro)):
+                a_, b_ = giro[k], giro[(k + 1) % len(giro)]
+                nuove.append([b_, a_, ic])   # verso opposto al bordo: chiude in fuori
+    if not nuove:
+        return V, F, 0
+    V2 = np.vstack([V, np.asarray(nuovi_punti, dtype=np.float64)])
+    F2 = np.vstack([F, np.asarray(nuove, dtype=np.int64)])
+    return V2, F2, len(nuove)
+
+
+def _manifold_solido(V, F, log=None, etichetta="modello"):
+    """Un Manifold pronto per le booleane, riparando quel che serve.
+
+    manifold3d pretende una superficie CHIUSA, con ogni spigolo diviso da
+    esattamente due triangoli e tutte le facce girate nello stesso verso. I
+    modelli usciti dall'IA spesso non lo sono: pezzi separati, facce doppie,
+    buchi, versi mescolati. Prima bastava questo per far rifiutare il nocciolo
+    senza nemmeno provarci - il resoconto diceva "modello NotManifold" e si
+    ripiegava sul perno, lasciando in mano una scaglia.
+
+    Qui invece si prova a rimettere a posto, un gradino alla volta, dal meno
+    invasivo al piu' invasivo, e si dice sempre cosa e' stato fatto: sono
+    modifiche al modello, non deve scoprirle dopo guardando il pezzo storto.
+    """
+    import trimesh
+
+    def prova(M):
+        if M is None or len(M.faces) == 0:
+            return None
+        m = _manifold(np.asarray(M.vertices), np.asarray(M.faces))
+        return m if m.status().name == "NoError" else None
+
+    def ripulisci(M):
+        M.update_faces(M.nondegenerate_faces())
+        M.update_faces(M.unique_faces())
+        M.remove_unreferenced_vertices()
+        return M
+
+    M = ripulisci(trimesh.Trimesh(vertices=np.asarray(V, dtype=np.float64),
+                                  faces=np.asarray(F, dtype=np.int64), process=True))
+    m = prova(M)
+    if m is not None:
+        return m, None
+
+    fatti = []
+    Vx = np.asarray(M.vertices, dtype=np.float64)
+    Fx = np.asarray(M.faces, dtype=np.int64)
+
+    def riprova(Vy, Fy):
+        m = _manifold(Vy, Fy)
+        return m if m.status().name == "NoError" else None
+
+    # 1) spigoli divisi da piu' di due facce: si buttano le schegge di troppo.
+    #    E' il difetto del modello segnalato ("spigoli doppi 727").
+    Fx, tolte = _togli_spigoli_multipli(Vx, Fx)
+    if tolte:
+        fatti.append(f"{tolte} facce di troppo su spigoli affollati")
+        m = riprova(Vx, Fx)
+        if m is not None:
+            return m, ", ".join(fatti)
+
+    # 2) facce girate a caso: si mettono tutte nello stesso verso. E' la
+    #    correzione piu' innocua, non sposta un solo vertice.
+    Fx, girate = _versi_coerenti(Fx)
+    if girate:
+        fatti.append(f"{girate} facce rigirate nel verso giusto")
+        m = riprova(Vx, Fx)
+        if m is not None:
+            return m, ", ".join(fatti)
+
+    # 3) buchi: si tappano. Cambia la geometria, ma solo mettendo il coperchio
+    #    a un'apertura che comunque non si potrebbe stampare.
+    Vx, Fx, toppe = _tappa_buchi(Vx, Fx)
+    if toppe:
+        fatti.append(f"{toppe} triangoli per chiudere i buchi")
+        Fx, _g2 = _versi_coerenti(Fx)
+        m = riprova(Vx, Fx)
+        if m is not None:
+            return m, ", ".join(fatti)
+
+    M = ripulisci(trimesh.Trimesh(vertices=Vx, faces=Fx, process=True))
+
+    # 3) ultimo gradino: si guardano i pezzi staccati uno per uno, si prova a
+    #    chiudere ognuno, e si tengono quelli che diventano solidi buoni. Qui
+    #    si puo' PERDERE della roba, quindi si conta quanta e si scrive.
+    try:
+        corpi = M.split(only_watertight=False)
+        buoni, persi = [], 0
+        for c in corpi:
+            c = ripulisci(c)
+            Vc = np.asarray(c.vertices, dtype=np.float64)
+            Fc = np.asarray(c.faces, dtype=np.int64)
+            Fc, _ = _versi_coerenti(Fc)
+            Vc, Fc, _ = _tappa_buchi(Vc, Fc)
+            Fc, _ = _versi_coerenti(Fc)
+            mm = riprova(Vc, Fc)
+            if mm is None:
+                mm = prova(c)
+            if mm is not None:
+                buoni.append(mm)
+            else:
+                persi += len(c.faces)
+        if buoni:
+            uni = buoni[0]
+            for x in buoni[1:]:
+                uni = uni + x
+            if uni.status().name == "NoError":
+                fatti.append(f"tenuti {len(buoni)} corpi su {len(corpi)}")
+                if persi and log is not None:
+                    log.append(f"ATTENZIONE: per rendere il {etichetta} lavorabile ho dovuto "
+                               f"scartare {persi} triangoli che non si chiudevano in nessun modo. "
+                               f"Se noti che manca un pezzo, passa prima da \"Ripara e solidifica\".")
+                return uni, ", ".join(fatti)
+    except Exception:
+        pass
+
+    return None, ", ".join(fatti) if fatti else None
 
 
 def _to_arrays(mm):
@@ -958,13 +1234,15 @@ def taglia_a_fustella(V, F, sel, anelli, log):
     if fu is None:
         return None
     Vf, Ff = fu
-    Mo = trimesh.Trimesh(vertices=V, faces=F, process=True)
-    Mo.update_faces(Mo.nondegenerate_faces())
-    Mo.remove_unreferenced_vertices()
-    Orig = _manifold(np.asarray(Mo.vertices), np.asarray(Mo.faces))
+    Orig, _riparato = _manifold_solido(V, F, log)
+    if _riparato:
+        log.append(f"Il modello non era lavorabile cosi' com'era: l'ho rimesso "
+                   f"a posto ({_riparato})." if Orig is not None else
+                   f"Ho provato a rimettere a posto il modello ({_riparato}) ma non e' bastato.")
     Fust = _manifold(Vf, Ff)
-    if Orig.status().name != "NoError" or Fust.status().name != "NoError":
-        log.append(f"(fustella non utilizzabile: modello {Orig.status().name}, "
+    if Orig is None or Fust.status().name != "NoError":
+        log.append(f"(fustella non utilizzabile: modello "
+                   f"{'irrecuperabile' if Orig is None else Orig.status().name}, "
                    f"fustella {Fust.status().name})")
         return None
     A = Orig ^ Fust
@@ -1429,10 +1707,12 @@ def taglia_a_nocciolo_piatto(V, F, sel, anelli, log, gioco, frazione=0.5,
     diag = float(np.linalg.norm(V.max(axis=0) - V.min(axis=0))) or 1.0
     L = 3.0 * diag                            # abbastanza per uscire dall'altra parte
 
-    Mo = trimesh.Trimesh(vertices=V, faces=F, process=True)
-    Mo.update_faces(Mo.nondegenerate_faces())
-    Mo.remove_unreferenced_vertices()
-    Orig = _manifold(np.asarray(Mo.vertices), np.asarray(Mo.faces))
+    Orig, _riparato = _manifold_solido(V, F, log)
+    if _riparato and Orig is not None:
+        log.append(f"Il modello non era lavorabile cosi' com'era: l'ho rimesso a posto "
+                   f"({_riparato}) e il nocciolo si puo' fare lo stesso.")
+    elif _riparato:
+        log.append(f"Ho provato a rimettere a posto il modello ({_riparato}) ma non e' bastato.")
 
     # il contorno della macchia, guardata da dritto
     _pm = V[sorted({int(x) for f in F[sorted(sel)] for x in f})]
@@ -1485,8 +1765,11 @@ def taglia_a_nocciolo_piatto(V, F, sel, anelli, log, gioco, frazione=0.5,
         return m if m.status().name == "NoError" else None
 
     Pr = _fustella(0.0)
-    if Orig.status().name != "NoError" or Pr is None:
-        log.append(f"(nocciolo piatto non utilizzabile: modello {Orig.status().name})")
+    if Orig is None or Pr is None:
+        log.append("(nocciolo piatto non utilizzabile: "
+                   + ("non sono riuscito a rendere il modello lavorabile nemmeno "
+                      "riparandolo" if Orig is None else "non riesco a ricavare il "
+                      "contorno da questa selezione") + ")")
         return None
 
     Blocco = Pr ^ Orig                        # tutta la carne sotto la macchia
@@ -1581,14 +1864,16 @@ def taglia_a_nocciolo(V, F, sel, anelli, log, profondita, gioco, normali_v):
     import trimesh
     Vp, Fp = _nocciolo(V, F, sel, anelli, profondita, gioco, normali_v)
     Vs, Fs = _nocciolo(V, F, sel, anelli, profondita, 0.0, normali_v)
-    Mo = trimesh.Trimesh(vertices=V, faces=F, process=True)
-    Mo.update_faces(Mo.nondegenerate_faces())
-    Mo.remove_unreferenced_vertices()
-    Orig = _manifold(np.asarray(Mo.vertices), np.asarray(Mo.faces))
+    Orig, _riparato = _manifold_solido(V, F, log)
+    if _riparato:
+        log.append(f"Il modello non era lavorabile cosi' com'era: l'ho rimesso "
+                   f"a posto ({_riparato})." if Orig is not None else
+                   f"Ho provato a rimettere a posto il modello ({_riparato}) ma non e' bastato.")
     Pezzo = _manifold(Vp, Fp)
     Sede = _manifold(Vs, Fs)
-    if any(x.status().name != "NoError" for x in (Orig, Pezzo, Sede)):
-        log.append(f"(nocciolo non utilizzabile: modello {Orig.status().name}, "
+    if Orig is None or any(x.status().name != "NoError" for x in (Pezzo, Sede)):
+        log.append(f"(nocciolo non utilizzabile: modello "
+                   f"{'irrecuperabile' if Orig is None else Orig.status().name}, "
                    f"pezzo {Pezzo.status().name}, sede {Sede.status().name})")
         return None
     A = Pezzo ^ Orig                 # il nocciolo non puo' uscire dal modello
@@ -2114,8 +2399,13 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
                 Ta = Ta[::passo_c]
             scat = (V[Ta.ravel()].min(axis=0), V[Ta.ravel()].max(axis=0))
             controllo = _controllore_pelle(V_orig, F_orig, scat, margine=0.02 * diag)
-            if controllo is not None:
-                n_f, sp = controllo(_campiona_facce(V, Ta.tolist()))
+            # `controllo` restituisce None quando manca rtree sul PC: e' una
+            # misura in piu', non una garanzia, e va saltata senza far saltare
+            # il resto (prima si provava a spacchettare None e il resoconto
+            # finiva con "cannot unpack non-iterable NoneType object").
+            _mis = controllo(_campiona_facce(V, Ta.tolist())) if controllo is not None else None
+            if _mis is not None:
+                n_f, sp = _mis
                 # tolleranza: sotto un millesimo della diagonale e' rumore numerico
                 serve_ritaglio = n_f > 0 and sp > 0.001 * diag
                 log.append(f"Controllo sporgenze del tappo: {n_f} punti oltre la pelle"
@@ -2129,15 +2419,13 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
         # il modello di partenza va passato SALDATO: negli STL ogni triangolo ha
         # i suoi vertici per conto proprio e manifold3d rifiuta una mesh che
         # topologicamente e' fatta di 400.000 pezzi staccati
-        _o = trimesh.Trimesh(vertices=V_orig, faces=F_orig, process=True)
-        _o.update_faces(_o.nondegenerate_faces())
-        _o.remove_unreferenced_vertices()
-        Orig = _manifold(np.asarray(_o.vertices), np.asarray(_o.faces))
+        Orig, _rip = _manifold_solido(V_orig, F_orig, log, "modello")
         Am = _manifold(np.asarray(ma.vertices), np.asarray(ma.faces))
-        if Orig.status().name != "NoError" or Am.status().name != "NoError":
-            log.append(f"(controllo delle sporgenze saltato: modello {Orig.status().name}, "
+        if Orig is None or Am.status().name != "NoError":
+            log.append(f"(controllo delle sporgenze saltato: modello "
+                       f"{'irrecuperabile' if Orig is None else 'ok'}, "
                        f"pezzo {Am.status().name})")
-        if Orig.status().name == "NoError" and Am.status().name == "NoError":
+        if Orig is not None and Am.status().name == "NoError":
             Ac = Am ^ Orig                    # solo la parte dentro al modello
             Bc = Orig - Ac                    # il complemento esatto
             if Ac.status().name == "NoError" and Bc.status().name == "NoError":
