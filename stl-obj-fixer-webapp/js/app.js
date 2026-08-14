@@ -98,7 +98,6 @@
     arrotondaForzaValue: document.getElementById('arrotondaForzaValue'),
     arrotondaBtn: document.getElementById('arrotondaBtn'),
     zoneBox: document.getElementById('zoneBox'),
-    zoneMotore: document.getElementById('zoneMotore'),
     zoneQuante: document.getElementById('zoneQuante'),
     zoneQuanteValue: document.getElementById('zoneQuanteValue'),
     zoneProponiBtn: document.getElementById('zoneProponiBtn'),
@@ -1017,7 +1016,7 @@
   // Se le due si scollano l'app si blocca dando la colpa alla meta' sbagliata,
   // quindi il montaggio del file unico (test/build-artifact.js) le confronta e
   // si rifiuta di partire se non combaciano.
-  const TAGLIA_PRO_VERSIONE_ATTESA = 'zone-proposte-34';
+  const TAGLIA_PRO_VERSIONE_ATTESA = 'zone-per-forma-35';
 
   // Le versioni di questo progetto finiscono con un numero che cresce
   // ("...-27", "...-29"): basta quello per sapere QUALE delle due meta' e'
@@ -3738,30 +3737,23 @@
       || currentResult.parts.find((p) => p.included !== false)
       || currentResult.parts[0];
     if (!part) return;
-    const quante = parseInt(el.zoneQuante.value, 10) || 8;
-    const daPc = el.zoneMotore && el.zoneMotore.value === 'accurata';
-    setLoading(true, daPc ? 'Chiedo le zone al PC locale…' : 'Cerco le zone…');
+    const quante = parseInt(el.zoneQuante.value, 10) || 18;
+    setLoading(true, 'Cerco le zone…');
     await new Promise((r) => setTimeout(r, 30));
     try {
-      let etichette = null;
-      if (daPc) {
-        const body = meshToPayload(part.positions, part.indices);
-        body.target_parts = quante;
-        body.dettagli = true;          // e' questa che trova occhi e sopracciglia
-        const resp = await fetch(AI_URL + '/segment', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-        const out = await resp.json();
-        if (out.error) throw new Error(out.error);
-        etichette = out.labels;
-      } else {
-        const r = Segmentation.segmentByGeometry(part.positions, part.indices, quante, {
-          faceColors: part.faceColors || null,
-        });
-        etichette = r.labelIds;
-      }
-      const gruppi = zoneDaEtichette(part, etichette);
+      // ESATTAMENTE lo stesso motore, e gli stessi parametri, della
+      // segmentazione automatica ("Segmenta il modello" -> Solo forma): quella
+      // sui modelli veri trova braccia, gambe, scarpe, capelli, cioe' pezzi su
+      // cui uno decide davvero.
+      //
+      // Qui prima c'era anche una seconda strada, che chiedeva le zone al
+      // companion. Tolta: quella, dopo la forma, fa una passata in piu' che
+      // cerca i RILIEVI MORBIDI - nata per occhi e bottoni - e sovrascrive
+      // quelle facce con zone nuove. Su una massa di capelli ogni ciocca e' un
+      // rilievo morbido, e il risultato era la testa tagliata a quindici
+      // strisce verticali: un arcobaleno, non una scelta di pezzi.
+      const r = Segmentation.segmentByGeometry(part.positions, part.indices, quante, {});
+      const gruppi = zoneDaEtichette(part, r.labelIds);
       if (!gruppi.length) {
         alert('Non sono riuscito a distinguere delle zone su questo pezzo.\n\n'
           + 'Prova ad alzare "Quante zone", oppure seleziona a mano col pennello.');
@@ -3773,8 +3765,7 @@
       elencoZone();
     } catch (err) {
       console.error(err);
-      alert('Non sono riuscito a proporre le zone: ' + err.message
-        + (daPc ? '\n\nSe hai scelto "accurata", serve il companion avviato (avvia.bat).' : ''));
+      alert('Non sono riuscito a proporre le zone: ' + err.message);
     } finally {
       setLoading(false);
     }
