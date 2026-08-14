@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "ripara-e-taglia-29"
+VERSIONE = "rilievi-appoggiati-30"
 
 
 # ---------------------------------------------------------------------------
@@ -1633,7 +1633,7 @@ def _senza_briciole(solido, quota_minima=0.05):
     return fuso if fuso.status().name == "NoError" else solido
 
 
-def _spessore_sotto(Vb, Fb, punti, n, eps):
+def _spessore_sotto(Vb, Fb, punti, n, eps, salto=0.0):
     """Quanto e' spesso il modello sotto la macchia: si sparano dei raggi
     dalla pelle verso l'interno e si guarda dove escono dall'altra parte.
 
@@ -1676,11 +1676,80 @@ def _spessore_sotto(Vb, Fb, punti, n, eps):
         v = inv * (q @ d)
         t = inv * np.einsum('ij,ij->i', e2, q)
         buoni = vale & (u >= -1e-9) & (v >= -1e-9) & (u + v <= 1.0 + 1e-9) & (t > eps)
-        if buoni.any():
-            distanze.append(float(t[buoni].min()))
+        if not buoni.any():
+            continue
+        # NON ci si ferma alla prima uscita. Un sopracciglio, una ciglia, una
+        # borchia sono spesso una scaglia a se' appoggiata sulla pelle e non
+        # saldata: fermandosi li' si misurano i due millimetri della scaglia
+        # invece della testa che ha sotto, e il "nocciolo" veniva fuori una
+        # buccia da un millimetro. Se subito dopo l'uscita ricomincia altra
+        # roba, e lo stacco e' solo un'unghia (`salto`), si tira dritto: e'
+        # materiale su cui il blocchetto si deve appoggiare. Se invece il
+        # vuoto e' largo, li' il modello finisce davvero e ci si ferma.
+        ts = np.sort(t[buoni])
+        fine = float(ts[0])
+        if salto and salto > 0:
+            for k in range(1, len(ts)):
+                if float(ts[k]) - fine > salto:
+                    break
+                fine = float(ts[k])
+        distanze.append(fine)
     if not distanze:
         return None
     return float(np.median(distanze))
+
+
+def _strati_sotto(Vb, Fb, punti, n, eps):
+    """Cosa incontra un raggio che entra dalla macchia: dove finisce il primo
+    strato, dove ricomincia il secondo e dove finisce.
+
+    Serve per i rilievi appoggiati (sopracciglia, ciglia, borchie). Li' fra la
+    scaglia e il corpo c'e' ARIA, e sapere solo "quanto e' spesso" non basta:
+    un piano a meta' di scaglia+aria taglia ancora dentro l'aria e restituisce
+    la scaglia intera, cioe' la buccia. Bisogna sapere a che profondita'
+    ricomincia la carne, per andarle dentro.
+    """
+    Vb = np.asarray(Vb, dtype=np.float64)
+    Fb = np.asarray(Fb, dtype=np.int64)
+    if not len(Fb) or not len(punti):
+        return None
+    d = -np.asarray(n, dtype=np.float64)
+    v0 = Vb[Fb[:, 0]]
+    e1 = Vb[Fb[:, 1]] - v0
+    e2 = Vb[Fb[:, 2]] - v0
+    h = np.cross(np.broadcast_to(d, e2.shape), e2)
+    a = np.einsum('ij,ij->i', e1, h)
+    vale = np.abs(a) > 1e-12
+    inv = np.zeros(len(Fb), dtype=np.float64)
+    inv[vale] = 1.0 / a[vale]
+    fine1, inizio2, fine2 = [], [], []
+    for p in np.asarray(punti, dtype=np.float64):
+        s = p - v0
+        u = inv * np.einsum('ij,ij->i', s, h)
+        q = np.cross(s, e1)
+        v = inv * (q @ d)
+        t = inv * np.einsum('ij,ij->i', e2, q)
+        buoni = vale & (u >= -1e-9) & (v >= -1e-9) & (u + v <= 1.0 + 1e-9) & (t > eps)
+        if not buoni.any():
+            continue
+        ts = np.sort(t[buoni])
+        # si accorpano le distanze quasi uguali (facce doppie, spigoli)
+        gruppi = [float(ts[0])]
+        for x in ts[1:]:
+            if float(x) - gruppi[-1] > 10 * eps:
+                gruppi.append(float(x))
+        fine1.append(gruppi[0])
+        if len(gruppi) >= 2:
+            inizio2.append(gruppi[1])
+        if len(gruppi) >= 3:
+            fine2.append(gruppi[2])
+    if not fine1:
+        return None
+    return {
+        "fine1": float(np.median(fine1)),
+        "inizio2": float(np.median(inizio2)) if inizio2 else None,
+        "fine2": float(np.median(fine2)) if fine2 else None,
+    }
 
 
 def taglia_a_nocciolo_piatto(V, F, sel, anelli, log, gioco, frazione=0.5,
@@ -1807,8 +1876,54 @@ def taglia_a_nocciolo_piatto(V, F, sel, anelli, log, gioco, frazione=0.5,
                    f"modello sotto la macchia: {len(campione)} raggi contro "
                    f"{len(_fb)} triangoli, nessuna uscita trovata)")
         return None
+    # LA ZONA E' UNA SCAGLIA APPOGGIATA? Sopracciglia, ciglia, borchie, toppe:
+    # nei modelli fatti dall'IA sono quasi sempre un corpo a se', spesso due
+    # millimetri, posato sulla pelle e non saldato. Misurando fino alla prima
+    # uscita si trovano quei due millimetri, se ne prende meta', e il
+    # "blocchetto" viene fuori una buccia da un millimetro: e' esattamente il
+    # caso segnalato, il nocciolo che riesce sugli occhi e fallisce sul
+    # sopracciglio. Se lo spessore trovato e' ridicolo rispetto a quanto e'
+    # larga la zona, si rimisura scavalcando il vuoto e appoggiandosi a quello
+    # che c'e' sotto - la fronte - che e' dove il blocchetto deve affondare.
+    _lu0 = float(P2[:, 0].max() - P2[:, 0].min())
+    _lv0 = float(P2[:, 1].max() - P2[:, 1].min())
+    _stretta = max(min(_lu0, _lv0), 1e-9)
+    _fondo_forzato = None
+    if frazione * spess < 0.25 * _stretta:
+        _st = _strati_sotto(_vb, _fb, campione, n, _eps)
+        if _st and _st["inizio2"] is not None and _st["inizio2"] > spess * 1.02:
+            _sotto = ((_st["fine2"] - _st["inizio2"]) if _st["fine2"] is not None
+                      else _stretta)
+            # si entra nella carne sotto quel tanto che basta a fare un incastro:
+            # una frazione della larghezza della zona, non meta' della testa
+            _morso = min(frazione * _sotto, 0.5 * _stretta)
+            _fondo_forzato = _st["inizio2"] + max(_morso, 0.15 * _stretta)
+            log.append(f"La zona scelta e' un rilievo APPOGGIATO, spesso appena "
+                       f"{spess:.1f} mm, e sotto ha {_st['inizio2'] - spess:.1f} mm di "
+                       f"vuoto: da solo darebbe una buccia. Il blocchetto affonda "
+                       f"{_fondo_forzato - _st['inizio2']:.1f} mm dentro quello che c'e' "
+                       f"sotto, cosi' ha una sede in cui infilarsi.")
+
+    # TETTO alla profondita'. Scavalcando gli stacchi, sotto una scaglia da due
+    # millimetri si trova tutta la testa: meta' di quella farebbe un chiodo da
+    # cinque centimetri sotto un sopracciglio lungo diciotto millimetri. Un
+    # blocchetto piu' profondo che largo, oltre a essere assurdo da guardare,
+    # non si stampa e non si infila. Quindi non va mai oltre la propria
+    # larghezza (la misura piu' stretta della macchia, guardata da dritto).
+    _tetto = 1.2 * _stretta
+    _voluta = frazione * spess
+    profonda = min(_voluta, _tetto)
+    if _fondo_forzato is not None:
+        # sul rilievo appoggiato comanda il fondo trovato sotto il vuoto: il
+        # tetto della larghezza qui non si applica, se no il piano resterebbe
+        # in mezzo all'aria e tornerebbe fuori la buccia
+        profonda = _fondo_forzato
+    if profonda < _voluta * 0.999:
+        log.append(f"Profondita' tenuta a {profonda:.1f} mm invece di {_voluta:.1f}: "
+                   f"la zona scelta e' larga {_stretta:.1f} mm, e un blocchetto "
+                   f"piu' profondo che largo non si stampa e non si infila.")
     alto = float((V[sorted({int(x) for f in F[sorted(sel)] for x in f})] @ n).max())
-    quota = alto - frazione * spess           # dove passa la faccia piatta
+    quota = alto - profonda                   # dove passa la faccia piatta
 
     # I punti della PELLE SCELTA: servono a riconoscere, fra i tocchi che la
     # booleana tira fuori, quali sono davvero il pezzo che hai selezionato e
@@ -1820,7 +1935,14 @@ def taglia_a_nocciolo_piatto(V, F, sel, anelli, log, gioco, frazione=0.5,
     _tol = 0.01 * diag
 
     _tagliato = Blocco ^ _semispazio(n, quota, diag)
-    A, _corpi = _solo_con_la_pelle(_tagliato, _pelle, _tol)
+    if _fondo_forzato is not None:
+        # Rilievo appoggiato: il secondo corpo NON poggia sulla pelle scelta -
+        # c'e' il vuoto in mezzo - ma e' proprio la carne in cui il blocchetto
+        # deve affondare. Scartandolo si tornava alla buccia. Il prisma e' gia'
+        # stretto sul contorno della zona, quindi qui non entra roba di passaggio.
+        A, _corpi = _tagliato, 1
+    else:
+        A, _corpi = _solo_con_la_pelle(_tagliato, _pelle, _tol)
     A = _senza_briciole(A)
     _corpi_dopo = 1
     try:
