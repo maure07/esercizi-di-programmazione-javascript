@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "ripara-prima-31"
+VERSIONE = "difetti-di-partenza-32"
 
 
 # ---------------------------------------------------------------------------
@@ -2778,23 +2778,31 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
     # l'app segnala gia' da sola i pezzi non perfettamente chiusi.
     if not (ma.is_watertight and mb.is_watertight):
         def _malformati(FF):
-            c = {}
-            for f in FF:
-                for e in ((int(f[0]), int(f[1])), (int(f[1]), int(f[2])), (int(f[2]), int(f[0]))):
-                    k = (min(e), max(e))
-                    c[k] = c.get(k, 0) + 1
-            return sum(1 for v in c.values() if v != 2), len(c)
-        ba, ta = _malformati(np.asarray(facce_a))
-        bb, tb = _malformati(np.asarray(facce_b))
-        # tollera qualche spigolo difettoso ereditato dal pezzo di partenza
-        if ba <= max(2, ta // 200) and bb <= max(2, tb // 200):
+            FF = np.asarray(FF, dtype=np.int64)
+            if not len(FF):
+                return 0, 0
+            _l, _h, _f, _v, _i, qu = _gruppi_spigoli(FF)
+            return int((qu != 2).sum()), int(len(qu))
+        ba, ta = _malformati(facce_a)
+        bb, tb = _malformati(facce_b)
+        # Il metro di giudizio e' il pezzo DI PARTENZA, non la perfezione. Un
+        # modello uscito dall'IA arriva gia' con migliaia di spigoli difettosi:
+        # quelli finiscono nel pezzo che avanza e non sono colpa del taglio.
+        # Pretendendo che il resto fosse sano si buttava via un taglio in cui il
+        # pezzo staccato era perfetto (0 difetti su 1779) solo perche' il resto
+        # si portava dietro i 6510 guasti che aveva gia' prima. Qui si guarda se
+        # il taglio ha PEGGIORATO le cose, che e' l'unica cosa di cui risponde.
+        b0, t0 = _malformati(F)
+        tolleranza = max(2, (ta + tb) // 200)
+        if (ba + bb) <= b0 + tolleranza:
             log.append(f"Taglio riuscito; restano {ba + bb} spigoli difettosi "
-                       "(erano gia' nel pezzo di partenza)")
+                       f"(il pezzo di partenza ne aveva gia' {b0})")
         else:
             raise ValueError(
-                "Il contorno della selezione e' troppo intricato per tagliarci sopra. "
-                f"Staccato: {ba}/{ta} spigoli mal formati; resto: {bb}/{tb}; "
-                f"anelli={[len(x) for x in anelli]}; selezione={len(sel)}/{len(F)} triangoli"
+                "Il taglio ha lasciato piu' guasti di quanti ne trovasse. "
+                f"Prima: {b0}/{t0} spigoli mal formati. Dopo: staccato {ba}/{ta}, "
+                f"resto {bb}/{tb}; anelli={[len(x) for x in anelli]}; "
+                f"selezione={len(sel)}/{len(F)} triangoli"
             )
 
     if not connettore or incastro_modo == "niente":
