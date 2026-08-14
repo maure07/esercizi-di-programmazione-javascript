@@ -970,7 +970,19 @@
   }
   // deve corrispondere a VERSIONE in ai-segmentation/taglia_pro.py: serve a
   // capire se sul PC gira ancora un companion vecchio (senza taglio locale)
-  const TAGLIA_PRO_VERSIONE_ATTESA = 'pannello-sobrio-27';
+  // Deve stare in coppia con VERSIONE dentro ai-segmentation/taglia_pro.py.
+  // Se le due si scollano l'app si blocca dando la colpa alla meta' sbagliata,
+  // quindi il montaggio del file unico (test/build-artifact.js) le confronta e
+  // si rifiuta di partire se non combaciano.
+  const TAGLIA_PRO_VERSIONE_ATTESA = 'ripara-e-taglia-29';
+
+  // Le versioni di questo progetto finiscono con un numero che cresce
+  // ("...-27", "...-29"): basta quello per sapere QUALE delle due meta' e'
+  // rimasta indietro, invece di dare per scontato che sia sempre la cartella.
+  function numeroVersione(v) {
+    const m = /(\d+)\s*$/.exec(String(v || ''));
+    return m ? parseInt(m[1], 10) : null;
+  }
   // Versione del solo FILE HTML. E' separata da quella sopra apposta: quando si
   // cambia soltanto la pagina (comandi, aspetto, selezione) la cartella sul PC
   // va benissimo com'e', e alzare il numero di tutti e due farebbe comparire
@@ -1836,22 +1848,54 @@
       // legge vede "app nocciolo-liscio-21" scritto sotto al titolo, legge
       // "versione vecchia" e conclude che l'avviso sia sbagliato — mentre la
       // versione vecchia e' quella dell'ALTRO pezzo, la cartella sul PC.
+      const nQui = numeroVersione(TAGLIA_PRO_VERSIONE_ATTESA);
+      const nLa = numeroVersione(health.taglia_pro_versione);
+      // Chi e' rimasto indietro? Prima si dava per scontato che fosse sempre la
+      // cartella, e quando invece era l'HTML il messaggio mandava a rifare un
+      // aggiornamento gia' fatto.
+      const htmlVecchio = nQui !== null && nLa !== null && nLa > nQui;
+      const cosaFare = htmlVecchio
+        ? ('E\' questo file HTML a essere rimasto indietro: la cartella sul PC e\' piu\' nuova.\n\n' +
+           'Scarica l\'HTML aggiornato e apri quello. La cartella "ai-segmentation" lasciala com\'e\':\n' +
+           'e\' gia\' quella giusta, non rimetterci sopra la versione vecchia.')
+        : ('E\' la cartella sul PC a essere rimasta indietro, e il taglio lo fa lei, non l\'HTML:\n' +
+           'finche\' resta quella il risultato sara\' quello di prima, anche se sotto al titolo\n' +
+           'leggi la versione nuova.\n\n' +
+           'Cosa fare, in ordine:\n' +
+           '  1. chiudi la finestra nera del companion (la X, non basta ridurla a icona);\n' +
+           '  2. sostituisci la cartella "ai-segmentation" con quella nuova;\n' +
+           '  3. riapri "avvia.bat";\n' +
+           '  4. per controllare, apri in una scheda:  http://127.0.0.1:8760/health\n' +
+           '     deve dire  "taglia_pro_versione":"' + TAGLIA_PRO_VERSIONE_ATTESA + '"');
       const continua = confirm(
         'I due pezzi dell\'app non combaciano.\n\n' +
         '  questo file HTML vuole:   ' + TAGLIA_PRO_VERSIONE_ATTESA + '\n' +
         '  la cartella "ai-segmentation" sul PC e\':   ' +
         (health.taglia_pro_versione || 'cosi\' vecchia che non lo dice') + '\n\n' +
-        'Il taglio lo fa la CARTELLA, non l\'HTML: finche\' resta quella vecchia il risultato ' +
-        'sara\' quello di prima, anche se sotto al titolo leggi la versione nuova.\n\n' +
-        'Cosa fare, in ordine:\n' +
-        '  1. chiudi la finestra nera del companion (la X, non basta ridurla a icona);\n' +
-        '  2. sostituisci la cartella "ai-segmentation" con quella nuova;\n' +
-        '  3. riapri "avvia.bat";\n' +
-        '  4. per controllare, apri in una scheda:  http://127.0.0.1:8760/health\n' +
-        '     deve dire  "taglia_pro_versione":"' + TAGLIA_PRO_VERSIONE_ATTESA + '"\n\n' +
-        'Vuoi provare comunque il taglio adesso (con la cartella vecchia)?'
+        cosaFare + '\n\n' +
+        (htmlVecchio
+          ? 'Vuoi provare comunque il taglio adesso? Di solito funziona lo stesso: la cartella\nnuova sa fare tutto quello che sapeva la vecchia.'
+          : 'Vuoi provare comunque il taglio adesso (con la cartella vecchia)?')
       );
       if (!continua) return;
+    }
+    // Il taglio non avviene qui: il pezzo viene spedito tutto intero alla
+    // cartella sul PC, scritto numero per numero. Su un modello da milioni di
+    // triangoli quel viaggio da solo sono minuti, e chi guarda la rotellina
+    // girare non ha modo di saperlo. Meglio dirlo prima e offrire la scorciatoia.
+    const nTri = part.indices.length / 3;
+    if (nTri > 600000) {
+      const minuti = Math.max(1, Math.round(nTri / 500000));
+      const vai = confirm(
+        'Questo pezzo ha ' + fmt(nTri, 0) + ' triangoli.\n\n' +
+        'Per tagliarlo va spedito tutto quanto alla cartella "ai-segmentation", e per una\n' +
+        'mesh di questa stazza ci vogliono all\'incirca ' + minuti + '-' + (minuti * 3) + ' minuti.\n' +
+        'Non e\' bloccata: sta lavorando.\n\n' +
+        'Se vuoi fare prima: torna a "1·Analisi" e premi Alleggerisci. Il modello scende\n' +
+        'sotto i 300.000 triangoli, il taglio diventa questione di secondi, e la stampante\n' +
+        'non vede la differenza (l\'ugello e\' da 0,4 mm).\n\n' +
+        'Vuoi tagliare adesso cosi\' com\'e\'?');
+      if (!vai) return;
     }
     const conn = el.connAutoChk ? el.connAutoChk.checked : true;
     const gioco = el.connGioco ? parseInt(el.connGioco.value, 10) / 100 : 0.2;

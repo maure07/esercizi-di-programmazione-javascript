@@ -13,6 +13,27 @@ function safe(js) {
   return js.split('</script').join('<\\/script');
 }
 
+// L'app e' fatta di due meta': questo HTML e la cartella "ai-segmentation".
+// Si riconoscono per nome di versione, e se i due nomi si scollano l'app si
+// pianta accusando la meta' sbagliata - e' successo davvero, dopo che avevo
+// cambiato la versione del motore dimenticandomi di quella dell'HTML.
+// Quindi il montaggio si rifiuta di partire finche' non combaciano.
+(function controllaVersioni() {
+  const appJs = fs.readFileSync(path.join(root, 'js', 'app.js'), 'utf8');
+  const py = path.join(root, '..', 'ai-segmentation', 'taglia_pro.py');
+  if (!fs.existsSync(py)) return;                 // cartella non presente: niente da confrontare
+  const qui = /TAGLIA_PRO_VERSIONE_ATTESA\s*=\s*'([^']+)'/.exec(appJs);
+  const la = /^VERSIONE\s*=\s*"([^"]+)"/m.exec(fs.readFileSync(py, 'utf8'));
+  if (!qui || !la) return;
+  if (qui[1] !== la[1]) {
+    console.error('\nLE DUE META\' NON COMBACIANO:\n' +
+      '  js/app.js  TAGLIA_PRO_VERSIONE_ATTESA = ' + qui[1] + '\n' +
+      '  taglia_pro.py            VERSIONE     = ' + la[1] + '\n\n' +
+      'Allineale prima di montare il file, se no l\'app si blocca da sola.\n');
+    process.exit(1);
+  }
+})();
+
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const files = [
   ['vendor/three.min.js', 'vendor/three.min.js'],
