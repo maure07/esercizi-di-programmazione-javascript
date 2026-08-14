@@ -63,8 +63,27 @@ const path = require('path');
   const okDiventa = selezionati > 0 && Math.abs(selezionati - attesi) / attesi < 0.2;
   console.log('zona 2:', attesi, 'triangoli -> selezione', selezionati, '-> ok:', okDiventa);
 
+  // --- 2b) piu' zone si SOMMANO, e si tolgono riCLICCANDO ---
+  // E' il caso vero segnalato: una cuffia viene proposta in tre pezzi, e senza
+  // poterli sommare bisognerebbe ridisegnarla a mano - cioe' rifare a mano
+  // proprio il lavoro che la preselezione doveva risparmiare.
+  const attesi3 = await p.evaluate(() => window.__zoneFacce(2).length);
+  await p.evaluate(() => document.querySelectorAll('#zoneElenco .zona-riga')[2].click());
+  await p.waitForTimeout(600);
+  const unite = await p.evaluate(() => window.__denti().facce);
+  const spunte = await p.evaluate(() => document.body.innerText.match(/2 zone prese/) ? 2 : 0);
+  const okSomma = unite > selezionati && Math.abs(unite - (selezionati + attesi3)) / (selezionati + attesi3) < 0.15;
+  console.log('unione:', selezionati, '+', attesi3, '->', unite,
+    '| riepilogo dice 2 zone:', spunte === 2, '-> ok:', okSomma);
+  // riclic sulla stessa: deve tornare indietro, se no l'interruttore va in un verso solo
+  await p.evaluate(() => document.querySelectorAll('#zoneElenco .zona-riga')[2].click());
+  await p.waitForTimeout(600);
+  const tolta = await p.evaluate(() => window.__denti().facce);
+  const okToglie = Math.abs(tolta - selezionati) / selezionati < 0.1;
+  console.log('dopo il riclic:', unite, '->', tolta, '(era', selezionati + ') -> ok:', okToglie);
+
   // --- 3) e resta modificabile ---
-  const prima = selezionati;
+  const prima = tolta;
   await p.evaluate(() => window.__pennelloVicino());
   await p.waitForTimeout(400);
   const dopo = await p.evaluate(() => window.__denti().facce);
@@ -78,11 +97,12 @@ const path = require('path');
   console.log('dopo "Togli i colori":', okPulito);
 
   await b.close();
-  const ok = okProposte && okColori && okDiventa && okModificabile && okPulito && errs.length === 0;
+  const ok = okProposte && okColori && okDiventa && okSomma && okToglie
+    && okModificabile && okPulito && errs.length === 0;
   if (errs.length) console.log('errori JS:', errs);
   if (!ok) {
     console.log('controlli falliti:', Object.entries({
-      okProposte, okColori, okDiventa, okModificabile, okPulito,
+      okProposte, okColori, okDiventa, okSomma, okToglie, okModificabile, okPulito,
     }).filter(([, v]) => !v).map(([k]) => k).join(', ') || '(nessuno: errori JS)');
   }
   console.log(ok ? '\nRISULTATO: ZONE PROPOSTE OK' : '\nRISULTATO: LE ZONE PROPOSTE NON FUNZIONANO');

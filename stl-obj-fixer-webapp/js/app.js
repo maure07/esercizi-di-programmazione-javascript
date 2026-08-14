@@ -1016,7 +1016,7 @@
   // Se le due si scollano l'app si blocca dando la colpa alla meta' sbagliata,
   // quindi il montaggio del file unico (test/build-artifact.js) le confronta e
   // si rifiuta di partire se non combaciano.
-  const TAGLIA_PRO_VERSIONE_ATTESA = 'zone-per-forma-35';
+  const TAGLIA_PRO_VERSIONE_ATTESA = 'zone-somma-36';
 
   // Le versioni di questo progetto finiscono con un numero che cresce
   // ("...-27", "...-29"): basta quello per sapere QUALE delle due meta' e'
@@ -3598,7 +3598,7 @@
   // parola resta a te.
   // =====================================================================
   let zoneProposte = null;   // { partId, gruppi: [...] }
-  let zoneScelta = null;     // id della zona attualmente presa
+  const zoneScelte = new Set();  // id delle zone accese: si sommano fra loro
   const zoneCoda = [];       // zone messe da parte per tagliarle tutte alla fine
 
   // colori ben distinti fra loro: si gira sulla ruota dei colori a passi
@@ -3679,7 +3679,7 @@
       colore: z.colore,
       // la zona presa in mano si spegne: al suo posto si vede il giallo della
       // selezione, se no i due colori si accavallano e non si capisce niente
-      spenta: zoneScelta === z.id,
+      spenta: zoneScelte.has(z.id),
       positions: faccePosizioni(part, z.facce),
     })));
   }
@@ -3694,14 +3694,22 @@
     }
     el.zoneElenco.style.display = '';
     if (el.zoneViaBtn) el.zoneViaBtn.style.display = '';
-    el.zoneElenco.innerHTML = zoneProposte.gruppi.map((z) => {
+    const quante = zoneScelte.size;
+    const riepilogo = quante
+      ? `<div style="font-size:11.5px;color:var(--accent);padding:4px 8px">` +
+        `${quante} zon${quante === 1 ? 'a presa' : 'e prese'} · ` +
+        `${fmt(cutSelection ? cutSelection.faces.size : 0, 0)} triangoli</div>`
+      : '<div style="font-size:11.5px;color:var(--text-dim);padding:4px 8px">'
+        + 'Clicca le zone che ti servono: si sommano.</div>';
+    el.zoneElenco.innerHTML = riepilogo + zoneProposte.gruppi.map((z) => {
       const c = z.colore.map((x) => Math.round(x * 255)).join(',');
       const mis = z.misureMm.map((x) => x.toFixed(0)).join('×');
-      const presa = zoneScelta === z.id;
+      const presa = zoneScelte.has(z.id);
       return `<div class="zona-riga" data-zona="${z.id}" style="display:flex;align-items:center;gap:8px;` +
         `padding:6px 8px;border-radius:4px;cursor:pointer;font-size:12px;` +
         `background:${presa ? 'var(--accent-soft)' : 'transparent'};` +
         `border:1px solid ${presa ? 'var(--accent-bordo)' : 'transparent'}">` +
+        `<span style="width:11px;flex-shrink:0;color:var(--accent);font-weight:700">${presa ? '✓' : ''}</span>` +
         `<span style="width:12px;height:12px;border-radius:2px;flex-shrink:0;background:rgb(${c})"></span>` +
         `<span style="flex:1;min-width:0;color:var(--text)">${z.nome}</span>` +
         `<span style="color:var(--text-dim);white-space:nowrap">${mis} mm · ${fmt(z.facce.length, 0)} tri</span>` +
@@ -3712,23 +3720,48 @@
     });
   }
 
-  // Una zona diventa la selezione gialla: da qui in poi e' identica a una
-  // selezione fatta a mano, quindi tutti gli strumenti gia' pronti valgono.
+  // Le zone accese diventano la selezione gialla: da qui in poi e' identica a
+  // una selezione fatta a mano, quindi tutti gli strumenti gia' pronti valgono.
+  //
+  // Ogni clic ACCENDE o SPEGNE una zona, e si sommano. Serve perche' la
+  // divisione automatica non azzecca mai tutti i confini: una cuffia viene
+  // proposta in tre pezzi, e senza poterli sommare bisognerebbe ridisegnarla a
+  // mano - cioe' rifare a mano proprio il lavoro che la preselezione doveva
+  // risparmiare. Non serve che il computer indovini il pezzo intero: basta che
+  // ne proponga i pezzi e che tu li metta insieme.
   function prendiZona(id) {
     if (!zoneProposte || !currentResult) return;
-    const z = zoneProposte.gruppi.find((x) => x.id === id);
     const part = currentResult.parts.find((p) => p.id === zoneProposte.partId);
-    if (!z || !part) return;
+    if (!part) return;
+    if (zoneScelte.has(id)) zoneScelte.delete(id); else zoneScelte.add(id);
     pushCutHistory();
-    cutSelection = { partId: part.id, faces: new Set(z.facce) };
-    // il bordo di una zona automatica e' seghettato quanto quello di una
-    // dipinta a mano: si smussa con lo stesso cursore
-    arrotondaSelezione(part, cutSelection.faces, forzaArrotonda());
-    zoneScelta = id;
+    if (!zoneScelte.size) {
+      cutSelection = null;
+      refreshCutHighlight();
+      disegnaZone();
+      elencoZone();
+      return;
+    }
+    // Si RICOSTRUISCE da zero invece di aggiungere e togliere man mano:
+    // togliendo una zona, i suoi triangoli resterebbero altrimenti in giro
+    // (l'arrotondamento ne ha spostati un po' oltre i confini di partenza).
+    const facce = new Set();
+    zoneProposte.gruppi.forEach((z) => {
+      if (zoneScelte.has(z.id)) z.facce.forEach((f) => facce.add(f));
+    });
+    cutSelection = { partId: part.id, faces: facce };
+    // Fra due zone confinanti restano fuori i triangoli che erano stati
+    // scartati perche' sotto la soglia minima: senza questa passata la cuffia
+    // unita avrebbe delle fessure in mezzo.
+    pulisciSelezione(part, cutSelection.faces, true);
+    // Lo smusso si da' UNA volta sola all'unione, non zona per zona: se no
+    // arrotonderebbe anche le cuciture interne fra un pezzo e l'altro, che
+    // invece devono sparire.
+    arrotondaSelezione(part, cutSelection.faces, forzaArrotonda(), true);
     refreshCutHighlight();
     disegnaZone();
     elencoZone();
-    if (el.zoneCoda && el.zoneCoda.checked) accodaZona(z, part);
+    if (el.zoneCoda && el.zoneCoda.checked) accodaZona(part);
   }
 
   async function proponiZone() {
@@ -3760,7 +3793,7 @@
         return;
       }
       zoneProposte = { partId: part.id, gruppi };
-      zoneScelta = null;
+      zoneScelte.clear();
       disegnaZone();
       elencoZone();
     } catch (err) {
@@ -3773,7 +3806,7 @@
 
   function viaLeZone() {
     zoneProposte = null;
-    zoneScelta = null;
+    zoneScelte.clear();
     viewer.clearZones();
     elencoZone();
   }
@@ -3799,10 +3832,12 @@
     return c;
   }
 
-  function accodaZona(z, part) {
-    if (zoneCoda.some((q) => q.nome === z.nome && q.partId === part.id)) return;
+  function accodaZona(part) {
+    const nome = 'Zone ' + [...zoneScelte].sort((a, b) => a - b).map((i) => i + 1).join('+');
+    const gia = zoneCoda.findIndex((q) => q.partId === part.id && q.nome === nome);
+    if (gia >= 0) zoneCoda.splice(gia, 1);   // ricliccando si aggiorna, non si duplica
     zoneCoda.push({
-      nome: z.nome,
+      nome,
       partId: part.id,
       centri: centriDelle(part, [...cutSelection.faces]),
       incastro: el.incastroModo ? el.incastroModo.value : 'auto',
@@ -4274,7 +4309,7 @@
   // percentuale del raggio della macchia stessa. Cosi' una selezione piccola
   // viene arrotondata poco e una grande molto, in proporzione, e il numero di
   // triangoli della mesh non c'entra piu' niente.
-  function arrotondaSelezione(part, sel, percento) {
+  function arrotondaSelezione(part, sel, percento, tieniIsole) {
     const topo = ensurePartTopology(part);
     const nTris = part.indices.length / 3;
     const forza = Math.max(0, Math.min(60, percento == null ? 20 : percento)) / 100;
@@ -4375,7 +4410,7 @@
     // il ritaglio a meta' puo' lasciare qualche triangolo spaiato: si ripulisce
     // come sempre (buchi tappati, frammenti staccati buttati) e si finisce con
     // lo smusso fine, che toglie gli ultimi dentini da un triangolo solo
-    pulisciSelezione(part, sel);
+    pulisciSelezione(part, sel, tieniIsole);
     return smussaDentiniSelezione(part, sel, 3);
   }
 
@@ -4448,7 +4483,12 @@
   // Ripulisce una selezione dai buchi: i triangolini rimasti fuori in mezzo
   // alla zona scelta vengono inglobati, e i frammenti isolati fuori vengono
   // scartati. Sono quelli che lasciavano il bordo del taglio frastagliato.
-  function pulisciSelezione(part, sel) {
+  // tieniIsole: quando la selezione e' l'unione di piu' zone scelte a mano,
+  // i pezzi staccati NON sono sbavature da buttare: sono roba voluta. Buttarli
+  // faceva sparire in silenzio la terza zona cliccata (misurato: due zone
+  // 29.537 triangoli, tre zone ancora 29.537). Chi vuole tenere solo la macchia
+  // piu' grande ha gia' il suo pulsante apposta.
+  function pulisciSelezione(part, sel, tieniIsole) {
     const topo = ensurePartTopology(part);
     // 1) buchi DENTRO la selezione: un triangolo fuori, circondato da dentro.
     // Basta guardare l'anello attaccato alla macchia: un triangolo con TUTTI i
@@ -4488,6 +4528,7 @@
       for (const f of daTogliere) sel.delete(f);
     }
     // 3) frammenti staccati: tiene solo il gruppo piu' grande
+    if (tieniIsole) return sel;
     const visti = new Set();
     let migliore = null;
     sel.forEach((s) => {
