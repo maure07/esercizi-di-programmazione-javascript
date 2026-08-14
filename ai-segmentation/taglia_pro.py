@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "rilievi-appoggiati-30"
+VERSIONE = "ripara-prima-31"
 
 
 # ---------------------------------------------------------------------------
@@ -462,10 +462,17 @@ def taglia_con_piano(vertices, faces, punto, normale,
     punto = np.asarray(punto, dtype=np.float64)
     offset = float(np.dot(punto, n))
 
-    solido = _manifold(V, F)
-    if solido.status().name != "NoError":
+    solido, _rip = _manifold_solido(V, F, log)
+    if _rip and solido is not None:
+        log.append(f"Il modello non era lavorabile cosi' com'era: l'ho rimesso "
+                   f"a posto ({_rip}).")
+    if solido is None:
         raise ValueError(
-            "Il modello non e' un solido valido: passalo prima dalla riparazione."
+            "Il modello non e' un solido valido, e non ci sono riuscito nemmeno "
+            "riparandolo qui: ho provato a togliere le facce di troppo sugli "
+            "spigoli affollati, a rigirare le facce nel verso giusto e a tappare "
+            "i buchi. Passa da \"Ripara e solidifica\" allo step 2, oppure usa "
+            "\"Riparazione PRO (PC locale)\", e riprova."
         )
     vol0 = solido.volume()
     diag_tot = float(np.linalg.norm(V.max(axis=0) - V.min(axis=0))) or 1.0
@@ -799,9 +806,13 @@ def taglia_con_coperta(vertices, faces, griglia, connettore=True, gioco=0.20,
     if G.ndim != 3 or G.shape[0] != G.shape[1] or G.shape[2] != 3:
         raise ValueError("La coperta deve essere una griglia NxNx3.")
 
-    solido = _manifold(V, F)
-    if solido.status().name != "NoError":
-        raise ValueError("Il modello non e' un solido valido: passalo prima dalla riparazione.")
+    solido, _rip = _manifold_solido(V, F, log)
+    if _rip and solido is not None:
+        log.append(f"Il modello non era lavorabile cosi' com'era: l'ho rimesso "
+                   f"a posto ({_rip}).")
+    if solido is None:
+        raise ValueError("Il modello non e' un solido valido, e non ci sono riuscito "
+                         "nemmeno riparandolo qui. Passa da \"Ripara e solidifica\".")
     vol0 = solido.volume()
     diag = float(np.linalg.norm(V.max(axis=0) - V.min(axis=0))) or 1.0
 
