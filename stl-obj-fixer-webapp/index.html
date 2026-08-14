@@ -89,9 +89,9 @@
   }
   /* Annulla sta accanto a Inquadra, sopra il modello: e' li' che serve,
      subito dopo aver visto il risultato di un taglio */
-  #undoPartiBtn {
+  #undoPartiBtn, #rifaiPartiBtn {
     position: absolute;
-    right: 92px; bottom: 10px;
+    bottom: 10px;
     background: var(--panel2);
     color: var(--text);
     border: 1px solid var(--border);
@@ -99,6 +99,10 @@
     padding: 8px 10px;
     font-size: 12px;
   }
+  #undoPartiBtn { right: 92px; }
+  /* "Rifai" sta a sinistra di "Annulla": indietro e avanti uno accanto
+     all'altro, come le frecce di un browser */
+  #rifaiPartiBtn { right: 176px; }
   #frameBtn {
     position: absolute;
     right: 10px; bottom: 10px;
@@ -807,6 +811,7 @@
   <canvas id="viewer"></canvas>
   <canvas id="lassoOverlay"></canvas>
   <div id="viewerHint" style="display:none">Mouse: sinistro/centrale ruota <b>Shift+sinistro ruota anche mentre selezioni</b> rotellina zoom (verso il cursore) destro o Ctrl sposta <b>doppio clic centra sul punto</b> &nbsp;·&nbsp; Tasti: <b>1</b> fronte <b>2</b> retro <b>3</b>/<b>4</b> lati <b>7</b> sopra <b>9</b> sotto <b>F</b> inquadra &nbsp;·&nbsp; Touch: 1 dito ruota 2 dita zoom/sposta</div>
+  <button id="rifaiPartiBtn" style="display:none" title="Rimetti l'operazione che hai appena annullato">Rifai</button>
   <button id="undoPartiBtn" style="display:none" title="Annulla l'ultima operazione sui pezzi">Annulla</button>
   <button id="frameBtn" style="display:none">Inquadra</button>
   <div id="emptyState">
@@ -861,6 +866,7 @@
           <option value="150000">150.000 triangoli &mdash; leggerissimo</option>
           <option value="300000" selected>300.000 triangoli &mdash; consigliato</option>
           <option value="600000">600.000 triangoli &mdash; pi&ugrave; fedele, pi&ugrave; lento</option>
+          <option value="1200000">1.200.000 triangoli &mdash; quasi identico, alleggerisce poco</option>
         </select>
         <button id="alleggerBtn" style="white-space:nowrap">Alleggerisci</button>
       </div>

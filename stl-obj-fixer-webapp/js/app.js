@@ -56,6 +56,7 @@
     cutToolPlaneBtn: document.getElementById('cutToolPlaneBtn'),
     cutToolCopertaBtn: document.getElementById('cutToolCopertaBtn'),
     undoPartiBtn: document.getElementById('undoPartiBtn'),
+    rifaiPartiBtn: document.getElementById('rifaiPartiBtn'),
     copertaControls: document.getElementById('copertaControls'),
     brushRadiusRow: document.getElementById('brushRadiusRow'),
     smartSelBox: document.getElementById('smartSelBox'),
@@ -941,12 +942,19 @@
   // La selezione aveva gia' il suo "indietro", le operazioni sui pezzi no: un
   // taglio sbagliato non si poteva disfare se non ricaricando il modello.
   const storiaParti = [];
+  // Il mucchio di quello che si e' annullato. Senza, un Annulla premuto per
+  // sbaglio buttava via un lavoro di ore senza modo di riprenderlo: si andava
+  // indietro e basta, la strada in avanti spariva.
+  const storiaRifai = [];
   function pushStoriaParti(etichetta) {
     if (!currentResult) return;
     // copia superficiale: le operazioni SOSTITUISCONO positions/indices, non li
     // modificano sul posto, quindi condividere gli array e' sicuro e non pesa
     storiaParti.push({ etichetta, parts: currentResult.parts.map((x) => Object.assign({}, x)) });
-    if (storiaParti.length > 15) storiaParti.shift();
+    if (storiaParti.length > 30) storiaParti.shift();
+    // una mossa NUOVA chiude la strada in avanti: da qui in poi il futuro e'
+    // un altro. E' come si comporta l'annulla di qualunque programma.
+    storiaRifai.length = 0;
     aggiornaUndoParti();
   }
   function aggiornaUndoParti() {
@@ -959,10 +967,33 @@
       el.undoPartiBtn.textContent = `Annulla (${storiaParti.length})`;
       el.undoPartiBtn.title = `Annulla "${ultimo.etichetta}" (${storiaParti.length} passi indietro disponibili)`;
     }
+    if (el.rifaiPartiBtn) {
+      const avanti = storiaRifai[storiaRifai.length - 1];
+      el.rifaiPartiBtn.style.display = avanti ? 'block' : 'none';
+      if (avanti) {
+        el.rifaiPartiBtn.textContent = `Rifai (${storiaRifai.length})`;
+        el.rifaiPartiBtn.title = `Rimetti "${avanti.etichetta}" (${storiaRifai.length} passi in avanti disponibili)`;
+      }
+    }
   }
   function annullaOperazioneParti() {
     const s = storiaParti.pop();
     if (!s || !currentResult) return;
+    // prima di tornare indietro si mette da parte DOV'ERAVAMO, se no il
+    // "Rifai" non avrebbe niente da rimettere
+    storiaRifai.push({ etichetta: s.etichetta,
+                       parts: currentResult.parts.map((x) => Object.assign({}, x)) });
+    if (storiaRifai.length > 30) storiaRifai.shift();
+    currentResult.parts = s.parts;
+    resetCutSelection();
+    renderResult(currentResult);
+    aggiornaUndoParti();
+  }
+  function rifaiOperazioneParti() {
+    const s = storiaRifai.pop();
+    if (!s || !currentResult) return;
+    storiaParti.push({ etichetta: s.etichetta,
+                       parts: currentResult.parts.map((x) => Object.assign({}, x)) });
     currentResult.parts = s.parts;
     resetCutSelection();
     renderResult(currentResult);
@@ -3295,6 +3326,7 @@
   el.cutToolPlaneBtn.addEventListener('click', () => setCutTool('plane'));
   el.cutToolCopertaBtn.addEventListener('click', () => setCutTool('coperta'));
   if (el.undoPartiBtn) el.undoPartiBtn.addEventListener('click', () => annullaOperazioneParti());
+  if (el.rifaiPartiBtn) el.rifaiPartiBtn.addEventListener('click', () => rifaiOperazioneParti());
   el.cutLassoCloseBtn.addEventListener('click', () => closeLasso());
   window.addEventListener('resize', () => { if (lassoPoints.length > 0) drawLasso(); });
 
@@ -4837,6 +4869,7 @@
     if (!currentResult) return null;
     const p = currentResult.parts.find((x) => x.name === nome);
     if (!p) return null;
+    pushStoriaParti('misure');   // come il pulsante vero: si deve poter annullare
     ridimensionaParte(p, f);
     renderResult(currentResult);
     return bboxSizeMm(p);

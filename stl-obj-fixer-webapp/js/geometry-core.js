@@ -108,27 +108,55 @@
     const nx = Math.floor((mxx - mnx) * inv) + 2;
     const ny = Math.floor((mxy - mny) * inv) + 2;
 
-    // Di ogni casella si tiene solo QUALE punto ci e' arrivato per primo, non
-    // le sue tre coordinate: un numero invece di tre, cioe' 30 MB invece di
-    // 190 su un modello di questa stazza. Le coordinate si rileggono dopo.
+    // Ogni casella diventa UN punto, e quel punto e' la MEDIA di tutti quelli
+    // che ci sono finiti dentro, non il primo capitato. E' la differenza fra
+    // una superficie che resta liscia e una che viene a scalini: tenendo il
+    // primo, ogni vertice saltava fino a mezza casella nel punto sbagliato, e
+    // il modello alleggerito sembrava scolpito con l'accetta.
     const nuovoIndice = new Int32Array(nPunti);      // punto -> vertice tenuto
-    const primoPunto = new Int32Array(nPunti);       // vertice tenuto -> punto di partenza
     const celle = new Map();                         // chiave numerica -> vertice
+    const somme = new Float64Array(nPunti * 3);
+    const conta = new Int32Array(nPunti);
     let nVert = 0;
     for (let i = 0; i < nPunti; i++) {
-      const ix = Math.floor((rawPositions[i * 3] - mnx) * inv);
-      const iy = Math.floor((rawPositions[i * 3 + 1] - mny) * inv);
-      const iz = Math.floor((rawPositions[i * 3 + 2] - mnz) * inv);
+      const x = rawPositions[i * 3], y = rawPositions[i * 3 + 1], z = rawPositions[i * 3 + 2];
+      const ix = Math.floor((x - mnx) * inv);
+      const iy = Math.floor((y - mny) * inv);
+      const iz = Math.floor((z - mnz) * inv);
       const chiave = ix + iy * nx + iz * nx * ny;    // numero, non stringa
       let v = celle.get(chiave);
       if (v === undefined) {
         v = nVert++;
         celle.set(chiave, v);
-        primoPunto[v] = i;
       }
       nuovoIndice[i] = v;
+      somme[v * 3] += x; somme[v * 3 + 1] += y; somme[v * 3 + 2] += z;
+      conta[v]++;
     }
     celle.clear();
+    // Il punto della casella NON e' la media: la media si stacca dalla
+    // superficie (misurato: fino a 1,5 mm su un modello mosso) perche' cade
+    // dentro la curva. E non e' nemmeno il primo capitato, che sta sulla
+    // superficie ma preso a caso fa ballare il contorno. Si tiene il punto
+    // VERO piu' vicino alla media: sta esattamente sulla pelle del modello,
+    // come il primo, ma scelto al centro del gruppo invece che a sorte.
+    const px = new Float64Array(nVert), py = new Float64Array(nVert), pz = new Float64Array(nVert);
+    const distanza = new Float64Array(nVert).fill(Infinity);
+    for (let v = 0; v < nVert; v++) {
+      const k = conta[v] || 1;
+      somme[v * 3] /= k; somme[v * 3 + 1] /= k; somme[v * 3 + 2] /= k;
+    }
+    for (let i = 0; i < nPunti; i++) {
+      const v = nuovoIndice[i];
+      const dx = rawPositions[i * 3] - somme[v * 3];
+      const dy = rawPositions[i * 3 + 1] - somme[v * 3 + 1];
+      const dz = rawPositions[i * 3 + 2] - somme[v * 3 + 2];
+      const d = dx * dx + dy * dy + dz * dz;
+      if (d < distanza[v]) {
+        distanza[v] = d;
+        px[v] = rawPositions[i * 3]; py[v] = rawPositions[i * 3 + 1]; pz[v] = rawPositions[i * 3 + 2];
+      }
+    }
 
     // Triangoli sopravvissuti: spariscono quelli che si sono schiacciati, cioe'
     // quelli con due o tre angoli finiti nella stessa casella. Si contano prima
@@ -146,10 +174,9 @@
       const a = nuovoIndice[t * 3], b = nuovoIndice[t * 3 + 1], c = nuovoIndice[t * 3 + 2];
       if (a === b || b === c || a === c) continue;
       const o = m * 9;
-      const pa = primoPunto[a] * 3, pb = primoPunto[b] * 3, pc = primoPunto[c] * 3;
-      fuori[o] = rawPositions[pa]; fuori[o + 1] = rawPositions[pa + 1]; fuori[o + 2] = rawPositions[pa + 2];
-      fuori[o + 3] = rawPositions[pb]; fuori[o + 4] = rawPositions[pb + 1]; fuori[o + 5] = rawPositions[pb + 2];
-      fuori[o + 6] = rawPositions[pc]; fuori[o + 7] = rawPositions[pc + 1]; fuori[o + 8] = rawPositions[pc + 2];
+      fuori[o] = px[a]; fuori[o + 1] = py[a]; fuori[o + 2] = pz[a];
+      fuori[o + 3] = px[b]; fuori[o + 4] = py[b]; fuori[o + 5] = pz[b];
+      fuori[o + 6] = px[c]; fuori[o + 7] = py[c]; fuori[o + 8] = pz[c];
       tenuti[m] = t;
       m++;
     }
