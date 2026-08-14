@@ -117,7 +117,7 @@ const path = require('path');
   // il cursore e il pulsante devono esistere davvero nel pannello
   const okUi = await p.evaluate(() => !!document.getElementById('arrotondaForza')
     && !!document.getElementById('arrotondaBtn')
-    && document.getElementById('arrotondaForza').value === '12');
+    && document.getElementById('arrotondaForza').value === '20');
 
   await b.close();
   const ok = okGiro && okNonSposta && okMeglio && okDenti && okArea && okCursore

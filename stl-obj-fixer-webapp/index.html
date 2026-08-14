@@ -990,20 +990,21 @@
     </div>
     <div class="cut-slider-row" id="arrotondaRow">
       <label for="arrotondaForza">Arrotonda bordo</label>
-      <input type="range" id="arrotondaForza" min="0" max="25" step="1" value="12" />
-      <span id="arrotondaForzaValue">12%</span>
+      <input type="range" id="arrotondaForza" min="0" max="30" step="2" value="20" />
+      <span id="arrotondaForzaValue">20%</span>
     </div>
     <div class="cut-actions" style="margin-bottom:8px">
       <button id="arrotondaBtn">Arrotonda adesso</button>
     </div>
     <div class="spiega" style="font-size:11px;color:var(--text-dim);margin:-4px 0 8px 0;line-height:1.4">
       Quando lasci il pennello (o chiudi il lazo) il bordo della selezione viene smussato da
-      solo di questa quantit&agrave;. &Egrave; una <b>percentuale della macchia</b>: 12% su una
+      solo di questa quantit&agrave;. &Egrave; una <b>percentuale della macchia</b>: il 20% su una
       zona grande smussa tanto, sulla stessa zona in piccolo smussa poco, sempre in proporzione.
       Alza se il contorno ti resta ancora <b>seghettato o bitorzoluto</b>, abbassa se ti mangia
       i dettagli che vuoi tenere. <b>0%</b> lascia il contorno com&rsquo;&egrave; (toglie solo i
-      dentini da un triangolo). Il pulsante lo riapplica quando vuoi: premuto due volte
-      arrotonda il doppio.
+      dentini da un triangolo); al <b>30%</b> il contorno diventa quasi un cerchio.
+      Oltre il 30% non cambia pi&ugrave; niente, per questo il cursore si ferma l&igrave;.
+      Il pulsante lo riapplica quando vuoi: premuto due volte arrotonda il doppio.
     </div>
     <div class="spiega" style="font-size:11px;color:var(--text-dim);margin:-4px 0 8px 0;line-height:1.4">
       Se oltre alla zona che vuoi è rimasto attaccato un <b>pezzetto staccato</b> da un'altra

@@ -3284,7 +3284,7 @@
   function forzaArrotonda() {
     if (!el.arrotondaForza) return 12;
     const v = parseFloat(el.arrotondaForza.value);
-    return isFinite(v) ? v : 12;
+    return isFinite(v) ? v : 20;
   }
 
   if (el.arrotondaBtn) {
@@ -3834,7 +3834,7 @@
   function arrotondaSelezione(part, sel, percento) {
     const topo = ensurePartTopology(part);
     const nTris = part.indices.length / 3;
-    const forza = Math.max(0, Math.min(60, percento == null ? 12 : percento)) / 100;
+    const forza = Math.max(0, Math.min(60, percento == null ? 20 : percento)) / 100;
     if (!sel || sel.size < 12) return sel;
     if (forza <= 0) return smussaDentiniSelezione(part, sel, 3);
 
@@ -3850,13 +3850,13 @@
     // indovinato: con la formula ingenua k² il cursore saliva e il bordo
     // rimaneva quello.
     const k = raggio / Math.max(lato, 1e-9);
-    const passi = Math.max(2, Math.min(160, Math.round(1.35 * k * k)));
+    const passi = Math.max(2, Math.min(600, Math.round(1.35 * k * k)));
     // La sfumatura si sente solo vicino al bordo, quindi si lavora in una
     // fascia e il resto del modello non si tocca. La fascia deve essere piu'
     // larga della sfumatura, se no i valori congelati ai suoi bordi fanno da
     // muro e l'arrotondamento si blocca a meta' (era questo a rendere inutile
     // alzare il cursore oltre il 4%).
-    const prof = Math.max(3, Math.min(60, Math.ceil(3 * k)));
+    const prof = Math.max(3, Math.min(200, Math.ceil(3 * k)));
 
     // Fascia attorno al bordo, per distanza in triangoli. I due quaderni di
     // lavoro (distanze e valori sfumati) sono grandi quanto la mesh, quindi si
