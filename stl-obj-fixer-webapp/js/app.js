@@ -2010,6 +2010,18 @@
         });
         out = await resp.json();
       }
+      // Se e' fallito anche il ripiego, il messaggio che conta e' il PRIMO: il
+      // motivo per cui non e' riuscito il taglio sulla ZONA SCELTA, che e'
+      // quello che hai chiesto. Prima usciva solo l'errore del ripiego ("il
+      // piano non taglia il modello in due parti") e il motivo vero restava
+      // sepolto sotto, mandando a cercare il guasto nel posto sbagliato.
+      if (out.error && motivoRipiego) {
+        throw new Error('il taglio sulla zona scelta non e\' riuscito.\n\n'
+          + 'MOTIVO: ' + motivoRipiego + '\n\n'
+          + 'Ho provato a ripiegare sul taglio dritto col piano, ma non e\' andata '
+          + 'nemmeno quella: ' + out.error + '\n\n'
+          + 'Il primo motivo e\' quello su cui lavorare.');
+      }
       if (out.error) throw new Error(out.error);
       const idx = currentResult.parts.indexOf(part);
       const mk = (p, suff) => {
