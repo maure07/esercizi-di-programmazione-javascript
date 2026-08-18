@@ -816,7 +816,11 @@
       if (!positionsArray || positionsArray.length === 0) return;
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.Float32BufferAttribute(positionsArray, 3));
-      geometry.computeVertexNormals();
+      // Niente computeVertexNormals: il materiale della macchia e' "basic",
+      // cioe' un colore piatto che non viene illuminato, e le normali non le
+      // guarda nessuno. Calcolarle su mezzo milione di triangoli a ogni
+      // pennellata era tempo buttato: e' un pezzo grosso di quello che si
+      // sentiva come lentezza.
       const material = new THREE.MeshBasicMaterial({
         color: 0xffe14d,
         side: THREE.DoubleSide,
@@ -847,6 +851,18 @@
       });
       zoneMesh.clear();
     }
+    // Costruire le mesh colorate costa: su un modello da mezzo milione di
+    // triangoli le zone messe insieme SONO tutto il modello, e rifarle da capo
+    // vuol dire ricalcolare le normali e rispedire tutto alla scheda video.
+    // Va fatto una volta sola, quando le zone si propongono. Accendere o
+    // spegnere una zona (cioe' ogni clic nell'elenco) cambia soltanto quanto e'
+    // trasparente: e' un numero, non ricostruisce niente.
+    function accendiZona(id, spenta) {
+      const m = zoneMesh.get(id);
+      if (!m) return false;
+      m.material.opacity = spenta ? 0.22 : 0.45;
+      return true;
+    }
     function setZones(elenco) {
       clearZones();
       if (!elenco || !elenco.length) return;
@@ -854,7 +870,7 @@
         if (!z || !z.positions || !z.positions.length) return;
         const g = new THREE.BufferGeometry();
         g.setAttribute('position', new THREE.Float32BufferAttribute(z.positions, 3));
-        g.computeVertexNormals();
+        // come sopra: colore piatto, normali inutili
         const c = z.colore || [1, 1, 1];
         const mat = new THREE.MeshBasicMaterial({
           color: new THREE.Color(c[0], c[1], c[2]),
@@ -893,7 +909,7 @@
 
     function getTarget() { return [target.x, target.y, target.z]; }
 
-    return { scene, camera, renderer, clearParts, addPart, setPartVisible, setPartOffset, frameAll, resize, raycastAt, setHighlight, setZones, clearZones, projectToScreen, getCameraPosition, getTarget, setPointerDownHook, showCutPlane, hideCutPlane, impostaVista, animaVerso,
+    return { scene, camera, renderer, clearParts, addPart, setPartVisible, setPartOffset, frameAll, resize, raycastAt, setHighlight, setZones, clearZones, accendiZona, projectToScreen, getCameraPosition, getTarget, setPointerDownHook, showCutPlane, hideCutPlane, impostaVista, animaVerso,
       mostraCoperta, nascondiCoperta, maniglieSotto, puntoSulPianoVista, proiettaTanti, facceVisibili };
   }
 

@@ -24,3 +24,7 @@ modelli/contorno-*.stl
 modelli/su-*.stl
 modelli/fin-*.stl
 modelli/faccia-su.stl
+
+# il modello da 500.000 triangoli per cronometrare il clic sulle zone:
+# si rifa con test/fai-modello-pesante.py (righe/colonne a 500)
+modelli/pesante500k.stl

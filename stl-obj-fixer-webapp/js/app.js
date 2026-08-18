@@ -3731,6 +3731,11 @@
         colore: coloreZona(i),
         misureMm: mis,
         nome: `Zona ${i + 1}`,
+        // I triangoli della zona in coordinate, pronti per il viewer. Si
+        // calcolano QUI, una volta sola: prima li rifaceva disegnaZone a ogni
+        // clic, per tutte le zone, e su un modello pesante e' la meta' del
+        // tempo che ci metteva la pagina a rispondere.
+        posizioni: faccePosizioni(part, g.facce),
       };
     });
   }
@@ -3739,13 +3744,20 @@
     if (!zoneProposte || !currentResult) { viewer.clearZones(); return; }
     const part = currentResult.parts.find((p) => p.id === zoneProposte.partId);
     if (!part) { viewer.clearZones(); return; }
+    // Le mesh ci sono gia'? Allora c'e' solo da accenderle o spegnerle: e'
+    // quello che succede a ogni clic nell'elenco, ed e' immediato.
+    let tutte = zoneProposte.gruppi.length > 0;
+    for (const z of zoneProposte.gruppi) {
+      // la zona presa in mano si spegne: al suo posto si vede il giallo della
+      // selezione, se no i due colori si accavallano e non si capisce niente
+      if (!viewer.accendiZona(z.id, zoneScelte.has(z.id))) { tutte = false; break; }
+    }
+    if (tutte) return;
     viewer.setZones(zoneProposte.gruppi.map((z) => ({
       id: z.id,
       colore: z.colore,
-      // la zona presa in mano si spegne: al suo posto si vede il giallo della
-      // selezione, se no i due colori si accavallano e non si capisce niente
       spenta: zoneScelte.has(z.id),
-      positions: faccePosizioni(part, z.facce),
+      positions: z.posizioni || faccePosizioni(part, z.facce),
     })));
   }
 
@@ -4553,31 +4565,51 @@
   // faceva sparire in silenzio la terza zona cliccata (misurato: due zone
   // 29.537 triangoli, tre zone ancora 29.537). Chi vuole tenere solo la macchia
   // piu' grande ha gia' il suo pulsante apposta.
+  // Due tabelle grandi quanto la mesh, tenute da parte e riusate: dire "questo
+  // triangolo e' dentro?" leggendo una casella costa molto meno che chiederlo a
+  // un Set, e qui la domanda si fa cinque volte per ogni triangolo scelto. Su
+  // una zona da mezzo milione di triangoli sono milioni di domande, ed e' li'
+  // che se ne andava il tempo del clic.
+  let _dentroSel = null;
+  let _vistiSel = null;
+  function _tabella(quale, n) {
+    let t = quale === 0 ? _dentroSel : _vistiSel;
+    if (!t || t.length < n) { t = new Uint8Array(n); }
+    else t.fill(0, 0, n);
+    if (quale === 0) _dentroSel = t; else _vistiSel = t;
+    return t;
+  }
+
   function pulisciSelezione(part, sel, tieniIsole) {
     const topo = ensurePartTopology(part);
+    const nTris = part.indices.length / 3;
+    const dentro = _tabella(0, nTris);
+    sel.forEach((f) => { dentro[f] = 1; });
     // 1) buchi DENTRO la selezione: un triangolo fuori, circondato da dentro.
     // Basta guardare l'anello attaccato alla macchia: un triangolo con TUTTI i
     // vicini dentro tocca per forza la macchia. Prima si scorrevano invece
     // tutti i triangoli del modello, e su un personaggio da 400.000 era il
     // motivo per cui lasciare il pennello faceva "impuntare" la pagina.
+    const visti = _tabella(1, nTris);
     for (let giro = 0; giro < 3; giro++) {
       const daAggiungere = [];
-      const visti = new Set();
+      const toccati = [];
       sel.forEach((f) => {
         const a = topo.adjacency[f];
         for (let i = 0; i < a.length; i++) {
           const g = a[i];
-          if (sel.has(g) || visti.has(g)) continue;
-          visti.add(g);
+          if (dentro[g] || visti[g]) continue;
+          visti[g] = 1; toccati.push(g);
           const adj = topo.adjacency[g];
           if (adj.length === 0) continue;
-          let dentro = 0;
-          for (let q = 0; q < adj.length; q++) if (sel.has(adj[q])) dentro++;
-          if (dentro >= adj.length - 0.5) daAggiungere.push(g);  // tutti i vicini dentro
+          let quanti = 0;
+          for (let q = 0; q < adj.length; q++) if (dentro[adj[q]]) quanti++;
+          if (quanti >= adj.length - 0.5) daAggiungere.push(g);  // tutti i vicini dentro
         }
       });
+      for (let i = 0; i < toccati.length; i++) visti[toccati[i]] = 0;
       if (daAggiungere.length === 0) break;
-      for (const f of daAggiungere) sel.add(f);
+      for (const f of daAggiungere) { sel.add(f); dentro[f] = 1; }
     }
     // 2) sporgenze: triangoli dentro ma con un solo vicino dentro (peli isolati)
     for (let giro = 0; giro < 2; giro++) {
@@ -4585,26 +4617,26 @@
       sel.forEach((f) => {
         const adj = topo.adjacency[f];
         if (adj.length < 3) return;
-        let dentro = 0;
-        for (let i = 0; i < adj.length; i++) if (sel.has(adj[i])) dentro++;
-        if (dentro <= 1) daTogliere.push(f);
+        let quanti = 0;
+        for (let i = 0; i < adj.length; i++) if (dentro[adj[i]]) quanti++;
+        if (quanti <= 1) daTogliere.push(f);
       });
       if (daTogliere.length === 0) break;
-      for (const f of daTogliere) sel.delete(f);
+      for (const f of daTogliere) { sel.delete(f); dentro[f] = 0; }
     }
     // 3) frammenti staccati: tiene solo il gruppo piu' grande
     if (tieniIsole) return sel;
-    const visti = new Set();
+    const gia = new Set();
     let migliore = null;
     sel.forEach((s) => {
-      if (visti.has(s)) return;
-      const gruppo = [s]; const pila = [s]; visti.add(s);
+      if (gia.has(s)) return;
+      const gruppo = [s]; const pila = [s]; gia.add(s);
       while (pila.length) {
         const f = pila.pop();
         const adj = topo.adjacency[f];
         for (let i = 0; i < adj.length; i++) {
           const nb = adj[i];
-          if (sel.has(nb) && !visti.has(nb)) { visti.add(nb); pila.push(nb); gruppo.push(nb); }
+          if (dentro[nb] && !gia.has(nb)) { gia.add(nb); pila.push(nb); gruppo.push(nb); }
         }
       }
       if (!migliore || gruppo.length > migliore.length) migliore = gruppo;
