@@ -1016,7 +1016,7 @@
   // Se le due si scollano l'app si blocca dando la colpa alla meta' sbagliata,
   // quindi il montaggio del file unico (test/build-artifact.js) le confronta e
   // si rifiuta di partire se non combaciano.
-  const TAGLIA_PRO_VERSIONE_ATTESA = 'zone-somma-36';
+  const TAGLIA_PRO_VERSIONE_ATTESA = 'due-tagli-37';
 
   // Le versioni di questo progetto finiscono con un numero che cresce
   // ("...-27", "...-29"): basta quello per sapere QUALE delle due meta' e'
@@ -1731,6 +1731,24 @@
   // Piano medio del BORDO della selezione: i vertici che stanno sulla linea
   // fra i triangoli scelti e quelli lasciati fuori. E' il piano su cui i due
   // pezzi si separeranno.
+  // La selezione e' fatta di CORPI INTERI del pezzo? (nessun triangolo scelto
+  // confina con un triangolo non scelto, e resta fuori qualcos'altro). E' il
+  // caso dell'occhio staccato: non ha bordo, quindi non si puo' tagliare, ma
+  // si puo' portare via com'e'.
+  function corpiInteriNellaSelezione(part, sel) {
+    if (!sel || sel.size === 0) return false;
+    const nTris = part.indices.length / 3;
+    if (sel.size >= nTris) return false;   // e' tutto il pezzo: non resta niente
+    const topo = ensurePartTopology(part);
+    let confina = false;
+    sel.forEach((f) => {
+      if (confina) return;
+      const adj = topo.adjacency[f];
+      for (let i = 0; i < adj.length; i++) if (!sel.has(adj[i])) { confina = true; return; }
+    });
+    return !confina;
+  }
+
   function pianoDelBordo(part, sel) {
     const topo = ensurePartTopology(part);
     const bordo = new Set();
@@ -1848,7 +1866,37 @@
       return;
     }
     const piano = pianoDelBordo(part, cutSelection.faces);
-    if (!piano) { alert('Non riesco a ricavare un piano dal bordo della selezione.'); return; }
+    if (!piano) {
+      // NIENTE BORDO = LA ZONA E' GIA' UN CORPO A SE'.
+      //
+      // Segnalato dall'uso: "ho tagliato una parte preselezionata e dopo ho
+      // fatto una selezione manuale su un'altra parte, ma non mi fa procedere
+      // al taglio". Ecco cos'era: nei modelli fatti dall'IA occhi, sopracciglia
+      // e bottoni non sono saldati alla faccia, sono SOLIDI STACCATI appoggiati
+      // sopra. Passandoci il pennello si prende il corpo tutto intero, e una
+      // selezione che copre un corpo intero non ha nessun bordo: il piano non
+      // si puo' ricavare e il taglio si fermava li', con un messaggio che non
+      // diceva ne' perche' ne' cosa fare.
+      //
+      // Ma se non ha bordo vuol dire che quel pezzo E' GIA' staccato: non c'e'
+      // niente da segare, basta portarlo via. Che e' esattamente quello che si
+      // voleva.
+      const interi = corpiInteriNellaSelezione(part, cutSelection.faces);
+      if (interi) {
+        const vai = confirm(
+          'Questa zona e\' gia\' un pezzo a se\': e\' un solido staccato appoggiato sul '
+          + 'modello (occhi, sopracciglia e bottoni nei modelli fatti dall\'IA sono quasi '
+          + 'sempre cosi\'), quindi non c\'e\' niente da tagliare.\n\n'
+          + 'Vuoi che te lo stacchi come parte a se\', pronta da stampare in un altro colore?');
+        if (vai) scorporaSelezione();
+        return;
+      }
+      alert('Non riesco a ricavare un piano dal bordo della selezione.\n\n'
+        + 'Di solito succede quando la selezione tocca il bordo del pezzo o e\' fatta di '
+        + 'tanti frammenti sparsi: allarga la zona di qualche triangolo, oppure usa il '
+        + 'Lazo per disegnarne il contorno.');
+      return;
+    }
     // La selezione "un clic = tutta la zona" su superfici morbide (senza una
     // piega netta vicino al punto toccato) puo' allargarsi molto oltre
     // l'intenzione, anche col cursore Estensione al minimo: il risultato e'
@@ -2060,6 +2108,7 @@
       // chiesto: col nocciolo non c'e' nessun perno da cercare sul pezzo, e
       // chiamarlo "(perno)" mandava a cercare uno spinotto che non esiste.
       const fattoNocciolo = (out.log || []).some((l) => /Taglio A NOCCIOLO/.test(l));
+      const noccioloChiesto = /^nocciolo/.test(el.incastroModo ? el.incastroModo.value : '');
       const senzaAggancio = (out.log || []).some((l) => /Nessun aggancio|niente perno \(|niente perno$/.test(l));
       const nomeA = fattoNocciolo ? '(nocciolo)' : (conn && !senzaAggancio ? '(perno)' : '(A)');
       const nomeB = fattoNocciolo ? '(sede)' : (conn && !senzaAggancio ? '(foro)' : '(B)');
@@ -2079,6 +2128,22 @@
               'Ho ripiegato sul taglio col PIANO, che taglia dritto e quindi ignora ' +
               'la forma della zona che avevi scelto. Se il risultato non va bene, ' +
               'annulla con "Annulla" e ritocca la selezione.');
+      } else if (noccioloChiesto && !fattoNocciolo) {
+        // IL NOCCIOLO CHIESTO E NON RIUSCITO VA DETTO.
+        // Segnalato dall'uso: "ho selezionato un occhio e tagliato col
+        // nocciolo ed e' andato bene; poi ho fatto lo stesso con l'altro
+        // occhio ma ha fatto un semplice taglio normale". Il taglio in effetti
+        // ripiega da solo, e il motivo lo scrive nel resoconto - ma il
+        // messaggio a schermo diceva lo stesso "Taglio piatto riuscito", e
+        // cosi' sembrava che il menu non venisse nemmeno letto.
+        const spiega = (out.log || []).filter((l) => /nocciolo piatto non utilizzabile|Il nocciolo a faccia piatta non e|Nocciolo non riuscito/.test(l));
+        if (!silenzioso) {
+          alert('Il taglio e\' riuscito, ma NON a nocciolo: e\' venuto un taglio normale.\n\n'
+            + (spiega.length ? 'Motivo: ' + spiega.join('\n') + '\n\n' : '')
+            + 'Guarda il resoconto del pezzo per le righe di diagnostica. '
+            + 'Di solito si rimedia allargando un po\' la selezione, oppure passando '
+            + 'da "Ripara e solidifica" se il pezzo viene da un taglio precedente.');
+        }
       } else {
         if (!silenzioso) alert('Taglio piatto riuscito: le due facce che si toccano sono piane e combaciano.' +
               (out.connettore ? `\n\nConnettore: lato ${out.connettore.lato.toFixed(1)} mm, gioco ${out.connettore.gioco.toFixed(2)} mm.` : ''));
@@ -4607,7 +4672,11 @@
     });
   }
 
-  el.cutCreateBtn.addEventListener('click', () => {
+  // Stacca la selezione come parte a se'. E' quello che fa il pulsante "Crea
+  // parte", ed e' anche l'unica cosa sensata quando la zona scelta e' gia' un
+  // corpo staccato: li' non c'e' niente da segare, basta portarlo via.
+  // nome: come chiamare il pezzo nuovo (se manca, "ritaglio" come sempre).
+  function scorporaSelezione(nome) {
     if (!cutSelection || cutSelection.faces.size === 0 || !currentResult) return;
     const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
     if (!part) return;
@@ -4648,7 +4717,7 @@
         const existing = currentResult.parts.filter((p) => /^ritaglio/.test(p.name)).length;
         currentResult.parts.push({
           id: 'part_cut_' + Date.now(),
-          name: existing === 0 ? 'ritaglio' : `ritaglio (${existing + 1})`,
+          name: nome || (existing === 0 ? 'ritaglio' : `ritaglio (${existing + 1})`),
           color: part.color.map((c) => Math.min(1, c * 0.6 + 0.35)),
           sourceTriangleCount: selectedFaces.length,
           positions: repairedSel.positions,
@@ -4669,7 +4738,8 @@
         setLoading(false);
       }
     }, 30);
-  });
+  }
+  el.cutCreateBtn.addEventListener('click', () => scorporaSelezione());
 
   // tap sul canvas (distinto dal trascinamento per ruotare)
   let tapStart = null;
@@ -4824,7 +4894,7 @@
   // il volume serve a controllare nei test che tagliando non SPARISCA
   // materiale: e' successo davvero, la sede scavava un pezzo che al pezzo
   // staccato non corrispondeva e quella roba non finiva da nessuna parte
-  window.__partsInfo = () => currentResult ? currentResult.parts.map((p) => ({ name: p.name, tris: p.indices.length / 3, wt: !!p.watertight, vol: p.stats ? p.stats.volume : null, log: p.log })) : null;
+  window.__partsInfo = () => currentResult ? currentResult.parts.map((p) => ({ id: p.id, name: p.name, tris: p.indices.length / 3, wt: !!p.watertight, vol: p.stats ? p.stats.volume : null, log: p.log })) : null;
   window.__partsBBox = () => currentResult ? currentResult.parts.map((p) => ({ name: p.name, bboxMin: p.stats.bboxMin, bboxMax: p.stats.bboxMax, vol: p.stats.volume })) : null;
   window.__sceneInfo = () => {
     const out = [];
@@ -5004,6 +5074,35 @@
     refreshCutHighlight();
     return scelta.faces.size;
   };
+  // Un CORPO INTERO della parte: nei modelli fatti dall'IA occhi, sopracciglia
+  // e bottoni sono solidi staccati appoggiati sulla faccia, e prenderne uno
+  // tutto col pennello e' la cosa piu' naturale del mondo. Serve a provare che
+  // da li' si riesce comunque ad andare avanti.
+  window.__selCorpo = (quale) => {
+    if (!currentResult) return 0;
+    const part = currentResult.parts[0];
+    const topo = ensurePartTopology(part);
+    const nT = part.indices.length / 3;
+    const visti = new Uint8Array(nT);
+    const corpi = [];
+    for (let f = 0; f < nT; f++) {
+      if (visti[f]) continue;
+      const c = new Set([f]); visti[f] = 1;
+      const st = [f];
+      while (st.length) {
+        const g = st.pop();
+        for (const nb of topo.adjacency[g]) if (!visti[nb]) { visti[nb] = 1; c.add(nb); st.push(nb); }
+      }
+      corpi.push(c);
+    }
+    corpi.sort((a, b) => a.size - b.size);
+    const scelto = corpi[Math.min(quale || 0, corpi.length - 1)];
+    if (!scelto) return 0;
+    cutSelection = { partId: part.id, faces: scelto };
+    refreshCutHighlight();
+    return scelto.size;
+  };
+
   // Come __smartDaPunto, ma la selezione la APPLICA davvero: serve a provare
   // nei test il giro che fa l'utente vero (clic magico e poi taglio), che con
   // la sola sonda non si poteva riprodurre.

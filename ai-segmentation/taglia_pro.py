@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "zone-somma-36"
+VERSIONE = "due-tagli-37"
 
 
 # ---------------------------------------------------------------------------
@@ -242,6 +242,24 @@ def _manifold_solido(V, F, log=None, etichetta="modello"):
         M.update_faces(M.unique_faces())
         M.remove_unreferenced_vertices()
         return M
+
+    # PRIMA DI TUTTO: il modello COSI' COM'E' ARRIVATO.
+    #
+    # Sembra un dettaglio e invece era il difetto del secondo taglio a
+    # nocciolo. Il pezzo che esce da un taglio ha, dove la sede tocca il
+    # nocciolo, dei vertici NELLO STESSO IDENTICO PUNTO ma appartenenti a due
+    # superfici diverse: e' normale, ed e' un solido perfettamente valido.
+    # `process=True` di trimesh li SALDA insieme, e saldandoli attacca fra
+    # loro superfici che si sfioravano soltanto: nascono spigoli divisi da
+    # quattro facce, e il modello diventa NotManifold. Misurato sul pezzo
+    # uscito dal primo taglio: arriva NoError, dopo la "pulizia" NotManifold
+    # (11.268 triangoli, 192 vertici doppi saldati), e da li' non lo
+    # recuperava piu' nessuno dei gradini sotto - il nocciolo veniva rifiutato
+    # e usciva il taglio normale. Cioe' la riparazione rompeva un modello che
+    # era gia' buono, e lo faceva solo dal SECONDO taglio in poi.
+    m = _manifold(np.asarray(V, dtype=np.float64), np.asarray(F, dtype=np.int64))
+    if m.status().name == "NoError":
+        return m, None
 
     M = ripulisci(trimesh.Trimesh(vertices=np.asarray(V, dtype=np.float64),
                                   faces=np.asarray(F, dtype=np.int64), process=True))
