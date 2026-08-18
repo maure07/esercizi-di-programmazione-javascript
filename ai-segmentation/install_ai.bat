@@ -10,16 +10,30 @@ REM  La Riparazione PRO e le Booleane PRO (install_pro.bat) funzionano
 REM  benissimo anche senza tutto questo.
 REM ================================================================
 cd /d "%~dp0"
-call venv\Scripts\activate
+
+REM Si chiama direttamente il python della venv, mai "pip" da solo: pip.exe
+REM si porta scritto dentro dove sta python, e se quella cartella e' arrivata
+REM da un altro PC si ferma con "Fatal error in launcher". Vedi il commento
+REM lungo in install_base.bat.
+set "VPY=%~dp0venv\Scripts\python.exe"
+if not exist "%VPY%" (
+  echo Manca l'ambiente Python: esegui prima install_base.bat
+  pause
+  exit /b 1
+)
+"%VPY%" -c "pass" >nul 2>&1
 if errorlevel 1 (
-  echo Esegui prima install_base.bat
+  echo.
+  echo La cartella "venv" non e' utilizzabile su questo computer
+  echo ^(di solito perche' e' stata copiata da un altro PC^).
+  echo Esegui install_base.bat: se ne accorge da solo e la rifa'.
   pause
   exit /b 1
 )
 
 echo.
 echo === La tua versione di Python ===
-python -c "import sys, platform; print(sys.version); print('Python', platform.python_version())"
+"%VPY%" -c "import sys, platform; print(sys.version); print('Python', platform.python_version())"
 echo.
 
 REM ---------------------------------------------------------------
@@ -32,9 +46,9 @@ set TORCH_OK=0
 for %%C in (cu128 cu126 cu124 cu121) do (
   if !TORCH_OK!==0 (
     echo === Provo PyTorch con %%C ===
-    pip install torch torchvision --index-url https://download.pytorch.org/whl/%%C
+    "%VPY%" -m pip install torch torchvision --index-url https://download.pytorch.org/whl/%%C
     REM la prova vera e' che si importi davvero
-    python -c "import torch" 2>nul && (
+    "%VPY%" -c "import torch" 2>nul && (
       set TORCH_OK=1
       echo.
       echo   ^>^>^> PyTorch installato con %%C
@@ -64,7 +78,7 @@ if !TORCH_OK!==0 (
 
 echo.
 echo === Installo SAM, il renderer e le utility ===
-pip install segment-anything pyrender pillow scikit-learn fast-simplification opencv-python
+"%VPY%" -m pip install segment-anything pyrender pillow scikit-learn fast-simplification opencv-python
 
 echo.
 echo === Scarico il modello SAM (sam_vit_b ~ 375 MB) ===
@@ -83,7 +97,7 @@ if errorlevel 1 (
 
 echo.
 echo === Verifica finale ===
-python -c "import torch; print('PyTorch', torch.__version__); print('CUDA disponibile:', torch.cuda.is_available()); print('GPU:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'nessuna')"
+"%VPY%" -c "import torch; print('PyTorch', torch.__version__); print('CUDA disponibile:', torch.cuda.is_available()); print('GPU:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'nessuna')"
 echo.
 echo ============================================================
 echo  Se sopra dice "CUDA disponibile: True", riavvia avvia.bat:

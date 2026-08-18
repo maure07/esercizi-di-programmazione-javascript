@@ -17,8 +17,11 @@ collega all'app "Correggi & Segmenta". Nessun dato esce dal computer.
 
 ## Installazione (una volta sola)
 
-1. Installa **Python 3.11** da <https://www.python.org/downloads/>
+1. Installa **Python 3.12** da <https://www.python.org/downloads/>
    → durante l'installazione spunta **"Add Python to PATH"**.
+   *(non l'ultima uscita: i motori professionali — pymeshlab, PyTorch —
+   escono sempre qualche mese dopo, e su un Python appena uscito
+   l'installazione si pianta a metà.)*
 2. Doppio clic su **`install_base.bat`** → installa le librerie di base.
    *(bastano ~1 minuto e ~100 MB)*
 3. Doppio clic su **`install_pro.bat`** → riparazione professionale e booleane
@@ -48,6 +51,26 @@ collega all'app "Correggi & Segmenta". Nessun dato esce dal computer.
 3. Scegli *Taglio dritto*, posiziona il piano rosso e premi
    **Taglio PRO + connettore**: ottieni due pezzi già incastrabili
 4. **4·Stampa** → esporta gli STL
+
+## Se cambi computer (o formatti)
+
+**Copia tutta la cartella TRANNE `venv`.** Quella non si può spostare: dentro
+ci sono scritti i percorsi assoluti del PC su cui è stata creata, e basta che
+cambi il nome utente di Windows perché smetta di funzionare con un errore che
+non spiega niente:
+
+```
+Fatal error in launcher: Unable to create process using
+'"C:\Users\vecchio\...\venv\Scripts\python.exe" ...'
+```
+
+Sul computer nuovo: installa Python, poi `install_base.bat` e `install_pro.bat`
+(e `install_ai.bat` se usi l'AI). `install_base.bat` se ne accorge da solo se
+trova una `venv` arrivata da un'altra macchina: la butta e la rifà.
+
+Quello che **vale la pena portarsi dietro** è invece la cartella `models\`
+(il file del motore AI, ~375 MB): quella è buona ovunque e risparmia un
+download lungo.
 
 ## Se qualcosa non va
 - Il pulsante dice "companion non raggiungibile" → controlla che `avvia.bat` sia
