@@ -12,7 +12,7 @@ if not exist "%VPY%" (
   pause
   exit /b 1
 )
-"%VPY%" -c "pass" >nul 2>&1
+"%VPY%" -m pip --version >nul 2>&1
 if errorlevel 1 (
   echo.
   echo La cartella "venv" non e' utilizzabile su questo computer

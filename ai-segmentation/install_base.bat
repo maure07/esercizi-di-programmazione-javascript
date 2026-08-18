@@ -23,10 +23,15 @@ REM della venv. Se non parte, la cartella si butta e si rifa'. Non si perde
 REM niente di tuo: dentro ci sono solo librerie da riscaricare. I tuoi
 REM modelli e il file del motore AI (cartella "models") stanno fuori e non
 REM vengono toccati.
+REM La prova si fa con "python -m pip", non solo avviando python: il pezzo che
+REM si rompe per primo e' proprio pip. Il python della venv e' una copia vera
+REM dell'eseguibile e spesso parte lo stesso; pip.exe invece e' un lanciatore
+REM che si porta scritto dentro il percorso del python, e quello non torna piu'.
 if exist "venv\Scripts\python.exe" (
-  "venv\Scripts\python.exe" -c "pass" >nul 2>&1
+  "venv\Scripts\python.exe" -m pip --version >nul 2>&1
   if errorlevel 1 (
-    echo    La cartella "venv" arriva da un altro computer: non e' utilizzabile.
+    echo    La cartella "venv" non e' utilizzabile su questo computer
+    echo    ^(succede quando arriva da un altro PC, o se e' cambiato il nome utente^).
     echo    La butto e la rifaccio ^(ci vuole qualche minuto^).
     rmdir /s /q venv
   ) else (
