@@ -3847,7 +3847,13 @@
       || currentResult.parts.find((p) => p.included !== false)
       || currentResult.parts[0];
     if (!part) return;
-    const quante = parseInt(el.zoneQuante.value, 10) || 18;
+    // "Quanto dividere": 1 = pochi pezzi grossi, 10 = tanti pezzi piccoli.
+    // Non e' piu' un numero di zone da rispettare (vedi il commento nel
+    // pannello): decide sotto quale forza un solco viene considerato una piega
+    // e non un confine. Il numero di zone resta solo come tetto.
+    const quanto = Math.max(1, Math.min(10, parseInt(el.zoneQuante.value, 10) || 6));
+    const fondiSottoFrazione = ((10 - quanto) / 9) * 0.7;
+    const quante = 2 + quanto * 2;
     setLoading(true, 'Cerco le zone…');
     await new Promise((r) => setTimeout(r, 30));
     try {
@@ -3862,11 +3868,12 @@
       // quelle facce con zone nuove. Su una massa di capelli ogni ciocca e' un
       // rilievo morbido, e il risultato era la testa tagliata a quindici
       // strisce verticali: un arcobaleno, non una scelta di pezzi.
-      const r = Segmentation.segmentByGeometry(part.positions, part.indices, quante, {});
+      const r = Segmentation.segmentByGeometry(part.positions, part.indices, quante,
+        { fondiSottoFrazione });
       const gruppi = zoneDaEtichette(part, r.labelIds);
       if (!gruppi.length) {
         alert('Non sono riuscito a distinguere delle zone su questo pezzo.\n\n'
-          + 'Prova ad alzare "Quante zone", oppure seleziona a mano col pennello.');
+          + 'Prova a spostare "Quanto dividere" verso destra, oppure seleziona a mano col pennello.');
         return;
       }
       zoneProposte = { partId: part.id, gruppi };

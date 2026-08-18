@@ -672,8 +672,28 @@
       pairs.sort((a, b) => strength(a) - strength(b));
       const colors = computeColors();
       let regionCount = computeSizes().size;
+
+      // QUANTO E' DEBOLE UN CONFINE, non quante zone sono rimaste.
+      //
+      // Segnalato dall'uso: la divisione trova gli occhi ma spacca i capelli in
+      // sette o otto zone, e i capelli sono un blocco solo. Il motivo sta qui:
+      // prima si smetteva di fondere appena il conto delle regioni scendeva al
+      // numero chiesto, e chi arrivava a quel punto sopravviveva - anche se era
+      // il solco fra una ciocca e l'altra, che di fianco all'attaccatura dei
+      // capelli sulla fronte non e' un confine, e' una piega.
+      //
+      // Adesso si continua a fondere finche' il confine piu' debole rimasto sta
+      // sotto una soglia, e la soglia e' una FRAZIONE del confine piu' forte
+      // del modello: cosi' non dipende da quanto e' grande il pezzo ne' da
+      // quanti triangoli ha. I confini sono gia' ordinati dal piu' debole, e
+      // quindi quelli sotto soglia sono i primi della fila.
+      const fraz = options.fondiSottoFrazione === undefined ? 0 : options.fondiSottoFrazione;
+      const forzaMax = pairs.length ? strength(pairs[pairs.length - 1]) : 0;
+      const soglia = fraz * forzaMax;
       for (const p of pairs) {
-        if (regionCount <= targetParts) break;
+        // il numero di zone resta come TETTO (se dopo la soglia sono ancora
+        // troppe si va avanti), non e' piu' l'obiettivo
+        if (!(strength(p) < soglia) && regionCount <= targetParts) break;
         const r1 = find(p.r1), r2 = find(p.r2);
         if (r1 === r2) continue;
         if (!colorClose(colors, r1, r2)) continue; // MAI fondere colori diversi (occhi, sopracciglia restano)
