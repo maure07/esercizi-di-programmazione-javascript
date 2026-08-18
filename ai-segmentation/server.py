@@ -305,6 +305,44 @@ def connettore():
     })
 
 
+@app.route("/dettagli", methods=["POST", "OPTIONS"])
+def dettagli():
+    """SOLO i dettagli in rilievo: occhi, sopracciglia, labbra, bottoni.
+
+    Serve alla preselezione dell'app, che usa i due motori insieme: i blocchi
+    grossi (capelli, braccia, gambe, scarpe) li trova il browser con le pieghe,
+    i dettagli morbidi li trova questo - sono rilievi bassi, senza spigoli, e
+    per pieghe non si vedono.
+
+    Perche' non si usa /segment: quello fa PRIMA la sua divisione geometrica e
+    poi ci mette sopra i dettagli, restituendo tutto mescolato. La sua
+    divisione, su una massa di capelli, tratta ogni ciocca come un rilievo e
+    tira fuori la testa a strisce - il difetto per cui era stata tolta
+    dall'app. Qui i suoi blocchi non si toccano proprio: si chiedono solo i
+    dettagli, e l'app se li sovrappone ai propri.
+
+    Risposta: "gruppi", una lista di liste di indici di triangolo.
+    """
+    if request.method == "OPTIONS":
+        return ("", 204)
+    if not RILIEVI_AVAILABLE:
+        return jsonify({"error": "il rilevamento dei dettagli non e' installato"}), 501
+    data = request.get_json(force=True)
+    vertices, faces = _leggi_mesh(data)
+    try:
+        labels, info = rilievi.segmenta_con_rilievi(
+            vertices, faces,
+            target_parts=int(data.get("max_dettagli", 10)) + 1,
+            sensibilita=float(data.get("sensibilita", 5)))
+    except Exception as e:
+        print("dettagli falliti:", e, file=sys.stderr)
+        return jsonify({"error": str(e)}), 500
+    lab = np.asarray(labels, dtype=int)
+    gruppi = [np.flatnonzero(lab == k).tolist() for k in range(1, int(lab.max()) + 1)]
+    gruppi = [g for g in gruppi if g]
+    return jsonify({"gruppi": gruppi, "info": {"trovati": len(gruppi)}})
+
+
 @app.route("/segment", methods=["POST", "OPTIONS"])
 def segment():
     if request.method == "OPTIONS":

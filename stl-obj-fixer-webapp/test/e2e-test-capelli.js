@@ -65,11 +65,29 @@ const path = require('path');
     esiti.push({ tacca, misure });
     console.log(`"Quanto dividere" = ${tacca.toString().padStart(2)} -> ${misure.length} zone: `
       + misure.join(', ') + ' triangoli');
+    if (tacca === 6) {
+      const el = await p.evaluate(() => document.getElementById('zoneElenco').innerText);
+      esiti.dettagli = (el.match(/dettaglio/g) || []).length;
+      esiti.avviso = /avvia\.bat|install_pro\.bat|non sono riuscito a cercare/i.test(el);
+      console.log('   dettagli con targhetta:', esiti.dettagli,
+        '| riga che spiega cosa manca:', esiti.avviso);
+    }
     await p.click('#zoneViaBtn');
     await p.waitForTimeout(200);
   }
 
   await b.close();
+
+  // 3) I DETTAGLI. Col companion acceso devono comparire zone segnate
+  //    "dettaglio" (occhi, sopracciglia, bocca); col companion spento no, ma
+  //    allora ci dev'essere la riga che dice cosa manca. Quello che NON deve
+  //    mai succedere e' un elenco corto senza spiegazione: uno resta li' a
+  //    chiedersi perche' gli occhi non ci sono.
+  const dettagliOk = esiti.dettagli > 0 || esiti.avviso;
+  console.log('');
+  console.log(esiti.dettagli > 0
+    ? `dettagli trovati dal companion: ${esiti.dettagli}`
+    : 'companion spento: al posto dei dettagli c\'e\' la spiegazione -> ' + esiti.avviso);
 
   // 1) i capelli non si spezzano. La testa con le ciocche e' di gran lunga il
   //    corpo piu' grosso: se restasse spezzata si vedrebbero piu' zone grandi
@@ -86,8 +104,9 @@ const path = require('path');
   console.log('');
   console.log('i capelli restano un pezzo solo:', capelliInteri);
   console.log('gli occhi restano zone a parte:', occhiSalvi);
+  console.log('i dettagli ci sono, o si sa perche\' no:', dettagliOk);
   if (errs.length) console.log('errori JS:', errs);
-  const ok = capelliInteri && occhiSalvi && errs.length === 0;
+  const ok = capelliInteri && occhiSalvi && dettagliOk && errs.length === 0;
   console.log(ok ? '\nRISULTATO: CAPELLI INTERI E OCCHI SEPARATI'
     : '\nRISULTATO: LA DIVISIONE SPEZZA QUELLO CHE NON DEVE');
   process.exitCode = ok ? 0 : 1;

@@ -3710,34 +3710,44 @@
       gruppi.push({ facce });
     });
     gruppi.sort((a, b) => b.facce.length - a.facce.length);
-    return gruppi.slice(0, 24).map((g, i) => {
-      // misure in millimetri veri: e' il dato su cui si decide se una zona
-      // vale la pena di essere stampata a parte
-      let mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
-      g.facce.forEach((t) => {
-        for (let k = 0; k < 3; k++) {
-          const vi = part.indices[t * 3 + k];
-          for (let a = 0; a < 3; a++) {
-            const v = part.positions[vi * 3 + a];
-            if (v < mn[a]) mn[a] = v;
-            if (v > mx[a]) mx[a] = v;
-          }
+    return gruppi.slice(0, 24).map((g, i) => faiZona(part, g.facce, i));
+  }
+
+  // Una zona pronta da mostrare, a partire dai suoi triangoli. La usano tutti e
+  // due i motori: i blocchi grossi che trova il browser e i dettagli che trova
+  // il companion.
+  // numero: quello che si legge nel nome. Non e' l'id, perche' i dettagli si
+  // contano per conto loro ("Dettaglio 1" e' il primo dettaglio, non la quarta
+  // zona) mentre l'id deve restare unico fra tutte le zone.
+  function faiZona(part, facce, id, dettaglio, numero) {
+    // misure in millimetri veri: e' il dato su cui si decide se una zona
+    // vale la pena di essere stampata a parte
+    let mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+    facce.forEach((t) => {
+      for (let k = 0; k < 3; k++) {
+        const vi = part.indices[t * 3 + k];
+        for (let a = 0; a < 3; a++) {
+          const v = part.positions[vi * 3 + a];
+          if (v < mn[a]) mn[a] = v;
+          if (v > mx[a]) mx[a] = v;
         }
-      });
-      const mis = [0, 1, 2].map((a) => (mx[a] - mn[a]) * currentScaleFactor);
-      return {
-        id: i,
-        facce: g.facce,
-        colore: coloreZona(i),
-        misureMm: mis,
-        nome: `Zona ${i + 1}`,
-        // I triangoli della zona in coordinate, pronti per il viewer. Si
-        // calcolano QUI, una volta sola: prima li rifaceva disegnaZone a ogni
-        // clic, per tutte le zone, e su un modello pesante e' la meta' del
-        // tempo che ci metteva la pagina a rispondere.
-        posizioni: faccePosizioni(part, g.facce),
-      };
+      }
     });
+    const mis = [0, 1, 2].map((a) => (mx[a] - mn[a]) * currentScaleFactor);
+    return {
+      id,
+      facce,
+      colore: coloreZona(id),
+      misureMm: mis,
+      nome: dettaglio ? `Dettaglio ${numero == null ? id + 1 : numero}`
+        : `Zona ${numero == null ? id + 1 : numero}`,
+      dettaglio: !!dettaglio,
+      // I triangoli della zona in coordinate, pronti per il viewer. Si
+      // calcolano QUI, una volta sola: prima li rifaceva disegnaZone a ogni
+      // clic, per tutte le zone, e su un modello pesante e' la meta' del
+      // tempo che ci metteva la pagina a rispondere.
+      posizioni: faccePosizioni(part, facce),
+    };
   }
 
   function disegnaZone() {
@@ -3778,10 +3788,21 @@
         `${fmt(cutSelection ? cutSelection.faces.size : 0, 0)} triangoli</div>`
       : '<div style="font-size:11.5px;color:var(--text-dim);padding:4px 8px">'
         + 'Clicca le zone che ti servono: si sommano.</div>';
-    el.zoneElenco.innerHTML = riepilogo + zoneProposte.gruppi.map((z) => {
+    // Se i dettagli non si sono potuti cercare va detto QUI, sotto l'elenco che
+    // uno sta guardando: e' li' che si accorge che mancano gli occhi.
+    const avviso = zoneProposte.avvisoDettagli
+      ? `<div style="font-size:11px;color:var(--warn,#e0a33a);padding:4px 8px;line-height:1.4">`
+        + zoneProposte.avvisoDettagli + '</div>'
+      : '';
+    el.zoneElenco.innerHTML = riepilogo + avviso + zoneProposte.gruppi.map((z) => {
       const c = z.colore.map((x) => Math.round(x * 255)).join(',');
       const mis = z.misureMm.map((x) => x.toFixed(0)).join('×');
       const presa = zoneScelte.has(z.id);
+      // i dettagli si segnano: sono le zone che uno vuole quasi sempre stampare
+      // in un altro colore, e devono saltare all'occhio fra i blocchi grossi
+      const targhetta = z.dettaglio
+        ? '<span style="font-size:9.5px;color:var(--accent);border:1px solid var(--accent-bordo);'
+          + 'border-radius:3px;padding:0 3px;white-space:nowrap">dettaglio</span>' : '';
       return `<div class="zona-riga" data-zona="${z.id}" style="display:flex;align-items:center;gap:8px;` +
         `padding:6px 8px;border-radius:4px;cursor:pointer;font-size:12px;` +
         `background:${presa ? 'var(--accent-soft)' : 'transparent'};` +
@@ -3789,6 +3810,7 @@
         `<span style="width:11px;flex-shrink:0;color:var(--accent);font-weight:700">${presa ? '✓' : ''}</span>` +
         `<span style="width:12px;height:12px;border-radius:2px;flex-shrink:0;background:rgb(${c})"></span>` +
         `<span style="flex:1;min-width:0;color:var(--text)">${z.nome}</span>` +
+        targhetta +
         `<span style="color:var(--text-dim);white-space:nowrap">${mis} mm · ${fmt(z.facce.length, 0)} tri</span>` +
         `</div>`;
     }).join('');
@@ -3862,12 +3884,11 @@
       // sui modelli veri trova braccia, gambe, scarpe, capelli, cioe' pezzi su
       // cui uno decide davvero.
       //
-      // Qui prima c'era anche una seconda strada, che chiedeva le zone al
-      // companion. Tolta: quella, dopo la forma, fa una passata in piu' che
-      // cerca i RILIEVI MORBIDI - nata per occhi e bottoni - e sovrascrive
-      // quelle facce con zone nuove. Su una massa di capelli ogni ciocca e' un
-      // rilievo morbido, e il risultato era la testa tagliata a quindici
-      // strisce verticali: un arcobaleno, non una scelta di pezzi.
+      // Al companion NON si chiede la sua divisione: quella, dopo la forma, fa
+      // una passata che cerca i rilievi morbidi e sovrascrive le facce delle
+      // parti gia' trovate. Su una massa di capelli ogni ciocca e' un rilievo
+      // morbido, e usciva la testa tagliata a quindici strisce verticali. Gli
+      // si chiedono SOLO i dettagli, qui sotto.
       const r = Segmentation.segmentByGeometry(part.positions, part.indices, quante,
         { fondiSottoFrazione });
       const gruppi = zoneDaEtichette(part, r.labelIds);
@@ -3876,7 +3897,14 @@
           + 'Prova a spostare "Quanto dividere" verso destra, oppure seleziona a mano col pennello.');
         return;
       }
-      zoneProposte = { partId: part.id, gruppi };
+      // I DETTAGLI, dall'altro motore: occhi, sopracciglia, labbra, bottoni.
+      // Sono rilievi bassi, senza spigoli: per pieghe non si vedono, e infatti
+      // il motore del browser non li trovava. Il companion sa cercarli, e qui
+      // gli si chiede solo quello.
+      setLoading(true, 'Cerco i dettagli (occhi, sopracciglia, bocca)…');
+      const dett = await chiediDettagli(part, gruppi);
+      zoneProposte = { partId: part.id, gruppi: gruppi.concat(dett.zone),
+                       avvisoDettagli: dett.avviso };
       zoneScelte.clear();
       disegnaZone();
       elencoZone();
@@ -3886,6 +3914,88 @@
     } finally {
       setLoading(false);
     }
+  }
+
+  // I DETTAGLI IN RILIEVO, chiesti al companion.
+  //
+  // I due motori lavorano insieme, ognuno per quello che sa fare: i blocchi
+  // grossi (capelli, braccia, gambe, scarpe) li trova il browser guardando le
+  // pieghe; occhi, sopracciglia, labbra e bottoni sono rilievi bassi e morbidi,
+  // senza spigoli, e per pieghe non si vedono - li trova il companion.
+  //
+  // Se il companion e' spento non si blocca niente: si vedono i blocchi e una
+  // riga che spiega cosa manca. Un elenco monco senza spiegazione fa perdere
+  // piu' tempo di un elenco corto.
+  async function chiediDettagli(part, blocchi) {
+    let health = null;
+    try {
+      const h = await fetch(AI_URL + '/health', { method: 'GET' });
+      health = await h.json();
+    } catch (e) {
+      return { zone: [], avviso: 'Per gli occhi, le sopracciglia e la bocca serve il '
+        + 'programma sul PC: apri la cartella "ai-segmentation" e fai doppio clic su '
+        + '"avvia.bat", poi ripremi "Proponi le zone".' };
+    }
+    if (!health || !health.dettagli_rilievo) {
+      return { zone: [], avviso: 'Il riconoscimento dei dettagli non e\' installato sul '
+        + 'companion: apri "ai-segmentation" e fai doppio clic su "install_pro.bat".' };
+    }
+    let gruppi = [];
+    try {
+      const resp = await fetch(AI_URL + '/dettagli', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(Object.assign(meshToPayload(part.positions, part.indices),
+          { max_dettagli: 10 })),
+      });
+      const out = await resp.json();
+      if (out.error) throw new Error(out.error);
+      gruppi = out.gruppi || [];
+    } catch (e) {
+      return { zone: [], avviso: 'Non sono riuscito a cercare i dettagli: '
+        + (e && e.message ? e.message : e) };
+    }
+    if (!gruppi.length) return { zone: [], avviso: null };
+
+    // UN TRIANGOLO STA IN UNA ZONA SOLA. Se un occhio restasse anche dentro il
+    // blocco della testa, prendendo la testa ti verrebbero dietro gli occhi, e
+    // sommare due zone non vorrebbe piu' dire niente. Quindi i triangoli
+    // finiti in un dettaglio si tolgono dai blocchi, e i blocchi toccati si
+    // rifanno.
+    // dove sta ogni triangolo: serve a sapere quale blocco un dettaglio andrebbe
+    // a bucare
+    const diChi = new Map();
+    blocchi.forEach((b, i) => b.facce.forEach((t) => diChi.set(t, i)));
+
+    const presi = new Set();
+    const zone = [];
+    let id = blocchi.length;
+    gruppi.forEach((g) => {
+      const facce = g.filter((t) => !presi.has(t));
+      if (facce.length < 12) return;   // sotto questa taglia e' rumore, non un occhio
+      // IL BLOCCO E' GIA' QUEL PEZZO? Se il dettaglio si porterebbe via piu' di
+      // un quarto del blocco in cui sta, quel blocco E' il dettaglio - un occhio
+      // gia' trovato come corpo a se'. Ritagliarcelo dentro non aggiunge niente
+      // e lascia in mano due mezzi occhi. Misurato sulla testa di prova: gli
+      // occhi (1.280 triangoli l'uno) venivano bucati da dettagli di 400 e
+      // rotti, e nell'elenco comparivano spezzati in due.
+      const conta = new Map();
+      facce.forEach((t) => {
+        const b = diChi.get(t);
+        if (b !== undefined) conta.set(b, (conta.get(b) || 0) + 1);
+      });
+      let quale = -1, quanti = 0;
+      conta.forEach((n, b) => { if (n > quanti) { quanti = n; quale = b; } });
+      if (quale >= 0 && quanti > 0.25 * blocchi[quale].facce.length) return;
+      facce.forEach((t) => presi.add(t));
+      zone.push(faiZona(part, facce, id++, true, zone.length + 1));
+    });
+    for (let i = 0; i < blocchi.length; i++) {
+      const b = blocchi[i];
+      if (!b.facce.some((t) => presi.has(t))) continue;
+      const rimaste = b.facce.filter((t) => !presi.has(t));
+      blocchi[i] = faiZona(part, rimaste, b.id, false, b.id + 1);
+    }
+    return { zone, avviso: null };
   }
 
   function viaLeZone() {
