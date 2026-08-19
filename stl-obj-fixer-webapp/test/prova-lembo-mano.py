@@ -22,12 +22,23 @@
 #     mano fa parte del corpo principale, quindi non basta nemmeno tenere il
 #     solo corpo che porta la selezione.
 #
-# LA STRADA CHE RESTA (non ancora fatta): il blocco dovrebbe fermarsi sulle
-# PIEGHE CONCAVE. La mano si attacca al pantalone attraverso un solco profondo;
-# lo stesso solco su cui si ferma "un clic = tutta la zona" nel browser. Se il
-# prisma venisse intersecato con la REGIONE di superficie delimitata dalle
-# pieghe attorno alla selezione, invece che col modello intero, le dita
-# resterebbero fuori.
+# COM'E' ANDATA A FINIRE (misurato, non supposto).
+# Non era il taglio: era la PENNELLATA. Rifacendo la selezione come la fa
+# davvero l'app - crescendo di vicino in vicino sulla superficie, non con una
+# palla nello spazio - si vede che il pennello gira dietro l'angolo e arriva
+# sulla MANO che sta di fianco all'anca: 4.073 triangoli di dita dipinti senza
+# che da li' si vedano. Il taglio poi fa il suo dovere: la pelle finita nel
+# pezzo senza essere stata dipinta e' 0 mm2.
+# Rimedio messo: il pennello non cresce sulle facce che ti girano le spalle,
+# come fa gia' il lazo. Le dita dipinte per sbaglio scendono da 4.073 a 1.606.
+# Le altre si vedono davvero, e per quelle non c'e' regola che tenga: si
+# guarda il giallo e si abbassa il raggio.
+#
+# PROVATO E SCARTATO, per non rifarlo:
+#   - fermare il pennello sulle PIEGHE concave (come "un clic = tutta la zona"):
+#     da 4.073 a 4.021. La mano si fonde nel pantalone troppo dolcemente;
+#   - stringere il cuscinetto del prisma sopra la pelle (era 5 centesimi di
+#     diagonale, 7,3 mm): non cambia un millimetro quadro.
 #
 # Si lancia da questa cartella:   python3 prova-lembo-mano.py
 import os

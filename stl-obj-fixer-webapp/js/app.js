@@ -4370,10 +4370,33 @@
   // Selezione a "disco geodetico": dal punto toccato cresce lungo la superficie
   // (via adiacenza) fino al raggio scelto. Trascinando si dipinge di continuo
   // esattamente dove passi. Molto piu' prevedibile del lazo.
+  // IL PENNELLO DIPINGE QUELLO CHE VEDI, non quello che ha intorno.
+  //
+  // Segnalato dall'uso tre volte: "taglia anche un pezzo di pantalone che non
+  // avevo selezionato". Riprodotto sul modello vero (le gambe di Goku) e
+  // guardato in faccia: il pezzo non porta via NIENTE che non fosse stato
+  // dipinto - la pelle mai dipinta finita nel pezzo e' 0 mm2. Era la
+  // PENNELLATA a essere piu' grande di quanto sembrasse: crescendo di vicino in
+  // vicino gira dietro l'angolo, e con un pennello da 16 mm sull'anca arriva
+  // sulla MANO che sta li' di fianco e ne dipinge le dita - 4.073 triangoli che
+  // da dove stai guardando non si vedono nemmeno.
+  //
+  // Quindi non si cresce sulle facce che ti girano le spalle. E' la stessa
+  // regola del lazo, che prende solo quello che si vede: chi dipinge ragiona
+  // cosi', e se serve l'altro lato si gira il modello e si continua. Misurato:
+  // le facce della mano dipinte per sbaglio scendono da 4.073 a 1.606.
   function paintDisk(part, seedFace, center, radius) {
     const topo = ensurePartTopology(part);
     const c = topo.centroids;
+    const nrm = topo.normals;
+    const occhio = viewer.getCameraPosition();
     const r2 = radius * radius;
+    const guarda = (f) => {
+      // la faccia guarda verso di te? (prodotto scalare fra la sua normale e la
+      // direzione che va dalla faccia all'occhio)
+      const vx = occhio[0] - c[f * 3], vy = occhio[1] - c[f * 3 + 1], vz = occhio[2] - c[f * 3 + 2];
+      return nrm[f * 3] * vx + nrm[f * 3 + 1] * vy + nrm[f * 3 + 2] * vz > 0;
+    };
     const sel = new Set([seedFace]);
     const stack = [seedFace];
     while (stack.length) {
@@ -4383,7 +4406,9 @@
         const nb = adj[i];
         if (sel.has(nb)) continue;
         const dx = c[nb * 3] - center[0], dy = c[nb * 3 + 1] - center[1], dz = c[nb * 3 + 2] - center[2];
-        if (dx * dx + dy * dy + dz * dz <= r2) { sel.add(nb); stack.push(nb); }
+        if (dx * dx + dy * dy + dz * dz > r2) continue;
+        if (!guarda(nb)) continue;
+        sel.add(nb); stack.push(nb);
       }
     }
     return sel;
