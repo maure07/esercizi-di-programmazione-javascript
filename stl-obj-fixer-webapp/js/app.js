@@ -1016,7 +1016,7 @@
   // Se le due si scollano l'app si blocca dando la colpa alla meta' sbagliata,
   // quindi il montaggio del file unico (test/build-artifact.js) le confronta e
   // si rifiuta di partire se non combaciano.
-  const TAGLIA_PRO_VERSIONE_ATTESA = 'due-tagli-37';
+  const TAGLIA_PRO_VERSIONE_ATTESA = 'perno-38';
 
   // Le versioni di questo progetto finiscono con un numero che cresce
   // ("...-27", "...-29"): basta quello per sapere QUALE delle due meta' e'
@@ -2109,6 +2109,8 @@
       // chiamarlo "(perno)" mandava a cercare uno spinotto che non esiste.
       const fattoNocciolo = (out.log || []).some((l) => /Taglio A NOCCIOLO/.test(l));
       const noccioloChiesto = /^nocciolo/.test(el.incastroModo ? el.incastroModo.value : '');
+      const pernoChiesto = conn && (el.incastroModo ? el.incastroModo.value : 'auto') !== 'niente'
+        && !noccioloChiesto && !fattoNocciolo;
       const senzaAggancio = (out.log || []).some((l) => /Nessun aggancio|niente perno \(|niente perno$/.test(l));
       const nomeA = fattoNocciolo ? '(nocciolo)' : (conn && !senzaAggancio ? '(perno)' : '(A)');
       const nomeB = fattoNocciolo ? '(sede)' : (conn && !senzaAggancio ? '(foro)' : '(B)');
@@ -2128,6 +2130,20 @@
               'Ho ripiegato sul taglio col PIANO, che taglia dritto e quindi ignora ' +
               'la forma della zona che avevi scelto. Se il risultato non va bene, ' +
               'annulla con "Annulla" e ritocca la selezione.');
+      } else if (pernoChiesto && !out.connettore) {
+        // IL PERNO CHIESTO E NON FATTO VA DETTO.
+        // Segnalato dall'uso: "avevo chiesto taglio foro piu' perno ma nulla".
+        // Il taglio riesce, i pezzi combaciano, e il perno non c'e': il motivo
+        // il motore lo scrive nel resoconto, ma a schermo usciva lo stesso
+        // "Taglio piatto riuscito" e sembrava che il menu non contasse niente.
+        const spiega = (out.log || []).filter((l) => /niente perno|Niente perno|Nessun perno|senza connettore/.test(l));
+        if (!silenzioso) {
+          alert('Il taglio e\' riuscito, ma NON ci ho messo perno e foro.\n\n'
+            + (spiega.length ? 'Motivo: ' + spiega.join('\n') + '\n\n' : '')
+            + 'I due pezzi combaciano lo stesso e si possono incollare. Se ti serve '
+            + 'l\'aggancio, prova "Perno e foro" dal pannello del pezzo: lo mette fra '
+            + 'due pezzi gia\' tagliati.');
+        }
       } else if (noccioloChiesto && !fattoNocciolo) {
         // IL NOCCIOLO CHIESTO E NON RIUSCITO VA DETTO.
         // Segnalato dall'uso: "ho selezionato un occhio e tagliato col

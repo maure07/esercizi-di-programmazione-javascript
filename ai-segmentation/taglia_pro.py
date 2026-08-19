@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "due-tagli-37"
+VERSIONE = "perno-38"
 
 
 # ---------------------------------------------------------------------------
@@ -2896,12 +2896,32 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
     log.append(f"Pezzo staccato spesso {spessore:.1f} mm: perno limitato a "
                f"lato {lato:.1f} mm, profondita' {profondita:.1f} mm")
 
-    A = _manifold(np.asarray(ma.vertices), np.asarray(ma.faces))
-    B = _manifold(np.asarray(mb.vertices), np.asarray(mb.faces))
-    if A.status().name != "NoError" or B.status().name != "NoError":
-        log.append("(pezzi non validi per la booleana: consegnati senza connettore)")
+    # QUI SI RIPARA PRIMA DI ARRENDERSI.
+    #
+    # Segnalato dall'uso: "avevo chiesto taglio foro piu' perno ma nulla" - il
+    # taglio riesce, i due pezzi combaciano, e di perno e foro nessuna traccia.
+    # Il motivo stava in questo controllo: si chiedeva ai due pezzi appena
+    # tagliati di essere gia' perfetti per le booleane, e se non lo erano il
+    # connettore veniva saltato in silenzio. Ma un pezzo appena uscito da un
+    # taglio ha spesso vertici coincidenti dove le due facce si toccano, ed e'
+    # normale - la stessa cosa che faceva fallire il secondo nocciolo. La
+    # scaletta di riparazione ce l'abbiamo gia' e ora prova per prima cosa il
+    # modello com'e': si usa quella.
+    A, _ripA = _manifold_solido(np.asarray(ma.vertices), np.asarray(ma.faces),
+                                log, "pezzo staccato")
+    B, _ripB = _manifold_solido(np.asarray(mb.vertices), np.asarray(mb.faces),
+                                log, "resto")
+    if A is None or B is None:
+        quale = "il pezzo staccato" if A is None else "il resto"
+        log.append(f"Niente perno e foro: {quale} non e' un solido chiuso e non "
+                   "ci sono riuscito nemmeno riparandolo. I due pezzi combaciano "
+                   "lo stesso e si uniscono con la colla; se ti serve l'aggancio, "
+                   "passa da \"Ripara e solidifica\" e rifai il taglio.")
         return {"a": _pack(np.asarray(ma.vertices), np.asarray(ma.faces)),
                 "b": _pack(np.asarray(mb.vertices), np.asarray(mb.faces)), "log": log}
+    if _ripA or _ripB:
+        log.append("Per fare perno e foro ho dovuto rimettere a posto i pezzi ("
+                   + "; ".join(x for x in (_ripA, _ripB) if x) + ").")
     incastro = 0.15 * profondita
     h = profondita + incastro
     c_perno = centro - nn * (profondita * 0.5) + nn * (incastro * 0.5)
