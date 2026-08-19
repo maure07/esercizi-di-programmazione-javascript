@@ -49,6 +49,18 @@ doppione. Non sono stati cancellati: i motori dietro ci sono ancora, e se un
 giorno tornasse un modo per richiamarli quei test tornano buoni cosi' come
 sono. Il perche' di ognuno e' scritto in `tolti/LEGGIMI.txt`.
 
+## `gambe_goku.stl`
+
+Le gambe di Goku, 195.000 triangoli, mandate dall'uso. Non e' un modello
+d'esempio qualsiasi: e' la **riproduzione di un difetto aperto**. Tagliando una
+macchia sull'anca, nel pezzo staccato finiscono le dita della mano che sta li'
+di fianco, saldate al blocco. `prova-lembo-mano.py` lo rifa' con un punto
+fisso e misura quanti millimetri quadri di pelle mai dipinta sono entrati nel
+pezzo (oggi: 80 su 1.274, fino a 7,3 mm dalla macchia).
+
+Serve `rtree` per la misura (`pip install rtree`); senza, la prova gira lo
+stesso ma salta il conto.
+
 ## Le prove in Python
 
 `prova-*.py` provano il motore del taglio senza passare dal browser: sono
