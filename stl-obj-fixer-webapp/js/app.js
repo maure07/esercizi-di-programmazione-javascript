@@ -4519,7 +4519,7 @@
   // percentuale del raggio della macchia stessa. Cosi' una selezione piccola
   // viene arrotondata poco e una grande molto, in proporzione, e il numero di
   // triangoli della mesh non c'entra piu' niente.
-  function arrotondaSelezione(part, sel, percento, tieniIsole) {
+  function arrotondaSelezione(part, sel, percento, tieniIsole, raggioMassimo) {
     const topo = ensurePartTopology(part);
     const nTris = part.indices.length / 3;
     const forza = Math.max(0, Math.min(60, percento == null ? 20 : percento)) / 100;
@@ -4530,7 +4530,20 @@
     if (!(areaSel > 0)) return smussaDentiniSelezione(part, sel, 3);
     const lato = Math.sqrt(areaSel / sel.size);        // lato tipico di un triangolo
     const raggioMacchia = Math.sqrt(areaSel / Math.PI); // raggio del cerchio di pari area
-    const raggio = forza * raggioMacchia;
+    // MAI PIU' GROSSO DEL PENNELLO.
+    //
+    // Segnalato dall'uso: "quando rilascio il mouse fa un arrotondamento
+    // automatico troppo aggressivo e mi rovina la selezione". Il motivo sta
+    // proprio in questa riga: il raggio dello smusso e' una percentuale della
+    // MACCHIA INTERA. Finche' si disegna la prima pennellata va bene; ma quando
+    // la macchia e' gia' grande e si torna a ritoccarne un pezzetto, quel
+    // ritocco viene smussato con il raggio della macchia grande - cioe' molto
+    // piu' largo del pennello con cui lo si e' appena fatto - e sparisce.
+    // Chi chiama puo' quindi mettere un tetto: piu' fine del pennello non si
+    // puo' lavorare comunque, quindi smussare piu' di cosi' non aggiusta
+    // niente, cancella e basta.
+    let raggio = forza * raggioMacchia;
+    if (raggioMassimo > 0) raggio = Math.min(raggio, raggioMassimo);
     // Ogni passata di sfumatura allarga il campo di poco piu' di mezzo
     // triangolo: per arrivare a un raggio di k triangoli ne servono circa
     // 1,35·k² (sarebbero 2,7·k² scrivendo su una copia, ma qui si scrive nello
@@ -4675,7 +4688,13 @@
       const part = currentResult.parts.find((p) => p.id === cutSelection.partId);
       if (part && cutSelection.faces.size > 8) {
         pulisciSelezione(part, cutSelection.faces);
-        arrotondaSelezione(part, cutSelection.faces, forzaArrotonda());
+        // il tetto: quanto e' grosso il pennello con cui hai appena dipinto.
+        // Smussare piu' fine del pennello non serve, smussare piu' GROSSO del
+        // pennello cancella quello che stavi ritoccando.
+        const raggioPennello = computeOverallMaxDimension(currentResult.parts)
+          * (currentBrushPct() / 100);
+        arrotondaSelezione(part, cutSelection.faces, forzaArrotonda(), false,
+          raggioPennello * 1.2);
         refreshCutHighlight();
       }
     }
