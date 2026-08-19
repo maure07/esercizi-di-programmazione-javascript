@@ -21,6 +21,32 @@ Regole, in ordine:
    modello sintetico si comporta diversamente da quello scolpito da un'IA — è già
    costato due volte (vedi il commento in `test/fai-testa-capelli.py`).
 
+## Occhi e sopracciglia: cosa si è già misurato
+
+Sul pezzo vero (una testa Funko da 313.000 triangoli, mandata dall'uso) —
+misurato, non supposto:
+
+- **le sopracciglia non sporgono.** Lo stacco rispetto alla fronte liscia è di
+  **0,05 mm**. Quello che si vede è il loro *contorno*. Un rilevatore di rilievi
+  non può trovarle: non c'è niente da trovare, e alzare la sensibilità non serve;
+- il "rumore di fondo" con cui il rilevatore decide vale **1,24 mm**, e lo
+  fissano i riccioli. Gli occhi arrivano a 1,8 volte, i riccioli a 2,1: la soglia
+  più bassa che si può chiedere oggi è 2,2. Ecco perché non trova quasi niente;
+- calcolare quella soglia **nel vicinato** invece che su tutto non basta: i
+  riccioli pendono davanti alla fronte, quindi anche una finestra piccola attorno
+  a un sopracciglio pesca dentro i capelli;
+- a prenderli è invece il motore delle **pieghe**, abbassandogli le soglie
+  (`creasePercentile` 0,35 · `minCreaseAngleDeg` 2 · `minRegionAreaFrac` 0,0002):
+  così vengono fuori tutti e due gli occhi, tutte e due le sopracciglia e il naso.
+  **Quello che resta da risolvere** è distinguerli dai riccioli, che con quelle
+  soglie escono anche loro e sono altrettanto piccoli e compatti. Provato a
+  sceglierli per compattezza: non basta, un ricciolo annodato è compatto quanto
+  un occhio.
+
+`test/guarda-modello.py` fa la foto di un modello colorandone i triangoli: è
+così che si è visto che i "dettagli" proposti erano riccioli. **Guardare, non
+solo misurare.**
+
 ## Chi legge
 
 Chi usa questo programma è un tecnico della stampa 3D, non un programmatore.
