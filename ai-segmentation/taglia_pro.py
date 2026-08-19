@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "perno-38"
+VERSIONE = "lembi-39"
 
 
 # ---------------------------------------------------------------------------
@@ -2592,6 +2592,30 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
                        f"pezzo {Am.status().name})")
         if Orig is not None and Am.status().name == "NoError":
             Ac = Am ^ Orig                    # solo la parte dentro al modello
+            # E SOLO I TOCCHI CHE POGGIANO SULLA PELLE CHE HAI SCELTO.
+            #
+            # Segnalato dall'uso su Goku: selezionata una macchia sull'anca, nel
+            # pezzo staccato ci finisce anche un lembo di pantalone che non era
+            # stato selezionato. Non e' un errore della selezione, e infatti
+            # ripulirla a mano non serviva: quel lembo nasce QUI. Il tappo del
+            # taglio e' una superficie tesa sul contorno; dove il pantalone fa
+            # una falda davanti alla gamba, il tappo passa oltre e l'intersezione
+            # col modello si prende anche quella falda, come corpo a parte.
+            # Il filtro esisteva gia' e faceva esattamente questo, ma era
+            # agganciato al solo taglio a nocciolo.
+            _quanti = 1
+            try:
+                _pelle_sel = V[F[sorted(sel)]].mean(axis=1)
+                if len(_pelle_sel) > 300:
+                    _pelle_sel = _pelle_sel[np.linspace(0, len(_pelle_sel) - 1, 300).astype(int)]
+                Ac, _quanti = _solo_con_la_pelle(Ac, _pelle_sel, 0.01 * diag)
+            except Exception as _e:
+                log.append(f"(scarto dei lembi non eseguito: {_e})")
+            if _quanti > 1:
+                log.append(f"Il taglio aveva prodotto {_quanti} pezzi staccati: tenuti "
+                           "solo quelli che poggiano sulla zona che hai scelto "
+                           "(gli altri, tipo un lembo di stoffa li' dietro, "
+                           "restano attaccati al modello).")
             Bc = Orig - Ac                    # il complemento esatto
             if Ac.status().name == "NoError" and Bc.status().name == "NoError":
                 va, fa_ = _to_arrays(Ac)
