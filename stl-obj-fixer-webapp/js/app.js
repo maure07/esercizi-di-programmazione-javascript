@@ -4385,30 +4385,81 @@
   // regola del lazo, che prende solo quello che si vede: chi dipinge ragiona
   // cosi', e se serve l'altro lato si gira il modello e si continua. Misurato:
   // le facce della mano dipinte per sbaglio scendono da 4.073 a 1.606.
+  // IL RAGGIO DEL PENNELLO SI MISURA SULLA PELLE, non in linea d'aria.
+  //
+  // Segnalato dall'uso tre volte: "taglia anche un pezzo di pantalone che non
+  // avevo selezionato". Riprodotto sulle gambe di Goku e guardato in faccia: il
+  // taglio non porta via niente di piu' (la pelle mai dipinta finita nel pezzo
+  // e' 0 mm2). Era la PENNELLATA a essere piu' grande di quanto sembrasse.
+  //
+  // Il pennello cresce di vicino in vicino, ma finora teneva dentro un triangolo
+  // se stava entro il raggio IN LINEA D'ARIA dal punto toccato. La mano di Goku
+  // passa a un paio di centimetri dal ginocchio: in linea d'aria e' vicinissima,
+  // camminando sulla pelle e' lontanissima (bisogna scendere lungo il braccio).
+  // Cosi' con un pennello da 16 mm sul ginocchio si dipingevano anche le dita -
+  // 3.132 triangoli che da dove stai guardando non vedi nemmeno.
+  //
+  // Adesso la distanza si accumula passo per passo sui triangoli, che e' quanto
+  // hai davvero "strisciato" col pennello. Misurato sul ginocchio destro:
+  // pennellata da 15.229 a 6.810 triangoli, e le facce della mano prese per
+  // sbaglio da 3.132 a 857.
+  //
+  // Si tengono fuori anche le facce che ti girano le spalle - come fa gia' il
+  // lazo, che prende solo quello che si vede.
   function paintDisk(part, seedFace, center, radius) {
     const topo = ensurePartTopology(part);
     const c = topo.centroids;
     const nrm = topo.normals;
     const occhio = viewer.getCameraPosition();
-    const r2 = radius * radius;
     const guarda = (f) => {
-      // la faccia guarda verso di te? (prodotto scalare fra la sua normale e la
-      // direzione che va dalla faccia all'occhio)
+      // la faccia guarda verso di te? Si lascia passare anche quella di taglio
+      // (il bordo della sagoma), se no dipingere attorno a una curva si
+      // impunterebbe proprio dove serve.
       const vx = occhio[0] - c[f * 3], vy = occhio[1] - c[f * 3 + 1], vz = occhio[2] - c[f * 3 + 2];
-      return nrm[f * 3] * vx + nrm[f * 3 + 1] * vy + nrm[f * 3 + 2] * vz > 0;
+      const l = Math.hypot(vx, vy, vz) || 1;
+      return (nrm[f * 3] * vx + nrm[f * 3 + 1] * vy + nrm[f * 3 + 2] * vz) / l > -0.25;
+    };
+    // Dijkstra sui triangoli: la distanza si accumula di vicino in vicino.
+    const dist = new Map([[seedFace, 0]]);
+    const coda = [[0, seedFace]];            // mucchietto binario, senza librerie
+    const su = () => {
+      let i = coda.length - 1;
+      while (i > 0) {
+        const p = (i - 1) >> 1;
+        if (coda[p][0] <= coda[i][0]) break;
+        [coda[p], coda[i]] = [coda[i], coda[p]]; i = p;
+      }
+    };
+    const giu = () => {
+      const ultimo = coda.pop();
+      if (!coda.length) return ultimo;
+      const primo = coda[0]; coda[0] = ultimo;
+      let i = 0;
+      for (;;) {
+        const a = 2 * i + 1, b = a + 1;
+        let m = i;
+        if (a < coda.length && coda[a][0] < coda[m][0]) m = a;
+        if (b < coda.length && coda[b][0] < coda[m][0]) m = b;
+        if (m === i) break;
+        [coda[m], coda[i]] = [coda[i], coda[m]]; i = m;
+      }
+      return primo;
     };
     const sel = new Set([seedFace]);
-    const stack = [seedFace];
-    while (stack.length) {
-      const f = stack.pop();
+    while (coda.length) {
+      const [d, f] = giu();
+      if (d > (dist.get(f) === undefined ? Infinity : dist.get(f))) continue;
       const adj = topo.adjacency[f];
       for (let i = 0; i < adj.length; i++) {
         const nb = adj[i];
-        if (sel.has(nb)) continue;
-        const dx = c[nb * 3] - center[0], dy = c[nb * 3 + 1] - center[1], dz = c[nb * 3 + 2] - center[2];
-        if (dx * dx + dy * dy + dz * dz > r2) continue;
+        const passo = Math.hypot(c[nb * 3] - c[f * 3], c[nb * 3 + 1] - c[f * 3 + 1],
+          c[nb * 3 + 2] - c[f * 3 + 2]);
+        const nd = d + passo;
+        if (nd > radius) continue;
+        if (nd >= (dist.get(nb) === undefined ? Infinity : dist.get(nb))) continue;
         if (!guarda(nb)) continue;
-        sel.add(nb); stack.push(nb);
+        dist.set(nb, nd); sel.add(nb);
+        coda.push([nd, nb]); su();
       }
     }
     return sel;
