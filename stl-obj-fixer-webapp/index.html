@@ -333,6 +333,48 @@
     border: 1px solid var(--accent2); border-radius: 4px; padding: 10px;
   }
   #connectorHint { font-size: 12px; color: var(--text-dim); line-height: 1.45; margin-bottom: 8px; }
+  /* SEZIONI A FISARMONICA.
+     Segnalato dall'uso: "se sto facendo un ritaglio manuale e devo abbassare il
+     raggio del pennello devo tornare sopra a tutto e perdo tempo". Il pannello
+     era una colonna sola, lunghissima: i comandi del pennello stavano in cima,
+     le zone in mezzo, il pulsante del taglio in fondo. Adesso ogni gruppo si
+     apre e si chiude, e aperto ne sta uno alla volta: quello che stai usando. */
+  .gruppo {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    margin-bottom: 8px;
+    background: var(--panel2);
+  }
+  .gruppo > summary {
+    cursor: pointer;
+    padding: 8px 10px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text);
+    list-style: none;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .gruppo > summary::-webkit-details-marker { display: none; }
+  .gruppo > summary::before { content: '▸'; color: var(--text-dim); font-weight: 400; }
+  .gruppo[open] > summary::before { content: '▾'; }
+  .gruppo[open] > summary { border-bottom: 1px solid var(--border); margin-bottom: 8px; }
+  .gruppo > *:not(summary) { margin-left: 10px; margin-right: 10px; }
+  .gruppo-nota { font-size: 11px; font-weight: 400; color: var(--text-dim); }
+
+  /* I DUE PULSANTI DEL TAGLIO NON SI CERCANO: restano incollati in fondo al
+     pannello mentre il resto scorre. Prima, con la selezione fatta, bisognava
+     scorrere fino in fondo per premerli. */
+  #barraTaglio {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    background: var(--panel);
+    border-top: 1px solid var(--border-forte);
+    padding: 8px 0 4px;
+    margin-top: 4px;
+  }
   .cut-slider-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
   .cut-slider-row label { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
   #cutRadius { flex: 1; }
@@ -943,7 +985,9 @@
   <div id="cutRow" style="display:none">
     <button id="cutToggleBtn">Ritaglio manuale e Taglio PRO</button>
   </div>
-  <div class="spiega" id="cutRowHint" style="display:none;font-size:11.5px;color:var(--text-dim);margin:6px 0 10px;line-height:1.4">
+  <details class="gruppo" id="cutRowHint" style="display:none">
+    <summary>Quale dei due tagli usare <span class="gruppo-nota">leggilo una volta</span></summary>
+  <div class="spiega" style="font-size:11.5px;color:var(--text-dim);margin:6px 0 10px;line-height:1.4">
     Ci sono <b>due tagli diversi</b>, non sceglierli a caso:
     <b>Taglia SULLA SELEZIONE</b> (in fondo) stacca esattamente la zona che hai dipinto o
     cerchiato, seguendone il contorno — è quello per mani, ciocche, cinture.
@@ -951,13 +995,9 @@
     Tutti e due mettono da soli l'aggancio fra i due pezzi (perno e foro, oppure
     blocchetto e sede: lo scegli tu qui sotto in <b>“Come si uniscono i pezzi”</b>).
   </div>
+  </details>
   <div id="cutControls" style="display:none">
     <div id="cutHint" class="spiega">Tocca il modello per selezionare (giallo). Raggio piccolo = tocchi precisi. Rimuovi cancella dove tocchi, Annulla: annulla l'ultimo tocco. <b>Per girare il modello senza perdere la selezione tieni premuto Shift e trascina col tasto sinistro</b>: non serve pi&ugrave; zoomare indietro e agganciare lo sfondo.</div>
-    <div class="cut-slider-row" id="brushRadiusRow">
-      <label for="cutRadius">Raggio</label>
-      <input type="range" id="cutRadius" min="0" max="1000" step="1" value="580" />
-      <span id="cutRadiusValue">8%</span>
-    </div>
     <div class="cut-actions" style="margin-bottom:8px">
       <button id="cutToolWandBtn" class="active">Pennello</button>
       <button id="cutToolLassoBtn">Lazo</button>
@@ -967,6 +1007,140 @@
       <button id="cutToolCopertaBtn" style="display:none">Coperta</button>
     </div>
 
+    <div id="selectExtras">
+    <details class="gruppo" id="grpSelezione" open>
+      <summary>Come selezioni <span class="gruppo-nota">raggio, gomma, arrotondamento</span></summary>
+    <div class="cut-slider-row" id="brushRadiusRow">
+      <label for="cutRadius">Raggio</label>
+      <input type="range" id="cutRadius" min="0" max="1000" step="1" value="580" />
+      <span id="cutRadiusValue">8%</span>
+    </div>
+    <div id="smartSelBox" style="margin:8px 0;padding:10px;border:1px solid var(--border);border-radius:4px">
+      <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text);cursor:pointer">
+        <input type="checkbox" id="smartSelChk" checked />
+        <b>Un clic = tutta la zona</b> (si ferma sulle pieghe)
+      </label>
+      <div class="cut-slider-row" style="margin-top:6px">
+        <label for="smartSelAngle">Estensione</label>
+        <input type="range" id="smartSelAngle" min="5" max="60" step="1" value="22" />
+        <span id="smartSelAngleValue">22°</span>
+      </div>
+      <div class="spiega" style="font-size:11px;color:var(--text-dim);line-height:1.4">
+        Clicca sulla scarpa, sul braccio o sull'occhio: la selezione si allarga da sola e si ferma
+        al bordo. Se prende <b>troppo poco</b> alza l'estensione, se prende <b>troppo</b> abbassala.
+        Trascinando invece dipingi a mano come prima.
+      </div>
+    </div>
+    <div class="cut-actions" style="margin-bottom:8px">
+      <button id="cutLassoCloseBtn" style="display:none">Chiudi lazo</button>
+    </div>
+    <div class="cut-actions" style="margin-bottom:8px">
+      <button id="cutModeAddBtn" class="active">Aggiungi</button>
+      <button id="cutModeEraseBtn">Rimuovi</button>
+      <button id="cutUndoBtn" disabled>Annulla</button>
+    </div>
+    <div class="cut-actions" style="margin-bottom:8px">
+      <button id="soloMacchiaBtn">Tieni solo la macchia principale</button>
+    </div>
+    <div class="cut-slider-row" id="arrotondaRow">
+      <label for="arrotondaForza">Arrotonda bordo</label>
+      <input type="range" id="arrotondaForza" min="0" max="30" step="2" value="20" />
+      <span id="arrotondaForzaValue">20%</span>
+    </div>
+    <div class="cut-actions" style="margin-bottom:8px">
+      <button id="arrotondaBtn">Arrotonda adesso</button>
+    </div>
+    <div class="spiega" style="font-size:11px;color:var(--text-dim);margin:-4px 0 8px 0;line-height:1.4">
+      Quando lasci il pennello (o chiudi il lazo) il bordo della selezione viene smussato da
+      solo di questa quantit&agrave;. &Egrave; una <b>percentuale della macchia</b>: il 20% su una
+      zona grande smussa tanto, sulla stessa zona in piccolo smussa poco, sempre in proporzione.
+      Alza se il contorno ti resta ancora <b>seghettato o bitorzoluto</b>, abbassa se ti mangia
+      i dettagli che vuoi tenere. <b>0%</b> lascia il contorno com&rsquo;&egrave; (toglie solo i
+      dentini da un triangolo); al <b>30%</b> il contorno diventa quasi un cerchio.
+      Oltre il 30% non cambia pi&ugrave; niente, per questo il cursore si ferma l&igrave;.
+      Il pulsante lo riapplica quando vuoi: premuto due volte arrotonda il doppio.
+    </div>
+    <div class="spiega" style="font-size:11px;color:var(--text-dim);margin:-4px 0 8px 0;line-height:1.4">
+      Se oltre alla zona che vuoi è rimasto attaccato un <b>pezzetto staccato</b> da un'altra
+      parte (un lembo di pantalone, una scaglia), questo lo butta via senza doverlo cancellare
+      a mano: tiene la macchia più grande e scarta tutte le altre.
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:12px;color:var(--text-dim)">
+      <input type="checkbox" id="lassoThroughChk" />
+      Lazo passante — opzionale (prende anche quello che sta DIETRO, coperto alla vista)
+    </label>
+    </details>
+
+    <details class="gruppo" id="grpAggancio">
+      <summary>Come si uniscono i pezzi <span class="gruppo-nota">nocciolo, perno, gioco</span></summary>
+    <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:12px;color:var(--text-dim)">
+      <span>Come si uniscono i pezzi:</span>
+      <select id="incastroModo" style="flex:1;min-width:120px">
+        <option value="auto" selected>decidi tu (consigliato)</option>
+        <option value="nocciolo">a NOCCIOLO — blocchetto + sede scavata (è QUESTO, tipo muso di Bing)</option>
+        <option value="nocciolo_ovale">a NOCCIOLO, contorno ovale — solo se vuoi la tasca semplicissima (prende il triplo di materiale)</option>
+        <option value="nocciolo_esatto">a NOCCIOLO, contorno esatto — solo se vuoi la massima fedeltà (bordo sporco)</option>
+        <option value="perno">a PERNO (spinotto quadro + foro)</option>
+        <option value="niente">niente aggancio (solo colla)</option>
+      </select>
+    </label>
+    <div class="spiega" style="font-size:11px;color:var(--text-dim);margin:-4px 0 8px 0;line-height:1.4">
+      <b>Nel dubbio scegli a NOCCIOLO</b>: la zona che hai selezionato diventa un blocchetto
+      spesso metà del modello, con una <b>faccia piatta</b> dietro su cui appoggiarlo al piatto
+      della stampante, e nell'altro pezzo si scava la sua sede. Entra in un verso solo e si
+      posiziona da sé, come il muso del coniglio. Le altre due voci col puntino servono in casi
+      particolari, e il menu stesso ti dice quali.
+      <b>Perno</b> = spinotto quadro col foro, per <b>tagliare in due un arto</b>.
+      <details style="margin-top:5px"><summary style="cursor:pointer">Come sceglie «decidi tu»</summary>
+      Guarda com'è venuto il pezzo: se sarebbe una buccia sottile mette il nocciolo, altrimenti
+      il perno. Te lo scrive sempre nel resoconto.</details>
+    </div>
+    <div class="cut-slider-row" id="profNoccioloRow">
+      <label for="profNocciolo">Profondit&agrave; nocciolo</label>
+      <input type="range" id="profNocciolo" min="15" max="85" step="5" value="50" />
+      <span id="profNoccioloValue">50%</span>
+    </div>
+    <div class="spiega" style="font-size:11px;color:var(--text-dim);margin:-2px 0 8px 0;line-height:1.4">
+      Quanto affonda il blocchetto, in percentuale dello spessore del modello l&igrave; sotto.
+      <b>50%</b> = se la gamba &egrave; profonda 4 cm il pezzo viene 2. Abbassala se il pezzo
+      ti sembra troppo invadente, alzala se ti serve un incastro pi&ugrave; profondo.
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:12px;color:var(--text-dim)">
+      <input type="checkbox" id="flatCutChk" checked style="display:none" />
+      <span>Faccia di taglio piatta:</span>
+      <select id="flatCutModo" style="flex:1;min-width:120px">
+        <option value="auto" selected>solo dove costa poco</option>
+        <option value="sempre">sempre (anche se aggiunge materiale)</option>
+        <option value="mai">mai (segui il contorno com'è)</option>
+      </select>
+    </label>
+    <div class="spiega" style="font-size:11px;color:var(--text-dim);margin:-4px 0 8px 24px;line-height:1.4">
+      La faccia piatta si ottiene riempiendo fino al piano. Su un contorno già quasi piano non
+      costa nulla; su uno ondulato quel riempimento è materiale in più che snatura il pezzo.
+      Con <b>“solo dove costa poco”</b> decide da sé e te lo scrive nel resoconto.
+      Scegli <b>“sempre”</b> se ti serve per forza una faccia d'appoggio piana (per esempio per
+      stampare il pezzo in piedi), <b>“mai”</b> se vuoi la massima fedeltà al modello.
+    </div>
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+        <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text);cursor:pointer">
+          <input type="checkbox" id="connAutoChk" checked />
+          Connettore quadrato automatico (perno + foro)
+        </label>
+        <div class="cut-slider-row" style="margin-top:6px">
+          <label for="connGioco">Gioco</label>
+          <input type="range" id="connGioco" min="0" max="60" step="5" value="20" />
+          <span id="connGiocoValue">0,20 mm</span>
+        </div>
+        <div class="cut-slider-row">
+          <label for="connScala">Grandezza perno</label>
+          <input type="range" id="connScala" min="50" max="300" step="10" value="100" />
+          <span id="connScalaValue">100%</span>
+        </div>
+      </div>
+    </details>
+
+    <details class="gruppo" id="grpZone">
+      <summary>Zone proposte <span class="gruppo-nota">il computer propone, scegli tu</span></summary>
     <div id="zoneBox" style="margin:8px 0;padding:10px;border:1px solid var(--border);border-radius:4px">
       <div style="font-size:12.5px;color:var(--text);font-weight:600;margin-bottom:6px">Zone proposte</div>
       <div class="spiega" style="font-size:11px;color:var(--text-dim);line-height:1.45;margin-bottom:8px">
@@ -1018,109 +1192,7 @@
       </div>
     </div>
 
-    <div id="smartSelBox" style="margin:8px 0;padding:10px;border:1px solid var(--border);border-radius:4px">
-      <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text);cursor:pointer">
-        <input type="checkbox" id="smartSelChk" checked />
-        <b>Un clic = tutta la zona</b> (si ferma sulle pieghe)
-      </label>
-      <div class="cut-slider-row" style="margin-top:6px">
-        <label for="smartSelAngle">Estensione</label>
-        <input type="range" id="smartSelAngle" min="5" max="60" step="1" value="22" />
-        <span id="smartSelAngleValue">22°</span>
-      </div>
-      <div class="spiega" style="font-size:11px;color:var(--text-dim);line-height:1.4">
-        Clicca sulla scarpa, sul braccio o sull'occhio: la selezione si allarga da sola e si ferma
-        al bordo. Se prende <b>troppo poco</b> alza l'estensione, se prende <b>troppo</b> abbassala.
-        Trascinando invece dipingi a mano come prima.
-      </div>
-    </div>
-    <div class="cut-actions" style="margin-bottom:8px">
-      <button id="cutLassoCloseBtn" style="display:none">Chiudi lazo</button>
-    </div>
-    <div id="selectExtras">
-    <div class="cut-actions" style="margin-bottom:8px">
-      <button id="cutModeAddBtn" class="active">Aggiungi</button>
-      <button id="cutModeEraseBtn">Rimuovi</button>
-      <button id="cutUndoBtn" disabled>Annulla</button>
-    </div>
-    <div class="cut-actions" style="margin-bottom:8px">
-      <button id="soloMacchiaBtn">Tieni solo la macchia principale</button>
-    </div>
-    <div class="cut-slider-row" id="arrotondaRow">
-      <label for="arrotondaForza">Arrotonda bordo</label>
-      <input type="range" id="arrotondaForza" min="0" max="30" step="2" value="20" />
-      <span id="arrotondaForzaValue">20%</span>
-    </div>
-    <div class="cut-actions" style="margin-bottom:8px">
-      <button id="arrotondaBtn">Arrotonda adesso</button>
-    </div>
-    <div class="spiega" style="font-size:11px;color:var(--text-dim);margin:-4px 0 8px 0;line-height:1.4">
-      Quando lasci il pennello (o chiudi il lazo) il bordo della selezione viene smussato da
-      solo di questa quantit&agrave;. &Egrave; una <b>percentuale della macchia</b>: il 20% su una
-      zona grande smussa tanto, sulla stessa zona in piccolo smussa poco, sempre in proporzione.
-      Alza se il contorno ti resta ancora <b>seghettato o bitorzoluto</b>, abbassa se ti mangia
-      i dettagli che vuoi tenere. <b>0%</b> lascia il contorno com&rsquo;&egrave; (toglie solo i
-      dentini da un triangolo); al <b>30%</b> il contorno diventa quasi un cerchio.
-      Oltre il 30% non cambia pi&ugrave; niente, per questo il cursore si ferma l&igrave;.
-      Il pulsante lo riapplica quando vuoi: premuto due volte arrotonda il doppio.
-    </div>
-    <div class="spiega" style="font-size:11px;color:var(--text-dim);margin:-4px 0 8px 0;line-height:1.4">
-      Se oltre alla zona che vuoi è rimasto attaccato un <b>pezzetto staccato</b> da un'altra
-      parte (un lembo di pantalone, una scaglia), questo lo butta via senza doverlo cancellare
-      a mano: tiene la macchia più grande e scarta tutte le altre.
-    </div>
-    <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:12px;color:var(--text-dim)">
-      <input type="checkbox" id="lassoThroughChk" />
-      Lazo passante — opzionale (prende anche quello che sta DIETRO, coperto alla vista)
-    </label>
-    <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:12px;color:var(--text-dim)">
-      <span>Come si uniscono i pezzi:</span>
-      <select id="incastroModo" style="flex:1;min-width:120px">
-        <option value="auto" selected>decidi tu (consigliato)</option>
-        <option value="nocciolo">a NOCCIOLO — blocchetto + sede scavata (è QUESTO, tipo muso di Bing)</option>
-        <option value="nocciolo_ovale">a NOCCIOLO, contorno ovale — solo se vuoi la tasca semplicissima (prende il triplo di materiale)</option>
-        <option value="nocciolo_esatto">a NOCCIOLO, contorno esatto — solo se vuoi la massima fedeltà (bordo sporco)</option>
-        <option value="perno">a PERNO (spinotto quadro + foro)</option>
-        <option value="niente">niente aggancio (solo colla)</option>
-      </select>
-    </label>
-    <div class="spiega" style="font-size:11px;color:var(--text-dim);margin:-4px 0 8px 0;line-height:1.4">
-      <b>Nel dubbio scegli a NOCCIOLO</b>: la zona che hai selezionato diventa un blocchetto
-      spesso metà del modello, con una <b>faccia piatta</b> dietro su cui appoggiarlo al piatto
-      della stampante, e nell'altro pezzo si scava la sua sede. Entra in un verso solo e si
-      posiziona da sé, come il muso del coniglio. Le altre due voci col puntino servono in casi
-      particolari, e il menu stesso ti dice quali.
-      <b>Perno</b> = spinotto quadro col foro, per <b>tagliare in due un arto</b>.
-      <details style="margin-top:5px"><summary style="cursor:pointer">Come sceglie «decidi tu»</summary>
-      Guarda com'è venuto il pezzo: se sarebbe una buccia sottile mette il nocciolo, altrimenti
-      il perno. Te lo scrive sempre nel resoconto.</details>
-    </div>
-    <div class="cut-slider-row" id="profNoccioloRow">
-      <label for="profNocciolo">Profondit&agrave; nocciolo</label>
-      <input type="range" id="profNocciolo" min="15" max="85" step="5" value="50" />
-      <span id="profNoccioloValue">50%</span>
-    </div>
-    <div class="spiega" style="font-size:11px;color:var(--text-dim);margin:-2px 0 8px 0;line-height:1.4">
-      Quanto affonda il blocchetto, in percentuale dello spessore del modello l&igrave; sotto.
-      <b>50%</b> = se la gamba &egrave; profonda 4 cm il pezzo viene 2. Abbassala se il pezzo
-      ti sembra troppo invadente, alzala se ti serve un incastro pi&ugrave; profondo.
-    </div>
-    <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:12px;color:var(--text-dim)">
-      <input type="checkbox" id="flatCutChk" checked style="display:none" />
-      <span>Faccia di taglio piatta:</span>
-      <select id="flatCutModo" style="flex:1;min-width:120px">
-        <option value="auto" selected>solo dove costa poco</option>
-        <option value="sempre">sempre (anche se aggiunge materiale)</option>
-        <option value="mai">mai (segui il contorno com'è)</option>
-      </select>
-    </label>
-    <div class="spiega" style="font-size:11px;color:var(--text-dim);margin:-4px 0 8px 24px;line-height:1.4">
-      La faccia piatta si ottiene riempiendo fino al piano. Su un contorno già quasi piano non
-      costa nulla; su uno ondulato quel riempimento è materiale in più che snatura il pezzo.
-      Con <b>“solo dove costa poco”</b> decide da sé e te lo scrive nel resoconto.
-      Scegli <b>“sempre”</b> se ti serve per forza una faccia d'appoggio piana (per esempio per
-      stampare il pezzo in piedi), <b>“mai”</b> se vuoi la massima fedeltà al modello.
-    </div>
+    </details>
     </div>
 
     <div id="copertaControls" style="display:none">
@@ -1187,21 +1259,6 @@
       <div class="cut-actions">
         <button id="planeCutBtn">Taglia qui (facce piatte)</button>
       </div>
-      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
-        <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text);cursor:pointer">
-          <input type="checkbox" id="connAutoChk" checked />
-          Connettore quadrato automatico (perno + foro)
-        </label>
-        <div class="cut-slider-row" style="margin-top:6px">
-          <label for="connGioco">Gioco</label>
-          <input type="range" id="connGioco" min="0" max="60" step="5" value="20" />
-          <span id="connGiocoValue">0,20 mm</span>
-        </div>
-        <div class="cut-slider-row">
-          <label for="connScala">Grandezza perno</label>
-          <input type="range" id="connScala" min="50" max="300" step="10" value="100" />
-          <span id="connScalaValue">100%</span>
-        </div>
         <div class="cut-actions">
           <button id="planeCutProBtn" style="background:#2a2d36;color:var(--text);border:1px solid var(--border)">Taglia col PIANO qui sopra + connettore</button>
         </div>
@@ -1213,8 +1270,14 @@
         </div>
       </div>
     </div>
+    <div id="barraTaglio">
     <div class="cut-actions" id="selectFinalRow">
       <button id="cutFlatProBtn" style="background:var(--accent);color:#fff;border:none;font-weight:700">Taglia SULLA SELEZIONE + connettore (PC)</button>
+    </div>
+    <div class="cut-actions">
+      <button id="cutCreateBtn" disabled>Crea parte (0 triangoli)</button>
+      <button id="cutCancelBtn">Annulla</button>
+    </div>
     </div>
     <div class="spiega" style="font-size:11px;color:var(--text-dim);margin:0 0 8px;line-height:1.4">
       <b>È questo il taglio sagomato</b>: stacca esattamente la zona che hai dipinto o cerchiato,
@@ -1222,10 +1285,6 @@
       pezzi”</b>. Usa questo per una mano, una ciocca di capelli,
       una cintura. (Il pulsante “Taglia col PIANO” più sopra taglia invece dritto e non guarda
       la forma della selezione.)
-    </div>
-    <div class="cut-actions">
-      <button id="cutCreateBtn" disabled>Crea parte (0 triangoli)</button>
-      <button id="cutCancelBtn">Annulla</button>
     </div>
   </div>
 

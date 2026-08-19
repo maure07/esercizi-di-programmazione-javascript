@@ -2867,6 +2867,7 @@
     }
     if (isCoperta) { popolaCopertaParti(); creaCoperta(); }
     else viewer.nascondiCoperta();
+    apriGruppo('grpSelezione');
     document.getElementById('cutHint').textContent =
       tool === 'lasso'
         ? 'Lazo: disegna un cappio CHIUSO tutto attorno alla zona (non un tratto). I punti si possono mettere anche FUORI dal modello, sullo sfondo: per prendere una cintura o un polso il cappio deve passare dai lati. Poi chiudi toccando il primo punto o "Chiudi lazo". Prende solo quello che si VEDE dentro al cappio (piu\' il suo retro), non quello che sta dietro: gira il modello dal lato buono prima di disegnare.'
@@ -2877,6 +2878,27 @@
           : 'Pennello: TRASCINA il dito/mouse sul modello per dipingere la selezione (giallo) esattamente dove passi. Ruoti la vista trascinando fuori dal modello (sfondo). Regola il Raggio; Rimuovi fa da gomma.';
   }
 
+
+  // UNA SEZIONE ALLA VOLTA.
+  //
+  // Le sezioni del pannello (Come selezioni / Come si uniscono i pezzi / Zone
+  // proposte) si aprono a fisarmonica: aprendone una si chiudono le altre.
+  // Senza questo si tornerebbe alla colonna lunghissima di prima, che e' il
+  // motivo per cui per abbassare il raggio del pennello bisognava scorrere su
+  // e giu' tutto il pannello.
+  const gruppi = () => Array.from(document.querySelectorAll('details.gruppo'));
+  gruppi().forEach((g) => {
+    g.addEventListener('toggle', () => {
+      if (!g.open) return;
+      gruppi().forEach((altro) => { if (altro !== g) altro.open = false; });
+    });
+  });
+  // e quando cambi strumento si riapre quella dei comandi dello strumento:
+  // e' li' che stai andando a lavorare
+  function apriGruppo(id) {
+    const g = document.getElementById(id);
+    if (g && !g.open) g.open = true;   // il resto lo chiude il gestore qui sopra
+  }
 
   // ------------------- LA COPERTA: telo di taglio deformabile -------------------
   // Il piano dritto e' infinito: per staccare un polso taglia anche tutto il
