@@ -62,7 +62,14 @@ unico se non combaciano.
 
 ## Cosa non si tocca
 
-- **Il perno sui pezzi sottili**: se il pezzo staccato è troppo sottile per reggerlo,
-  niente perno — i due pezzi si incollano. Deciso così, va lasciato com'è.
+- ~~**Il perno sui pezzi sottili**: niente perno, si incollano.~~ **Cambiato**, e
+  l'ha chiesto l'uso dopo aver stampato Goku: quei pezzi si chiamavano `(A)` e `(B)`,
+  quindi il perno lo si aspettava, e senza «non danno abbastanza struttura». Adesso
+  il perno si mette anche sui pezzi sottili, largo al massimo metà del loro spessore
+  e mai sotto i 2,5 mm (meno non è stampabile con l'ugello da 0,4). Si rinuncia solo
+  quando la faccia di taglio è più stretta di 3 mm.
+- **La lunghezza del perno** la decide la carne che c'è DIETRO la faccia di taglio,
+  non lo spessore del pezzo staccato: il perno da quello ci esce, è materiale
+  aggiunto. Rapporto 1,6 volte il lato (era 0,9, e veniva un dentino tozzo).
 - **La cartella `venv`** non si copia mai da un computer all'altro: dentro ci sono
   percorsi assoluti. `install_base.bat` se ne accorge da solo e la rifà.

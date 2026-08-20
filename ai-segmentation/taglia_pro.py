@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "lembi-39"
+VERSIONE = "perni-40"
 
 
 # ---------------------------------------------------------------------------
@@ -640,9 +640,21 @@ def taglia_con_piano(vertices, faces, punto, normale,
         # del pezzo su cui deve stare.
         lato = float(np.clip(0.28 * minore, 2.0, max(10.0, 0.45 * minore)))
     if profondita is None:
-        # anche la profondita' seguiva un tetto fisso (8 mm): con un perno piu'
-        # grande resterebbe un dentino appena accennato, che non guida l'incastro
-        profondita = float(np.clip(0.9 * lato, 1.5, max(8.0, 0.9 * lato)))
+        # QUANTO LUNGO. Segnalato dall'uso dopo aver stampato Goku: "entrano con
+        # una minima difficolta' ma sono troppo corti, quindi non danno
+        # abbastanza struttura". Aveva ragione: 0,9 volte il lato e' un dentino
+        # tozzo, che guida l'infilaggio ma non regge niente. Un perno stampato
+        # tiene quando e' lungo circa una volta e mezza il suo lato: sotto quel
+        # rapporto la leva del pezzo attaccato lo spezza alla base.
+        # Il tetto fisso di 8 mm e' stato tolto per lo stesso motivo: su una
+        # faccia di taglio larga il perno restava mozzo.
+        # ...ma senza sfondare: il perno resta ben dentro il PIU' CORTO dei due
+        # pezzi. Su un braccio tagliato vicino alla spalla, un perno lungo come
+        # su una gamba uscirebbe dall'altra parte.
+        _q = np.asarray(V_sez) @ nn
+        _pos = float(np.asarray(punto) @ nn)
+        _corto = max(1.0, min(_pos - float(_q.min()), float(_q.max()) - _pos))
+        profondita = float(np.clip(1.6 * lato, 3.0, max(3.0, min(1.6 * lato, 0.40 * _corto))))
     # manopola "Grandezza perno": moltiplica la misura automatica
     if scala_connettore and scala_connettore != 1.0:
         lato = float(lato * scala_connettore)
@@ -2898,22 +2910,77 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
     # sottile e' meglio NON metterlo e dirlo, che metterne uno che rovina il
     # modello. Prima un `max(4.0, ...)` scavalcava il limite e su una lamina da
     # 1,7 mm usciva comunque un perno da 4 mm.
-    tetto = 0.33 * spessore
     if niente_perno:
         log.append("Nessun perno: il pezzo si incastra da solo nella sua sede.")
         return {"a": _pack(np.asarray(ma.vertices), np.asarray(ma.faces)),
                 "b": _pack(np.asarray(mb.vertices), np.asarray(mb.faces)), "log": log}
-    if lato is None and profondita is None and tetto < 2.0:
-        log.append(f"Pezzo staccato spesso solo {spessore:.1f} mm: niente perno "
-                   "(sarebbe piu' grosso del pezzo). I due pezzi combaciano "
-                   "comunque: si uniscono con la colla.")
-        va, fa = np.asarray(ma.vertices), np.asarray(ma.faces)
-        vb, fb = np.asarray(mb.vertices), np.asarray(mb.faces)
-        return {"a": _pack(va, fa), "b": _pack(vb, fb), "log": log}
+
+    # QUANT'E' LARGO. Il perno sporge dalla faccia di taglio del pezzo staccato:
+    # non puo' essere piu' largo della faccia, e non ha senso che sia piu' grosso
+    # dello spessore del pezzo da cui esce. Prima il tetto era un TERZO dello
+    # spessore, ed e' il motivo per cui su una scaglia da 3,7 mm non usciva
+    # niente: un terzo fa 1,2, sotto il minimo, e il perno veniva saltato del
+    # tutto. Segnalato dall'uso dopo aver stampato Goku: "su alcune parti non ha
+    # messo proprio il connettore" - e i pezzi si chiamavano (A) e (B), quindi
+    # il perno lo si aspettava davvero.
     if lato is None:
-        lato = float(np.clip(0.28 * minore, 2.0, max(2.0, min(0.45 * minore, tetto))))
+        # non piu' largo di meta' faccia di taglio, e nemmeno della meta' dello
+        # spessore del pezzo da cui esce: un perno grosso come il pezzo non e'
+        # un perno, e' un secondo pezzo. Il minimo di 2,5 mm serve perche' sotto
+        # non e' nemmeno stampabile con l'ugello da 0,4.
+        tetto_lato = max(2.5, min(0.45 * minore, 0.45 * spessore))
+        lato = float(np.clip(0.28 * minore, 2.5, tetto_lato))
+    if minore < 3.0:
+        log.append(f"La faccia di taglio e' larga solo {minore:.1f} mm: non c'e' "
+                   "posto per un perno. I due pezzi combaciano comunque e si "
+                   "uniscono con la colla.")
+        return {"a": _pack(np.asarray(ma.vertices), np.asarray(ma.faces)),
+                "b": _pack(np.asarray(mb.vertices), np.asarray(mb.faces)), "log": log}
+
+    # QUANT'E' LUNGO. Segnalato dall'uso: "entrano con una minima difficolta' ma
+    # sono troppo corti, quindi non danno abbastanza struttura". Giusto, e il
+    # motivo era un errore di ragionamento: la lunghezza veniva limitata dallo
+    # spessore del PEZZO STACCATO. Ma il perno da quel pezzo ci ESCE - e' materiale
+    # aggiunto - e va a infilarsi nell'altro. A dire quanto puo' essere lungo e'
+    # la carne che c'e' DIETRO la faccia di taglio, nell'altro pezzo. La si misura
+    # sparando un raggio da li' dentro (niente librerie in piu': e' lo stesso
+    # conto dei rilievi appoggiati).
     if profondita is None:
-        profondita = float(np.clip(0.9 * lato, 1.5, max(1.5, min(0.9 * lato, tetto))))
+        fondo = None
+        try:
+            # non da UN punto solo: il centro dell'anello sta sul bordo del
+            # taglio e un raggio sparato da li' rasenta la pelle e torna due
+            # millimetri. Si prendono una trentina di punti sparsi DENTRO la
+            # faccia (a meta' strada fra il centro e il contorno) e si tiene la
+            # mediana, che non si fa sballare da quelli storti.
+            # i raggi partono mezzo millimetro DENTRO l'altro pezzo: partendo
+            # esattamente sulla pelle il primo colpo e' a distanza zero e la
+            # misura torna "carne dietro: 0,6 mm" anche in mezzo a una testa.
+            _dentro = centro - n_c * 0.5
+            _sonde = [_dentro]
+            if len(Pan):
+                _p = Pan[::max(1, len(Pan) // 30)]
+                _sonde.extend(_dentro + 0.5 * (_p - centro))
+            _st = _strati_sotto(np.asarray(mb.vertices), np.asarray(mb.faces),
+                                _sonde, n_c, 1e-6)
+            if _st and _st.get("fine1"):
+                fondo = float(_st["fine1"])
+        except Exception:
+            fondo = None
+        # si lascia sempre un terzo di carne oltre il fondo del foro, e non si
+        # superano i 12 mm: piu' lungo di cosi' non aggiunge tenuta e complica
+        # l'infilaggio
+        # se la misura non riesce si sta prudenti: un perno un po' corto si
+        # incolla, uno che sfonda il pezzo lo rovina
+        tetto_prof = min(14.0, 0.66 * fondo) if fondo and fondo > 1.0 else min(10.0, 1.2 * lato)
+        profondita = float(np.clip(1.6 * lato, 3.0, max(3.0, tetto_prof)))
+        # e si dice la verita': se il raggio torna un valore assurdo (sotto il
+        # millimetro in mezzo a un pezzo pieno) la misura non e' riuscita, e
+        # scriverla come se fosse buona manda fuori strada chi legge
+        log.append("Carne dietro la faccia di taglio: "
+                   + (f"{fondo:.1f} mm" if fondo and fondo > 1.0 else "non sono riuscito a misurarla, "
+                      "sto prudente")
+                   + f" -> perno lato {lato:.1f} mm, lungo {profondita:.1f} mm")
     if scala_connettore and scala_connettore != 1.0:
         lato *= scala_connettore
         profondita *= scala_connettore
