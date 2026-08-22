@@ -72,6 +72,24 @@ Quello che **vale la pena portarsi dietro** è invece la cartella `models\`
 (il file del motore AI, ~375 MB): quella è buona ovunque e risparmia un
 download lungo.
 
+## Se sembra piantato
+
+**Guarda la finestra nera.** Durante la riparazione scrive a che punto e' e
+quanto ci ha messo ogni passo, riga per riga:
+
+```
+=== RIPARAZIONE di 700928 triangoli ===
+-> 1 di 3: pulizia MeshLab
+   ... meshing_close_holes
+```
+
+Se resta ferma su una riga per minuti, quello e' il passo che sta macinando:
+mandami quella riga e si sa esattamente dove intervenire. Se invece le righe
+scorrono, sta lavorando — su un modello da 700.000 triangoli la riparazione
+completa dura una decina di secondi con MeshLab a posto, ma il passo dei
+**voxel** (l'ultimo ripiego, quando il modello non si chiude altrimenti) puo'
+volerci qualche minuto.
+
 ## Se qualcosa non va
 - Il pulsante dice "companion non raggiungibile" → controlla che `avvia.bat` sia
   aperto e non abbia dato errori.

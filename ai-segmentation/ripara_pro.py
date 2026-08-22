@@ -21,6 +21,9 @@ qualita': si interviene solo dove serve e si tiene la geometria originale.
 Input:  vertices (N,3), faces (M,3)
 Output: dict con vertices, faces, log, watertight, ...
 """
+import sys
+import time
+
 import numpy as np
 
 
@@ -47,6 +50,19 @@ def _diagonal(vertices):
 # ---------------------------------------------------------------------------
 # 1. passata pymeshlab (motore MeshLab)
 # ---------------------------------------------------------------------------
+def _passo(testo):
+    """Scrive nella finestra nera del companion, subito.
+
+    Segnalato dall'uso: "sta sempre li' a girare senza fare nulla". Il resoconto
+    dei passi c'era gia', ma tornava tutto INSIEME alla fine: mentre il lavoro e'
+    in corso non si vedeva niente, e una riparazione lenta era
+    indistinguibile da una piantata. Adesso ogni passo si annuncia quando
+    comincia e dice quanto ci ha messo quando finisce, cosi' la finestra nera fa
+    da barra di avanzamento e si sa SEMPRE dove si e' fermata.
+    """
+    print(testo, file=sys.stderr, flush=True)
+
+
 def pulisci_meshlab(vertices, faces, merge_frac=2e-4, max_hole_edges=600, log=None):
     """Salda micro-gap, toglie degeneri/doppioni, ripara non-manifold, chiude buchi."""
     import pymeshlab
@@ -62,11 +78,15 @@ def pulisci_meshlab(vertices, faces, merge_frac=2e-4, max_hole_edges=600, log=No
     n0 = ms.current_mesh().face_number()
 
     def run(name, **kw):
+        _passo(f"   ... {name}")
+        _t = time.time()
         try:
             ms.apply_filter(name, **kw)
+            _passo(f"       fatto in {time.time() - _t:.1f} s")
             return True
         except Exception as e:  # filtro non disponibile / non applicabile
             log.append(f"({name} saltato: {e})")
+            _passo(f"       saltato ({str(e).splitlines()[0][:60]})")
             return False
 
     # vertici quasi coincidenti -> stessi vertici (chiude i "micro triangoli aperti")
@@ -82,7 +102,17 @@ def pulisci_meshlab(vertices, faces, merge_frac=2e-4, max_hole_edges=600, log=No
     run("meshing_remove_unreferenced_vertices")
     # chiusura buchi (solo quelli ragionevoli: un buco enorme e' meglio lasciarlo
     # al passo successivo che ragiona sul solido)
-    run("meshing_close_holes", maxholesize=int(max_hole_edges),
+    # QUANTO GRANDI I BUCHI DA TAPPARE. Su una mesh decimata e piena di
+    # aperture questo filtro puo' macinare per minuti: e' l'unico passo qui
+    # dentro il cui costo cresce con la SCOMPOSIZIONE del bordo, non con i
+    # triangoli. Sui modelli grossi si tappano solo i buchi piccoli e i grandi
+    # si lasciano al passo dopo, che ragiona sul solido ed e' molto piu' rapido.
+    _limite = int(max_hole_edges)
+    if n0 > 400000:
+        _limite = min(_limite, 120)
+        log.append(f"Modello grosso ({n0} facce): tappo solo i buchi fino a "
+                   f"{_limite} spigoli, i piu' grandi li chiude il passo dopo.")
+    run("meshing_close_holes", maxholesize=_limite,
         newfaceselected=False, selfintersection=False)
 
     m = ms.current_mesh()
@@ -241,10 +271,13 @@ def ripara(vertices, faces, aggressivita="auto", risoluzione_voxel=256):
                   'voxel'   = forza la ricostruzione a voxel
     """
     log = []
+    _t0 = time.time()
     V = np.asarray(vertices, dtype=np.float64)
     F = np.asarray(faces, dtype=np.int64)
+    _passo(f"\n=== RIPARAZIONE di {len(F)} triangoli ===")
     m0 = _to_trimesh(V, F)
     log.append(f"Ingresso: {len(F)} facce, chiusa={m0.is_watertight}, corpi={_corpi(m0)}")
+    _passo(f"   ingresso: chiusa={m0.is_watertight}, corpi={_corpi(m0)}")
 
     if aggressivita == "voxel":
         V, F = voxel_fallback(V, F, risoluzione_voxel, log)
@@ -252,7 +285,10 @@ def ripara(vertices, faces, aggressivita="auto", risoluzione_voxel=256):
 
     # 1. pulizia MeshLab (sempre: e' quella che salva i micro-triangoli)
     try:
+        _passo("-> 1 di 3: pulizia MeshLab")
+        _t = time.time()
         V, F = pulisci_meshlab(V, F, log=log)
+        _passo(f"   1 di 3: pulizia MeshLab: {time.time() - _t:.1f} s")
     except Exception as e:
         log.append(f"MeshLab non disponibile ({e}), proseguo")
 
@@ -261,13 +297,19 @@ def ripara(vertices, faces, aggressivita="auto", risoluzione_voxel=256):
 
     # 2. via i gusci interni
     try:
+        _passo("-> 2 di 3: via i gusci interni")
+        _t = time.time()
         V, F = togli_gusci_interni(V, F, log=log)
+        _passo(f"   2 di 3: via i gusci interni: {time.time() - _t:.1f} s")
     except Exception as e:
         log.append(f"(gusci interni: {e})")
 
     # 3. solido esatto
     try:
+        _passo("-> 3 di 3: solido esatto")
+        _t = time.time()
         res = solido_esatto(V, F, log=log)
+        _passo(f"   3 di 3: solido esatto: {time.time() - _t:.1f} s")
         if res is not None:
             V2, F2 = res
             m2 = _to_trimesh(V2, F2)
@@ -281,9 +323,13 @@ def ripara(vertices, faces, aggressivita="auto", risoluzione_voxel=256):
     m = _to_trimesh(V, F)
     if not m.is_watertight:
         try:
+            _passo("-> ripiego sui VOXEL (e' il passo lento: puo' volerci qualche minuto)")
+            _t = time.time()
             V, F = voxel_fallback(V, F, risoluzione_voxel, log)
+            _passo(f"   voxel: {time.time() - _t:.1f} s")
         except Exception as e:
             log.append(f"(voxel: {e})")
+    _passo(f"=== FINITO in {time.time() - _t0:.1f} s ===")
     return _risultato(V, F, log)
 
 
