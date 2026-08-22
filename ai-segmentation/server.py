@@ -117,6 +117,20 @@ def home():
     )
 
 
+def _c_e_meshlab():
+    """MeshLab si carica davvero? Non basta che il modulo esista: sui PC dove
+    manca una libreria di sistema l'import riesce ma i filtri non si caricano,
+    e la riparazione ripiega su una strada molto piu' lenta senza dirlo.
+    Misurato su un modello da 700.000 triangoli: con MeshLab 9 secondi, senza
+    201, con la RAM che sale fino a impallare il computer."""
+    try:
+        import pymeshlab
+        pymeshlab.MeshSet()
+        return True
+    except Exception:
+        return False
+
+
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({
@@ -124,6 +138,9 @@ def health():
         "engines": ["geometria"] + (["ai"] if AI_AVAILABLE else []),
         "ai_available": AI_AVAILABLE,
         "ripara_pro": RIPARA_AVAILABLE,
+        # "ripara_pro" acceso non vuol dire che MeshLab c'e': si carica solo
+        # quando serve. Va detto a parte, e PRIMA di far partire il lavoro.
+        "meshlab": _c_e_meshlab(),
         "booleane_pro": TAGLIA_AVAILABLE,
         "dettagli_rilievo": RILIEVI_AVAILABLE,
         "connettore_pro": CONN_AVAILABLE,

@@ -1230,7 +1230,40 @@
       alert('La riparazione PRO non è installata sul companion.\n\nApri la cartella "ai-segmentation" e fai doppio clic su "install_pro.bat", poi riavvia "avvia.bat".');
       return;
     }
-    setLoading(true, 'Riparazione PRO sul PC (MeshLab + booleane esatte)…');
+    // QUANTO CI VUOLE, DETTO PRIMA.
+    // Segnalato dall'uso: 700.000 triangoli, riparazione PRO, "sono passati 3-4
+    // minuti e ancora nulla, gira all'infinito", con la RAM al 99% e il PC
+    // impallato. Non era bloccata: era MeshLab a non lavorare sul suo computer,
+    // e senza MeshLab la riparazione prende un'altra strada, molto piu' lenta e
+    // molto piu' affamata di memoria. Misurato sullo stesso modello da 700.000
+    // triangoli: con MeshLab 9 secondi e 1,4 GB, senza MeshLab 202 secondi e la
+    // memoria che sale. Una rotellina che gira senza dire niente per tre minuti
+    // e' indistinguibile da un programma piantato.
+    const nTri = currentAnalysis.indices.length / 3;
+    if (!health.meshlab) {
+      const vai = confirm(
+        'ATTENZIONE: MeshLab non sta funzionando sul tuo PC.\n\n'
+        + 'La riparazione riesce lo stesso, ma per un\'altra strada: molto piu\' lenta e '
+        + 'molto piu\' pesante per la memoria. Misurato su un modello da 700.000 triangoli: '
+        + 'con MeshLab 9 secondi, senza 3 minuti e mezzo, con la RAM che sale fino a '
+        + 'impallare il computer.\n\n'
+        + 'Per rimetterlo a posto: apri la cartella "ai-segmentation" e fai doppio clic su '
+        + '"install_pro.bat". Se si lamenta, mandami il messaggio.\n\n'
+        + 'Vuoi provare lo stesso adesso?');
+      if (!vai) return;
+    } else if (nTri > 400000) {
+      const minuti = Math.max(1, Math.round(nTri / 700000 * 0.2));
+      const vai = confirm(
+        'Questo modello ha ' + fmt(nTri, 0) + ' triangoli.\n\n'
+        + 'La riparazione sul PC ci mette all\'incirca ' + minuti + '-' + (minuti * 3)
+        + ' minuti e occupa un paio di GB di memoria. Non e\' bloccata: sta lavorando, '
+        + 'e la finestra nera del companion lo mostra.\n\n'
+        + 'Se vuoi fare prima, torna indietro e usa Alleggerisci.\n\n'
+        + 'Vado?');
+      if (!vai) return;
+    }
+    setLoading(true, 'Riparazione PRO sul PC (MeshLab + booleane esatte)… '
+      + fmt(nTri, 0) + ' triangoli, non chiudere la finestra nera');
     await new Promise((r) => setTimeout(r, 20));
     try {
       const body = meshToPayload(currentAnalysis.positions, currentAnalysis.indices);
