@@ -107,12 +107,12 @@ def pulisci_meshlab(vertices, faces, merge_frac=2e-4, max_hole_edges=600, log=No
     # dentro il cui costo cresce con la SCOMPOSIZIONE del bordo, non con i
     # triangoli. Sui modelli grossi si tappano solo i buchi piccoli e i grandi
     # si lasciano al passo dopo, che ragiona sul solido ed e' molto piu' rapido.
-    _limite = int(max_hole_edges)
-    if n0 > 400000:
-        _limite = min(_limite, 120)
-        log.append(f"Modello grosso ({n0} facce): tappo solo i buchi fino a "
-                   f"{_limite} spigoli, i piu' grandi li chiude il passo dopo.")
-    run("meshing_close_holes", maxholesize=_limite,
+    # NIENTE TETTO QUI. Ci avevo messo un limite sui modelli grossi temendo che
+    # questo filtro macinasse: misurato poi sul PC dell'uso, su 764.000
+    # triangoli costa 0,3 secondi. Il limite invece lasciava buchi aperti, e un
+    # modello che resta aperto finisce sul ripiego a VOXEL, che su quella
+    # stazza dura minuti. Meglio tappare qui, dove costa niente.
+    run("meshing_close_holes", maxholesize=int(max_hole_edges),
         newfaceselected=False, selfintersection=False)
 
     m = ms.current_mesh()
@@ -236,27 +236,56 @@ def solido_esatto(vertices, faces, log=None):
 # 4. ripiego a voxel (sempre chiuso) con riproiezione sull'originale
 # ---------------------------------------------------------------------------
 def voxel_fallback(vertices, faces, risoluzione=256, log=None):
+    """Ultimo ripiego: si riempie il modello di cubetti e se ne ricava la pelle.
+
+    E' il passo piu' caro di tutta la catena, e finora era anche il piu' muto:
+    segnalato dall'uso, "sta ancora andando" con la finestra nera ferma sulla
+    riga dei voxel. Adesso ogni pezzo si annuncia e si cronometra, e i due piu'
+    esosi hanno un freno.
+    """
     log = log if log is not None else []
     import trimesh
     mesh = _to_trimesh(vertices, faces)
     diag = _diagonal(vertices)
     pitch = diag / float(risoluzione)
+
+    _passo(f"   voxel: riempio la griglia ({risoluzione}^3)")
+    _t = time.time()
     vg = mesh.voxelized(pitch=pitch).fill()
+    _passo(f"      griglia riempita in {time.time() - _t:.1f} s")
+
+    _t = time.time()
     out = vg.marching_cubes
     out.merge_vertices()
-    # riproiezione sulla superficie originale: recupera i dettagli e le facce
-    # piatte che la voxelizzazione aveva arrotondato
-    try:
-        import trimesh.proximity as prox
-        vicino, dist, _ = prox.closest_point(mesh, out.vertices)
-        limite = pitch * 1.5
-        usa = dist < limite
-        V = np.asarray(out.vertices, dtype=np.float64).copy()
-        V[usa] = vicino[usa]
-        out = trimesh.Trimesh(vertices=V, faces=out.faces, process=False)
-    except Exception as e:
-        log.append(f"(riproiezione saltata: {e})")
-    log.append(f"Ricostruzione a voxel {risoluzione}^3 + riproiezione: {len(out.faces)} facce")
+    _passo(f"      pelle ricavata in {time.time() - _t:.1f} s ({len(out.faces)} facce)")
+
+    # RIPROIEZIONE sulla superficie originale: recupera i dettagli e le facce
+    # piatte che la voxelizzazione aveva arrotondato. Costa una ricerca del
+    # punto piu' vicino PER OGNI VERTICE, sulla mesh di partenza: su un modello
+    # da tre quarti di milione di triangoli e' il pezzo che fa aspettare i
+    # minuti. Sopra una certa stazza si rinuncia e lo si DICE: meglio un pezzo
+    # un filo arrotondato ma pronto, che una rotellina che gira.
+    if len(mesh.faces) > 300000:
+        log.append(f"Riproiezione saltata: il modello ha {len(mesh.faces)} triangoli e "
+                   "il ritocco costerebbe piu' di tutto il resto messo insieme. "
+                   "Il pezzo esce con gli spigoli un filo piu' morbidi.")
+        _passo("      riproiezione SALTATA (modello troppo grosso: sarebbe il passo piu' lento)")
+    else:
+        try:
+            import trimesh.proximity as prox
+            _passo("   voxel: rimetto i dettagli sulla pelle ricostruita")
+            _t = time.time()
+            vicino, dist, _ = prox.closest_point(mesh, out.vertices)
+            limite = pitch * 1.5
+            usa = dist < limite
+            V = np.asarray(out.vertices, dtype=np.float64).copy()
+            V[usa] = vicino[usa]
+            out = trimesh.Trimesh(vertices=V, faces=out.faces, process=False)
+            _passo(f"      dettagli rimessi in {time.time() - _t:.1f} s")
+        except Exception as e:
+            log.append(f"(riproiezione saltata: {e})")
+            _passo(f"      riproiezione saltata ({str(e)[:50]})")
+    log.append(f"Ricostruzione a voxel {risoluzione}^3: {len(out.faces)} facce")
     return np.asarray(out.vertices), np.asarray(out.faces)
 
 
@@ -319,11 +348,41 @@ def ripara(vertices, faces, aggressivita="auto", risoluzione_voxel=256):
     except Exception as e:
         log.append(f"(manifold3d: {e})")
 
+    # 3-bis. UN ULTIMO TENTATIVO A BUON MERCATO prima dei voxel.
+    # Il ripiego a voxel su un modello grosso e' il passo piu' caro di tutta la
+    # catena: costruisce una griglia da milioni di celle e poi riproietta ogni
+    # vertice sulla superficie di partenza. Se quello che manca sono solo
+    # qualche buco rimasto aperto, tapparli con trimesh e riprovare il solido
+    # esatto costa un secondo e fa risparmiare minuti.
+    m = _to_trimesh(V, F)
+    if not m.is_watertight:
+        _passo("-> il modello non e' ancora chiuso: provo a tappare i buchi rimasti")
+        _t = time.time()
+        try:
+            m2 = m.copy()
+            m2.fill_holes()
+            if m2.is_watertight or len(m2.faces) != len(m.faces):
+                res = solido_esatto(np.asarray(m2.vertices), np.asarray(m2.faces), log=log)
+                if res is not None:
+                    V3, F3 = res
+                    if _to_trimesh(V3, F3).is_watertight:
+                        log.append("Chiuso tappando i buchi rimasti: niente voxel.")
+                        _passo(f"   riuscito in {time.time() - _t:.1f} s: niente voxel")
+                        _passo(f"=== FINITO in {time.time() - _t0:.1f} s ===")
+                        return _risultato(V3, F3, log)
+        except Exception as e:
+            log.append(f"(tappatura buchi: {e})")
+        _passo(f"   non e' bastato ({time.time() - _t:.1f} s)")
+
     # 4. ripiego voxel
     m = _to_trimesh(V, F)
     if not m.is_watertight:
         try:
-            _passo("-> ripiego sui VOXEL (e' il passo lento: puo' volerci qualche minuto)")
+            _passo(f"-> ripiego sui VOXEL a {risoluzione_voxel} di risoluzione: "
+                   f"e' il passo lento della catena (griglia da "
+                   f"{risoluzione_voxel ** 3 // 1000000} milioni di celle, poi "
+                   f"ogni vertice va riproiettato sulla superficie). "
+                   f"Su un modello di questa stazza puo' volerci qualche minuto.")
             _t = time.time()
             V, F = voxel_fallback(V, F, risoluzione_voxel, log)
             _passo(f"   voxel: {time.time() - _t:.1f} s")
