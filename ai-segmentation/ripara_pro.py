@@ -265,12 +265,12 @@ def voxel_fallback(vertices, faces, risoluzione=256, log=None):
     # da tre quarti di milione di triangoli e' il pezzo che fa aspettare i
     # minuti. Sopra una certa stazza si rinuncia e lo si DICE: meglio un pezzo
     # un filo arrotondato ma pronto, che una rotellina che gira.
-    if len(mesh.faces) > 300000:
-        log.append(f"Riproiezione saltata: il modello ha {len(mesh.faces)} triangoli e "
-                   "il ritocco costerebbe piu' di tutto il resto messo insieme. "
-                   "Il pezzo esce con gli spigoli un filo piu' morbidi.")
-        _passo("      riproiezione SALTATA (modello troppo grosso: sarebbe il passo piu' lento)")
-    else:
+    # La riproiezione NON si salta piu'. L'avevo tolta sui modelli grossi per
+    # far prima, e il risultato e' stato un modello rovinato: e' proprio lei a
+    # rimettere i dettagli che i cubetti avevano mangiato. Adesso ai voxel ci si
+    # arriva solo se li chiedi tu, e se li chiedi vuol dire che sei disposto ad
+    # aspettare: allora si fa il lavoro per intero.
+    if True:
         try:
             import trimesh.proximity as prox
             _passo("   voxel: rimetto i dettagli sulla pelle ricostruita")
@@ -348,7 +348,42 @@ def ripara(vertices, faces, aggressivita="auto", risoluzione_voxel=256):
     except Exception as e:
         log.append(f"(manifold3d: {e})")
 
-    # 3-bis. UN ULTIMO TENTATIVO A BUON MERCATO prima dei voxel.
+    # 3-bis. LA SCALETTA CHE NON ROVINA NIENTE.
+    #
+    # Segnalato dall'uso: con i voxel "fa subito ma rovina tutto" - 764.570
+    # triangoli diventati 197.968 e la faccia a gradini. Giusto: la
+    # ricostruzione a voxel butta via la geometria e la rifa' a cubetti, e su
+    # una testa scolpita e' un disastro. Ai voxel non ci si deve arrivare.
+    #
+    # Nel motore del taglio c'e' gia' una scaletta di riparazione che invece i
+    # triangoli LI TIENE: toglie le facce di troppo sugli spigoli affollati,
+    # rigira quelle al contrario, tappa i buchi. E' quella che ha rimesso in
+    # piedi il nocciolo sui modelli rotti. Si prova quella, prima.
+    m = _to_trimesh(V, F)
+    if not m.is_watertight:
+        _passo("-> non e' ancora chiuso: provo la riparazione che conserva i triangoli")
+        _t = time.time()
+        try:
+            import taglia_pro
+            _diag = []
+            _sol, _rip = taglia_pro._manifold_solido(V, F, _diag, "modello")
+            if _sol is not None:
+                _out = _sol.to_mesh()
+                V4 = np.asarray(_out.vert_properties[:, :3], dtype=np.float64)
+                F4 = np.asarray(_out.tri_verts, dtype=np.int64)
+                if _to_trimesh(V4, F4).is_watertight and len(F4) > 0:
+                    if _rip:
+                        log.append(f"Chiuso conservando i triangoli ({_rip}): niente voxel.")
+                    else:
+                        log.append("Chiuso conservando i triangoli: niente voxel.")
+                    _passo(f"   riuscito in {time.time() - _t:.1f} s, {len(F4)} facce: niente voxel")
+                    _passo(f"=== FINITO in {time.time() - _t0:.1f} s ===")
+                    return _risultato(V4, F4, log)
+        except Exception as e:
+            log.append(f"(riparazione che conserva i triangoli: {e})")
+        _passo(f"   non e' bastata ({time.time() - _t:.1f} s)")
+
+    # 3-ter. UN ULTIMO TENTATIVO A BUON MERCATO prima dei voxel.
     # Il ripiego a voxel su un modello grosso e' il passo piu' caro di tutta la
     # catena: costruisce una griglia da milioni di celle e poi riproietta ogni
     # vertice sulla superficie di partenza. Se quello che manca sono solo
@@ -374,20 +409,26 @@ def ripara(vertices, faces, aggressivita="auto", risoluzione_voxel=256):
             log.append(f"(tappatura buchi: {e})")
         _passo(f"   non e' bastato ({time.time() - _t:.1f} s)")
 
-    # 4. ripiego voxel
+    # 4. I VOXEL SOLO SE LI CHIEDI TU.
+    #
+    # Prima partivano da soli quando il modello non si chiudeva, e chi premeva
+    # "Ripara" si ritrovava in mano un altro modello: la testa scolpita tornava
+    # indietro a gradini, da 764.570 triangoli a 197.968. Un pezzo aperto ma
+    # integro e' quasi sempre meglio di un pezzo chiuso e rovinato - e il taglio
+    # sa gia' rimettere a posto quel che gli serve da solo. Quindi qui ci si
+    # ferma, si dice com'e' andata, e i voxel restano a disposizione come scelta
+    # esplicita (aggressivita="voxel").
     m = _to_trimesh(V, F)
     if not m.is_watertight:
-        try:
-            _passo(f"-> ripiego sui VOXEL a {risoluzione_voxel} di risoluzione: "
-                   f"e' il passo lento della catena (griglia da "
-                   f"{risoluzione_voxel ** 3 // 1000000} milioni di celle, poi "
-                   f"ogni vertice va riproiettato sulla superficie). "
-                   f"Su un modello di questa stazza puo' volerci qualche minuto.")
-            _t = time.time()
-            V, F = voxel_fallback(V, F, risoluzione_voxel, log)
-            _passo(f"   voxel: {time.time() - _t:.1f} s")
-        except Exception as e:
-            log.append(f"(voxel: {e})")
+        log.append("NON sono riuscito a chiuderlo del tutto senza rifare la "
+                   "geometria da capo. Ti lascio il modello RIPULITO e integro: "
+                   "per tagliare va benissimo lo stesso. Se ti serve chiuso a "
+                   "ogni costo, usa \"Chiudi per forza (a voxel)\" - ma i "
+                   "dettagli si arrotondano e i triangoli si rifanno da zero.")
+        _passo("-> non si chiude senza rifare la geometria: mi fermo qui e lo dico "
+               "(i voxel rovinerebbero i dettagli, si chiedono a parte)")
+        _passo(f"=== FINITO in {time.time() - _t0:.1f} s ===")
+        return _risultato(V, F, log)
     _passo(f"=== FINITO in {time.time() - _t0:.1f} s ===")
     return _risultato(V, F, log)
 

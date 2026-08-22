@@ -1222,6 +1222,41 @@
   }
 
   // Riparazione professionale del modello intero (step 2).
+  // Ricostruzione a VOXEL, solo su richiesta esplicita: chiude qualunque cosa,
+  // ma rifa' la superficie da capo e i dettagli scolpiti si perdono.
+  async function riparaAVoxel() {
+    setLoading(true, 'Ricostruzione a voxel sul PC… i dettagli si arrotondano, '
+      + 'ci vuole qualche minuto: guarda la finestra nera');
+    await new Promise((r) => setTimeout(r, 20));
+    try {
+      const body = meshToPayload(currentAnalysis.positions, currentAnalysis.indices);
+      body.aggressivita = 'voxel';
+      const resp = await fetch(AI_URL + '/ripara', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const out = await resp.json();
+      if (out.error) throw new Error(out.error);
+      const { positions, indices } = payloadToMesh(out);
+      const stats = MeshCore.computeStats(positions, indices);
+      currentRepaired = { positions, indices, stats, watertight: !!out.watertight,
+        log: out.log || [] };
+      el.repairReport.innerHTML = `
+        <div style="color:#6be3ac;margin-bottom:4px">Ricostruzione a voxel (chiesta da te)</div>
+        ${(out.log || []).map((l) => `<div>${l}</div>`).join('')}
+        <div style="margin-top:6px">${out.watertight ? '<span class="ok">Adesso e\' chiuso</span>' : '<span class="issue">Restano bordi aperti anche cosi\'</span>'}</div>
+        <div class="dim" style="margin-top:4px">${fmt(indices.length / 3, 0)} triangoli</div>`;
+      if (!showMeshWithModelColors(currentParsed, positions, indices)) {
+        showSingleMesh(positions, indices, [0.45, 0.62, 0.85]);
+      }
+    } catch (err) {
+      console.error(err);
+      alert('La ricostruzione a voxel non e\' riuscita: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function runRepairPro() {
     if (!currentAnalysis) { alert('Carica prima un modello.'); return; }
     const health = await companionHealth();
@@ -1293,6 +1328,26 @@
         showSingleMesh(positions, indices, [0.45, 0.62, 0.85]);
       }
       goToStep(2);
+      // SE NON SI E' CHIUSO, LA SCELTA E' TUA.
+      // Prima, quando la riparazione non riusciva a chiudere il modello, partiva
+      // da sola la ricostruzione a VOXEL: e quella non ripara, RIFA' la
+      // geometria a cubetti. Segnalato dall'uso su una testa scolpita: "fa
+      // subito ma rovina tutto" - 764.570 triangoli tornati 197.968 e la faccia
+      // a gradini. Un modello aperto ma integro e' quasi sempre meglio di uno
+      // chiuso e rovinato, e per tagliare va bene lo stesso. Quindi adesso si
+      // chiede, spiegando cosa si perde.
+      if (!out.watertight) {
+        const forza = confirm(
+          'Il modello e\' stato ripulito ma NON e\' completamente chiuso.\n\n'
+          + 'Per tagliare va benissimo lo stesso: il taglio si ripara da solo quello '
+          + 'che gli serve.\n\n'
+          + 'Se ti serve chiuso a ogni costo posso rifarlo a VOXEL, ma ATTENZIONE: '
+          + 'quella non e\' una riparazione, rifa\' la superficie da zero a cubetti. '
+          + 'I dettagli scolpiti (viso, pieghe, scritte) si arrotondano e non tornano '
+          + 'piu\' indietro.\n\n'
+          + 'Vuoi rifarlo a voxel?');
+        if (forza) await riparaAVoxel();
+      }
     } catch (err) {
       console.error(err);
       alert('Errore dalla riparazione PRO: ' + err.message);
