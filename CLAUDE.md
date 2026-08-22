@@ -47,6 +47,27 @@ misurato, non supposto:
 così che si è visto che i "dettagli" proposti erano riccioli. **Guardare, non
 solo misurare.**
 
+## I modelli di Meshy 7 arrivano sporchi (e non e' il peso)
+
+Segnalato dall'uso: i guai grossi sono venuti con due modelli fatti con
+**Meshy 7** (una testa e Michael Jackson), mentre con **Meshy 6** non ce n'erano
+stati. La sua conclusione — restare su Meshy 6, tanto su stampe piccole la
+differenza non si vede — è ragionevole e va rispettata.
+
+Ma dai numeri il colpevole **non è il numero di triangoli**: 700.000 triangoli
+si riparano in **10 secondi** una volta che MeshLab funziona. Quello che
+distingue i modelli Meshy 7 è la **topologia**: sulla testa incriminata,
+al caricamento, **8.644 spigoli doppi** e **350 spigoli aperti**. È quella
+roba a impedire la chiusura del solido, e prima mandava la riparazione sul
+ripiego a voxel — che il modello lo rifaceva a cubetti.
+
+Adesso quella strada c'è: la scaletta che conserva i triangoli chiude il
+modello aggiungendo qualche migliaio di facce invece di rifarne 500.000.
+Quindi **un Meshy 7 oggi si lavora**, se un domani servisse il dettaglio in più.
+
+Il pannello «Difetti al caricamento» mostra già spigoli doppi e aperti: è lì
+che si capisce in due secondi con che razza di mesh si ha a che fare.
+
 ## Chi legge
 
 Chi usa questo programma è un tecnico della stampa 3D, non un programmatore.
