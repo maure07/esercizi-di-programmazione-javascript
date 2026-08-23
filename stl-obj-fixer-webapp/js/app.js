@@ -3792,10 +3792,36 @@
   const zoneScelte = new Set();  // id delle zone accese: si sommano fra loro
   const zoneCoda = [];       // zone messe da parte per tagliarle tutte alla fine
 
-  // colori ben distinti fra loro: si gira sulla ruota dei colori a passi
-  // grandi, cosi' due zone vicine non finiscono con la stessa tinta
+  // I COLORI DELLE ZONE.
+  //
+  // Prima erano calcolati girando sulla ruota dei colori a passi di sezione
+  // aurea. Sulla carta sparpaglia; in pratica, arrivati a dodici zone, due tinte
+  // distano pochi gradi e sul modello sembrano la stessa: uno guarda la pallina
+  // nell'elenco, la cerca sul pezzo e ne trova due uguali.
+  // Qui c'e' invece una fila scelta a mano, tinte che nessuno confonde,
+  // abbastanza chiare da leggersi sul modello scuro. Il giallo NON c'e': quello
+  // e' il colore della selezione, e deve restare inconfondibile.
+  const COLORI_ZONA = [
+    [0.31, 0.55, 1.00],  // azzurro
+    [1.00, 0.36, 0.36],  // rosso
+    [0.24, 0.86, 0.52],  // verde
+    [0.78, 0.49, 1.00],  // viola
+    [1.00, 0.62, 0.26],  // arancio
+    [0.16, 0.83, 0.83],  // turchese
+    [1.00, 0.44, 0.71],  // rosa
+    [0.60, 0.80, 0.20],  // verde oliva
+    [0.48, 0.53, 1.00],  // indaco
+    [0.88, 0.35, 0.17],  // mattone
+    [0.31, 0.82, 0.65],  // menta
+    [0.85, 0.31, 0.82],  // magenta
+    [0.56, 0.70, 1.00],  // celeste
+    [0.71, 0.40, 0.25],  // marrone
+  ];
   function coloreZona(i) {
-    const h = (i * 0.618033988749895) % 1;      // sezione aurea: sparpaglia
+    if (i < COLORI_ZONA.length) return COLORI_ZONA[i];
+    // oltre la fila si torna alla ruota: a quel punto le zone sono gia' troppe
+    // perche' il colore conti, e quello che serve e' solo che siano diverse
+    const h = (i * 0.618033988749895) % 1;
     const s = 0.62, l = i % 2 ? 0.46 : 0.60;
     const c = (1 - Math.abs(2 * l - 1)) * s;
     const x = c * (1 - Math.abs(((h * 6) % 2) - 1));
@@ -3819,6 +3845,49 @@
     return pos;
   }
 
+  // UNA ZONA DEV'ESSERE UN PEZZO, non una manciata di macchie sparse.
+  //
+  // Le etichette che escono dai motori non promettono niente sull'essere
+  // attaccate: la stessa etichetta puo' finire sull'orecchio destro, su quello
+  // sinistro e su un lembo di cappello. Sullo schermo diventa una tinta che
+  // spunta in tre punti lontani - e' meta' di quel "confusionale" - e prendendo
+  // quella zona ti porti via roba in tre posti diversi senza accorgertene.
+  // Qui si separa quello che non si tocca; i frammenti sotto la taglia minima
+  // non diventano zone: sono le briciole di bordo, e in elenco sarebbero solo
+  // righe da scorrere.
+  function pezziAttaccati(part, facce, minimo) {
+    const adj = ensurePartTopology(part).adjacency;
+    const nTris = part.indices.length / 3;
+    // I due quaderni si tengono da parte e si riazzerano: questa funzione viene
+    // chiamata una volta per zona, e su un modello pesante allocarne due nuovi
+    // ogni volta vuol dire una ventina di megabyte buttati a ogni proposta.
+    if (!part._quaderniPezzi || part._quaderniPezzi.dentro.length !== nTris) {
+      part._quaderniPezzi = { dentro: new Uint8Array(nTris), visto: new Uint8Array(nTris) };
+    }
+    const { dentro, visto } = part._quaderniPezzi;
+    dentro.fill(0); visto.fill(0);
+    facce.forEach((t) => { dentro[t] = 1; });
+    const pezzi = [];
+    for (let k = 0; k < facce.length; k++) {
+      const s = facce[k];
+      if (visto[s]) continue;
+      visto[s] = 1;
+      const pila = [s], pezzo = [];
+      while (pila.length) {
+        const f = pila.pop();
+        pezzo.push(f);
+        const vic = adj[f];
+        for (let i = 0; i < vic.length; i++) {
+          const g = vic[i];
+          if (dentro[g] && !visto[g]) { visto[g] = 1; pila.push(g); }
+        }
+      }
+      if (pezzo.length >= minimo) pezzi.push(pezzo);
+    }
+    pezzi.sort((a, b) => b.length - a.length);
+    return pezzi;
+  }
+
   // Da un'etichetta per triangolo ai gruppi mostrabili. Le zone minuscole si
   // buttano: una zona da dieci triangoli non e' una scelta, e' rumore.
   function zoneDaEtichette(part, etichette) {
@@ -3833,7 +3902,7 @@
     const gruppi = [];
     per.forEach((facce) => {
       if (facce.length < minimo) return;
-      gruppi.push({ facce });
+      pezziAttaccati(part, facce, minimo).forEach((p) => gruppi.push({ facce: p }));
     });
     gruppi.sort((a, b) => b.facce.length - a.facce.length);
     return gruppi.slice(0, 24).map((g, i) => faiZona(part, g.facce, i));
@@ -3876,25 +3945,87 @@
     };
   }
 
+  // Come deve venire disegnata una zona in questo momento.
+  //  - presa in mano: si spegne, perche' al suo posto si vede il giallo della
+  //    selezione (se no i due colori si accavallano e non si capisce niente);
+  //  - c'e' una zona sotto il mouse e non e' questa: questa va sullo sfondo,
+  //    cosi' quella che stai guardando si stacca da tutte le altre;
+  //  - se no, colore pieno.
+  function statoZona(z) {
+    if (zoneScelte.has(z.id)) return 'presa';
+    if (zonaEvidenziata != null && zonaEvidenziata !== z.id) return 'sfondo';
+    return 'piena';
+  }
+
   function disegnaZone() {
     if (!zoneProposte || !currentResult) { viewer.clearZones(); return; }
     const part = currentResult.parts.find((p) => p.id === zoneProposte.partId);
     if (!part) { viewer.clearZones(); return; }
-    // Le mesh ci sono gia'? Allora c'e' solo da accenderle o spegnerle: e'
-    // quello che succede a ogni clic nell'elenco, ed e' immediato.
+    // Le mesh ci sono gia'? Allora c'e' solo da cambiare quanto e' trasparente
+    // ognuna: e' quello che succede a ogni clic e a ogni passaggio del mouse,
+    // ed e' immediato.
     let tutte = zoneProposte.gruppi.length > 0;
     for (const z of zoneProposte.gruppi) {
-      // la zona presa in mano si spegne: al suo posto si vede il giallo della
-      // selezione, se no i due colori si accavallano e non si capisce niente
-      if (!viewer.accendiZona(z.id, zoneScelte.has(z.id))) { tutte = false; break; }
+      if (!viewer.accendiZona(z.id, statoZona(z))) { tutte = false; break; }
     }
     if (tutte) return;
     viewer.setZones(zoneProposte.gruppi.map((z) => ({
       id: z.id,
       colore: z.colore,
-      spenta: zoneScelte.has(z.id),
+      stato: statoZona(z),
       positions: z.posizioni || faccePosizioni(part, z.facce),
     })));
+  }
+
+  // L'EVIDENZIATORE. Una zona sola in primo piano, tutte le altre sullo sfondo.
+  // Si accende in due modi, e sono lo stesso gesto visto dai due lati:
+  //  - passando il mouse su una riga dell'elenco -> si illumina sul modello;
+  //  - passando il mouse sul modello -> si illumina la riga nell'elenco.
+  // Serviva perche' con dodici macchie colorate addosso a una testa "Zona 4"
+  // non vuol dire niente finche' non la vedi.
+  let zonaEvidenziata = null;
+  // x,y: dove sta il cursore, quando si evidenzia puntando il modello. Senza
+  // (cioe' dall'elenco) il cartellino non serve: il nome lo stai gia' leggendo.
+  function evidenziaZona(id, x, y) {
+    if (zonaEvidenziata !== id) {
+      zonaEvidenziata = id;
+      disegnaZone();
+      segnaRigaZona();
+    }
+    mostraNomeZona(x, y);
+  }
+
+  // Solo lo sfondo delle righe: rifare tutto l'elenco a ogni passaggio del
+  // mouse lo farebbe sfarfallare e perderebbe lo scorrimento.
+  function segnaRigaZona() {
+    if (!el.zoneElenco) return;
+    el.zoneElenco.querySelectorAll('.zona-riga').forEach((riga) => {
+      const suo = parseInt(riga.dataset.zona, 10) === zonaEvidenziata;
+      riga.style.outline = suo ? '1px solid var(--accent)' : 'none';
+    });
+  }
+
+  // Il cartellino col nome, appiccicato al modello sotto il cursore: dice
+  // subito quale zona stai per prendere, senza guardare l'elenco.
+  let targhettaZona = null;
+  function mostraNomeZona(x, y) {
+    if (!targhettaZona) {
+      targhettaZona = document.createElement('div');
+      targhettaZona.style.cssText = 'position:fixed;z-index:60;pointer-events:none;'
+        + 'padding:3px 7px;border-radius:4px;font-size:12px;font-weight:600;'
+        + 'background:rgba(20,22,28,.92);border:1px solid rgba(255,255,255,.18);'
+        + 'color:#fff;white-space:nowrap;display:none';
+      document.body.appendChild(targhettaZona);
+    }
+    const z = zonaEvidenziata != null && zoneProposte
+      ? zoneProposte.gruppi.find((g) => g.id === zonaEvidenziata) : null;
+    if (!z || x == null) { targhettaZona.style.display = 'none'; return; }
+    const c = z.colore.map((v) => Math.round(v * 255)).join(',');
+    targhettaZona.innerHTML = `<span style="display:inline-block;width:9px;height:9px;`
+      + `border-radius:2px;background:rgb(${c});margin-right:6px"></span>${z.nome}`;
+    targhettaZona.style.left = (x + 14) + 'px';
+    targhettaZona.style.top = (y + 14) + 'px';
+    targhettaZona.style.display = '';
   }
 
   function elencoZone() {
@@ -3941,8 +4072,12 @@
         `</div>`;
     }).join('');
     el.zoneElenco.querySelectorAll('.zona-riga').forEach((riga) => {
-      riga.addEventListener('click', () => prendiZona(parseInt(riga.dataset.zona, 10)));
+      const id = parseInt(riga.dataset.zona, 10);
+      riga.addEventListener('click', () => prendiZona(id));
+      riga.addEventListener('mouseenter', () => evidenziaZona(id));
+      riga.addEventListener('mouseleave', () => evidenziaZona(null));
     });
+    segnaRigaZona();
   }
 
   // Le zone accese diventano la selezione gialla: da qui in poi e' identica a
@@ -4031,6 +4166,14 @@
       const dett = await chiediDettagli(part, gruppi);
       zoneProposte = { partId: part.id, gruppi: gruppi.concat(dett.zone),
                        avvisoDettagli: dett.avviso };
+      // Da un triangolo alla sua zona, in un colpo solo. Serve a sapere che
+      // cosa c'e' sotto il mouse mentre lo si passa sul modello, e va costruita
+      // qui una volta sola: cercare fra le zone a ogni movimento del mouse
+      // rimetterebbe in piedi la lentezza che avevamo appena tolto.
+      const diChi = new Int32Array(part.indices.length / 3).fill(-1);
+      zoneProposte.gruppi.forEach((z) => z.facce.forEach((t) => { diChi[t] = z.id; }));
+      zoneProposte.diChi = diChi;
+      zonaEvidenziata = null;
       zoneScelte.clear();
       disegnaZone();
       elencoZone();
@@ -4096,24 +4239,29 @@
     const zone = [];
     let id = blocchi.length;
     gruppi.forEach((g) => {
-      const facce = g.filter((t) => !presi.has(t));
-      if (facce.length < 12) return;   // sotto questa taglia e' rumore, non un occhio
-      // IL BLOCCO E' GIA' QUEL PEZZO? Se il dettaglio si porterebbe via piu' di
-      // un quarto del blocco in cui sta, quel blocco E' il dettaglio - un occhio
-      // gia' trovato come corpo a se'. Ritagliarcelo dentro non aggiunge niente
-      // e lascia in mano due mezzi occhi. Misurato sulla testa di prova: gli
-      // occhi (1.280 triangoli l'uno) venivano bucati da dettagli di 400 e
-      // rotti, e nell'elenco comparivano spezzati in due.
-      const conta = new Map();
-      facce.forEach((t) => {
-        const b = diChi.get(t);
-        if (b !== undefined) conta.set(b, (conta.get(b) || 0) + 1);
+      const libere = g.filter((t) => !presi.has(t));
+      if (libere.length < 12) return;   // sotto questa taglia e' rumore, non un occhio
+      // Un dettaglio per volta, e ogni dettaglio un pezzo solo: se il rilevatore
+      // restituisce i due occhi sotto la stessa etichetta devono restare due
+      // zone, se no prendendo "Dettaglio 1" te ne vengono due.
+      pezziAttaccati(part, libere, 12).forEach((facce) => {
+        // IL BLOCCO E' GIA' QUEL PEZZO? Se il dettaglio si porterebbe via piu'
+        // di un quarto del blocco in cui sta, quel blocco E' il dettaglio - un
+        // occhio gia' trovato come corpo a se'. Ritagliarcelo dentro non
+        // aggiunge niente e lascia in mano due mezzi occhi. Misurato sulla testa
+        // di prova: gli occhi (1.280 triangoli l'uno) venivano bucati da
+        // dettagli di 400 e rotti, e nell'elenco comparivano spezzati in due.
+        const conta = new Map();
+        facce.forEach((t) => {
+          const b = diChi.get(t);
+          if (b !== undefined) conta.set(b, (conta.get(b) || 0) + 1);
+        });
+        let quale = -1, quanti = 0;
+        conta.forEach((n, b) => { if (n > quanti) { quanti = n; quale = b; } });
+        if (quale >= 0 && quanti > 0.25 * blocchi[quale].facce.length) return;
+        facce.forEach((t) => presi.add(t));
+        zone.push(faiZona(part, facce, id++, true, zone.length + 1));
       });
-      let quale = -1, quanti = 0;
-      conta.forEach((n, b) => { if (n > quanti) { quanti = n; quale = b; } });
-      if (quale >= 0 && quanti > 0.25 * blocchi[quale].facce.length) return;
-      facce.forEach((t) => presi.add(t));
-      zone.push(faiZona(part, facce, id++, true, zone.length + 1));
     });
     for (let i = 0; i < blocchi.length; i++) {
       const b = blocchi[i];
@@ -4127,6 +4275,8 @@
   function viaLeZone() {
     zoneProposte = null;
     zoneScelte.clear();
+    zonaEvidenziata = null;
+    mostraNomeZona();
     viewer.clearZones();
     elencoZone();
   }
@@ -4661,10 +4811,28 @@
         return;
       }
     }
-    if (!painting) return;
+    if (!painting) { guardaZonaSotto(e); return; }
     const hit = viewer.raycastAt(e.clientX, e.clientY);
     if (hit && hit.partId === paintPartId) paintAt(hit);
   });
+  el.viewer.addEventListener('pointerleave', () => evidenziaZona(null));
+
+  // Che zona c'e' sotto il cursore. Il raycast prova i triangoli uno per uno e
+  // su un modello pesante costa, mentre il mouse manda decine di eventi al
+  // secondo: uno sguardo ogni 70 ms l'occhio non lo distingue e la pagina resta
+  // leggera.
+  let ultimoSguardo = 0;
+  function guardaZonaSotto(e) {
+    if (!zoneProposte || !zoneProposte.diChi) return;
+    if (e.buttons) return;   // sta ruotando la vista: non e' il momento di guardare
+    const ora = performance.now();
+    if (ora - ultimoSguardo < 70) return;
+    ultimoSguardo = ora;
+    const hit = viewer.raycastAt(e.clientX, e.clientY);
+    if (!hit || hit.partId !== zoneProposte.partId) { evidenziaZona(null); return; }
+    const id = zoneProposte.diChi[hit.faceIndex];
+    evidenziaZona(id >= 0 ? id : null, e.clientX, e.clientY);
+  }
   // Somma delle aree dei triangoli di un insieme. Serve a misurare la macchia
   // in unita' del modello invece che "in triangoli": due mesh della stessa
   // forma ma con densita' diversa devono arrotondarsi allo stesso modo.
@@ -4886,8 +5054,17 @@
     }
     if (copertaTrascina) { copertaTrascina = null; return; }
     if (attesaClic) {
-      // era un clic secco: prendi tutta la zona
-      applicaSelezioneIntelligente(attesaClic.hit);
+      // Era un clic secco: prendi tutta la zona.
+      // Se le zone sono gia' state proposte e il clic e' caduto dentro una, si
+      // prende QUELLA - cioe' proprio la macchia colorata che stai vedendo.
+      // Prima il clic rifaceva il conto per conto suo, fermandosi sulle pieghe,
+      // e tirava fuori un pezzo diverso da quello mostrato: cliccavi sul rosso
+      // e ti veniva selezionato mezzo rosso piu' un po' di verde.
+      const h = attesaClic.hit;
+      const id = zoneProposte && zoneProposte.diChi && h.partId === zoneProposte.partId
+        ? zoneProposte.diChi[h.faceIndex] : -1;
+      if (id >= 0) prendiZona(id);
+      else applicaSelezioneIntelligente(h);
       attesaClic = null;
     }
     painting = false;

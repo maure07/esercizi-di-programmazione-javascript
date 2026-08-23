@@ -45,6 +45,10 @@ const path = require('path');
   await p.click('#saltaSegmBtn', { timeout: 180000, noWaitAfter: true });
   await p.waitForSelector('#partsList .part-card', { timeout: 180000 });
   await p.click('#cutToggleBtn'); await p.waitForTimeout(300);
+  // sotto-menu del pannello taglio: chiuso, il gruppo delle zone non e'
+  // cliccabile. Si apre col clic sul titolo (mettere .open a mano non regge:
+  // il pannello tiene aperto un gruppo alla volta).
+  await p.click('#grpZone > summary'); await p.waitForTimeout(300);
   // il nocciolo lo si CHIEDE: e' il caso segnalato
   await p.selectOption('#incastroModo', 'nocciolo');
   await p.waitForTimeout(200);
@@ -197,6 +201,7 @@ const path = require('path');
   await p2.click('#saltaSegmBtn', { timeout: 60000, noWaitAfter: true });
   await p2.waitForSelector('#partsList .part-card', { timeout: 60000 });
   await p2.click('#cutToggleBtn'); await p2.waitForTimeout(300);
+  await p2.click('#grpZone > summary'); await p2.waitForTimeout(300);
   const nCorpo = await p2.evaluate(() => window.__selCorpo(0));
   const senzaBordo = await p2.evaluate(() => window.__pianoTest() === null);
   const primaStacco = await p2.evaluate(() => window.__partsInfo().length);

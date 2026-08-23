@@ -43,6 +43,12 @@ const path = require('path');
   await p.click('#saltaSegmBtn', { timeout: 180000, noWaitAfter: true });
   await p.waitForSelector('#partsList .part-card', { timeout: 180000 });
   await p.click('#cutToggleBtn'); await p.waitForTimeout(300);
+  // Il pannello del taglio e' a sotto-menu (chiesto dall'uso: per abbassare il
+  // raggio del pennello si doveva risalire tutta la pagina). Chiuso, il gruppo
+  // delle zone sta nel DOM ma non e' visibile e il clic non arriva. Si apre
+  // CLICCANDO il titolo: mettere .open a mano non serve, il pannello tiene
+  // aperto un gruppo alla volta e lo richiude subito.
+  await p.click('#grpZone > summary'); await p.waitForTimeout(300);
 
   // il cursore va provato ai due estremi e in mezzo: una taratura che funziona
   // solo al valore predefinito non e' una taratura, e' una coincidenza

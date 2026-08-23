@@ -840,9 +840,22 @@
     // setHighlight qui sopra tiene UNA sola macchia, gialla, e ogni chiamata
     // cancella la precedente: va benissimo per la selezione su cui si sta
     // lavorando, ma non per far vedere dieci zone proposte tutte insieme.
-    // Queste stanno per conto loro, piu' trasparenti (0,45 contro 0,85), cosi'
-    // quando una diventa la selezione gialla si distingue a colpo d'occhio.
+    // Queste stanno per conto loro, e ognuna ha tre stati:
+    //
+    //   'piena'  colore pieno. Erano a 0,45, cioe' un velo: dodici veli
+    //            sovrapposti a un modello grigio davano quella zuppa di pastelli
+    //            in cui non si capiva dove finiva una zona e cominciava l'altra;
+    //   'presa'  quasi trasparente, perche' sotto c'e' il giallo della selezione
+    //            e deve vedersi lui;
+    //   'sfondo' quasi trasparente, perche' un'altra zona e' sotto il mouse e in
+    //            quel momento comanda lei: e' cosi' che si trova "Zona 4" senza
+    //            andare a caccia della pallina colorata nell'elenco.
     const zoneMesh = new Map();
+    function opacitaZona(stato) {
+      if (stato === 'presa') return 0.18;
+      if (stato === 'sfondo') return 0.10;
+      return 0.85;
+    }
     function clearZones() {
       zoneMesh.forEach((m) => {
         scene.remove(m);
@@ -857,10 +870,10 @@
     // Va fatto una volta sola, quando le zone si propongono. Accendere o
     // spegnere una zona (cioe' ogni clic nell'elenco) cambia soltanto quanto e'
     // trasparente: e' un numero, non ricostruisce niente.
-    function accendiZona(id, spenta) {
+    function accendiZona(id, stato) {
       const m = zoneMesh.get(id);
       if (!m) return false;
-      m.material.opacity = spenta ? 0.22 : 0.45;
+      m.material.opacity = opacitaZona(stato);
       return true;
     }
     function setZones(elenco) {
@@ -876,7 +889,7 @@
           color: new THREE.Color(c[0], c[1], c[2]),
           side: THREE.DoubleSide,
           transparent: true,
-          opacity: z.spenta ? 0.22 : 0.45,
+          opacity: opacitaZona(z.stato),
           depthTest: true,
           polygonOffset: true,
           polygonOffsetFactor: -2,

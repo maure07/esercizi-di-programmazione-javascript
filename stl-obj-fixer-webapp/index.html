@@ -1143,13 +1143,9 @@
       <summary>Zone proposte <span class="gruppo-nota">il computer propone, scegli tu</span></summary>
     <div id="zoneBox" style="margin:8px 0;padding:10px;border:1px solid var(--border);border-radius:4px">
       <div style="font-size:12.5px;color:var(--text);font-weight:600;margin-bottom:6px">Zone proposte</div>
-      <div class="spiega" style="font-size:11px;color:var(--text-dim);line-height:1.45;margin-bottom:8px">
-        Il computer ti <b>propone</b> le zone, non decide: le colora sul modello, tu scegli quali
-        prendere, diventano la selezione gialla e da l&igrave; le ritocchi col pennello e col lazo
-        come sempre. Poi scegli il tipo di aggancio e tagli.
-        <br><b>Ogni clic accende o spegne una zona, e si sommano</b>: se una cuffia o un braccio
-        ti viene proposto spezzato in due o tre, clicca tutti i pezzi e diventano una cosa sola.
-        Riclicca per toglierne uno.
+      <div class="spiega" style="font-size:11.5px;color:var(--text-dim);line-height:1.45;margin-bottom:8px">
+        <b>Punta una zona sul modello</b>: si accende e ti dice come si chiama.
+        <b>Cliccala</b> per prenderla &mdash; i clic si sommano, riclicca per lasciarla.
       </div>
       <div class="cut-slider-row">
         <label for="zoneQuante">Quanto dividere</label>
@@ -1157,28 +1153,38 @@
         <span id="zoneQuanteValue">6</span>
       </div>
       <div class="spiega" style="font-size:11px;color:var(--text-dim);line-height:1.4;margin:-4px 0 8px 0">
-        Verso sinistra <b>pochi pezzi grossi</b>, verso destra <b>tanti pezzi piccoli</b>.
-        Prima qui c'era &laquo;quante zone&raquo;, che era un numero da rispettare: appena il
-        conto ci arrivava il programma smetteva di unire, e restavano separate anche cose che
-        sono un pezzo solo &mdash; una massa di capelli veniva spezzata in sette o otto ciocche.
-        Adesso conta <b>quanto e&rsquo; marcato il solco</b>: i solchi leggeri fra una ciocca e
-        l&rsquo;altra si uniscono, l&rsquo;attaccatura dei capelli sulla fronte no.
+        A sinistra <b>pochi pezzi grossi</b>, a destra <b>tanti pezzi piccoli</b>.
       </div>
       <div class="cut-actions" style="margin:8px 0">
         <button id="zoneProponiBtn">Proponi le zone</button>
         <button id="zoneViaBtn" style="display:none">Togli i colori</button>
       </div>
-      <div class="spiega" style="font-size:11px;color:var(--text-dim);line-height:1.4;margin:-2px 0 8px 0">
-        Lavorano <b>due motori insieme</b>. I <b>blocchi grossi</b> (braccia, gambe, scarpe,
-        capelli) li trova questa pagina seguendo le <b>pieghe</b> della superficie. Occhi,
-        sopracciglia, labbra e bottoni sono <b>rilievi bassi e morbidi</b>, senza spigoli: per
-        pieghe non si vedono, e li cerca il programma sul PC &mdash; nell'elenco portano la
-        targhetta <b>dettaglio</b>, perch&eacute; sono quasi sempre quelli da stampare di un
-        altro colore. Se &laquo;avvia.bat&raquo; non &egrave; acceso si vedono comunque i
-        blocchi, con scritto cosa manca. I dettagli solo <b>dipinti</b> &mdash; un occhio
-        disegnato, una scritta &mdash; non sporgono affatto: per quelli c'&egrave; il pennello.
-      </div>
       <div id="zoneElenco" style="display:none;max-height:190px;overflow-y:auto;margin-bottom:8px"></div>
+      <!-- Le spiegazioni lunghe stanno chiuse. Aperte riempivano il pannello di
+           testo e il cursore, il pulsante e l'elenco finivano sotto tre paragrafi:
+           per leggere le zone bisognava prima leggere un tema. -->
+      <details style="margin-bottom:8px">
+        <summary style="font-size:11px;color:var(--text-dim);cursor:pointer">Come lavora</summary>
+        <div class="spiega" style="font-size:11px;color:var(--text-dim);line-height:1.45;margin-top:6px">
+          Il computer <b>propone</b>, non decide: colora le zone sul modello, tu scegli quali
+          prendere, diventano la selezione gialla e da l&igrave; le ritocchi col pennello e col
+          lazo come sempre. Poi scegli il tipo di aggancio e tagli. Se una cuffia o un braccio
+          ti viene proposto spezzato in due o tre, prendili tutti: si sommano.
+          <br><br>Lavorano <b>due motori insieme</b>. I <b>blocchi grossi</b> (braccia, gambe,
+          scarpe, capelli) li trova questa pagina seguendo le <b>pieghe</b> della superficie.
+          Occhi, sopracciglia, labbra e bottoni sono <b>rilievi bassi e morbidi</b>, senza
+          spigoli: per pieghe non si vedono, e li cerca il programma sul PC &mdash; nell'elenco
+          portano la targhetta <b>dettaglio</b>, perch&eacute; sono quasi sempre quelli da
+          stampare di un altro colore. Se &laquo;avvia.bat&raquo; non &egrave; acceso si vedono
+          comunque i blocchi, con scritto cosa manca. I dettagli solo <b>dipinti</b> &mdash; un
+          occhio disegnato, una scritta &mdash; non sporgono affatto: per quelli c'&egrave; il
+          pennello.
+          <br><br>Il cursore conta <b>quanto e&rsquo; marcato il solco</b>, non quante zone
+          devono venire fuori: i solchi leggeri fra una ciocca e l&rsquo;altra si uniscono,
+          l&rsquo;attaccatura dei capelli sulla fronte no. Prima era un numero da rispettare, e
+          una massa di capelli veniva spezzata in sette o otto ciocche.
+        </div>
+      </details>
       <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-dim)">
         <input type="checkbox" id="zoneCoda" />
         Prepara pi&ugrave; zone e taglia alla fine

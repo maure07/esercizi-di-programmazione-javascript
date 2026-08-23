@@ -21,6 +21,14 @@ Regole, in ordine:
    modello sintetico si comporta diversamente da quello scolpito da un'IA — è già
    costato due volte (vedi il commento in `test/fai-testa-capelli.py`).
 
+## Nei test il pannello del taglio è a sotto-menu
+
+I comandi del taglio stanno dentro `<details class="gruppo">` e **il pannello ne
+tiene aperto uno solo alla volta**. Nei test Playwright si apre **cliccando il
+titolo** (`p.click('#grpZone > summary')`): mettere `d.open = true` da
+`page.evaluate` non regge, il pannello lo richiude subito e il clic sul pulsante
+fallisce con «element is not visible». È costato due giri di test.
+
 ## Occhi e sopracciglia: cosa si è già misurato
 
 Sul pezzo vero (una testa Funko da 313.000 triangoli, mandata dall'uso) —
