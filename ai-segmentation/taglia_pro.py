@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "perni-41"
+VERSIONE = "perni-42"
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +215,9 @@ def _tappa_buchi(V, F):
     return V2, F2, len(nuove)
 
 
+_DENTRO_RIPARA_PRO = False
+
+
 def _manifold_solido(V, F, log=None, etichetta="modello"):
     """Un Manifold pronto per le booleane, riparando quel che serve.
 
@@ -338,6 +341,38 @@ def _manifold_solido(V, F, log=None, etichetta="modello"):
                 return uni, ", ".join(fatti)
     except Exception:
         pass
+
+    # 5) ULTIMO GRADINO: LA RIPARAZIONE PRO, quella vera.
+    #
+    # Segnalato dall'uso sul fiocco di Minnie: "nocciolo piatto non
+    # utilizzabile: non sono riuscito a rendere il modello lavorabile nemmeno
+    # riparandolo", e a quel punto la risposta era un consiglio - "passa da
+    # Ripara e solidifica". Ma il motore che fa quel lavoro sta nella stessa
+    # cartella e ce l'ha gia' acceso: la scaletta qui sopra e' fatta solo di
+    # trimesh, e MeshLab - che salda i micro-gap, ripara i non-manifold e toglie
+    # i gusci interni - non lo chiamava nessuno. Mandare l'uso a rifare a mano un
+    # passo che il programma sa fare da se' e' fargli perdere tempo per niente.
+    # Costa qualche secondo, ed e' l'ultima spiaggia prima di dire di no.
+    # IL FERMO CONTRO IL GIRO INFINITO. La riparazione PRO, quando un pezzo non
+    # si chiude, chiama a sua volta questa scaletta: senza fermo i due motori si
+    # rimbalzerebbero la palla all'infinito. Qui si entra una volta sola.
+    global _DENTRO_RIPARA_PRO
+    if not _DENTRO_RIPARA_PRO:
+        _DENTRO_RIPARA_PRO = True
+        try:
+            import ripara_pro
+            r = ripara_pro.ripara(np.asarray(V, dtype=np.float64),
+                                  np.asarray(F, dtype=np.int64))
+            m = riprova(np.asarray(r["vertices"], dtype=np.float64),
+                        np.asarray(r["faces"], dtype=np.int64))
+            if m is not None:
+                fatti.append("riparazione PRO (MeshLab)")
+                return m, ", ".join(fatti)
+        except Exception as e:
+            if log is not None:
+                log.append(f"(riparazione PRO come ultima spiaggia: {e})")
+        finally:
+            _DENTRO_RIPARA_PRO = False
 
     return None, ", ".join(fatti) if fatti else None
 

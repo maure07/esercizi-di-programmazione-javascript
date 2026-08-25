@@ -411,6 +411,26 @@ def ripara(vertices, faces, aggressivita="auto", risoluzione_voxel=256):
     """
     log = []
     _t0 = time.time()
+    # IL FERMO CONTRO IL GIRO INFINITO, dall'altro lato. Dentro questa catena si
+    # chiama la scaletta del taglio (taglia_pro._manifold_solido), e quella come
+    # ultima spiaggia chiama la riparazione PRO - cioe' questa. Segnalando qui
+    # che ci siamo gia' dentro, quella salta il suo ultimo gradino e i due motori
+    # non si rimbalzano la palla.
+    _fermo = None
+    try:
+        import taglia_pro as _tp
+        _fermo = _tp._DENTRO_RIPARA_PRO
+        _tp._DENTRO_RIPARA_PRO = True
+    except Exception:
+        _tp = None
+    try:
+        return _ripara(vertices, faces, aggressivita, risoluzione_voxel, log, _t0)
+    finally:
+        if _tp is not None and _fermo is not None:
+            _tp._DENTRO_RIPARA_PRO = _fermo
+
+
+def _ripara(vertices, faces, aggressivita, risoluzione_voxel, log, _t0):
     # Quanto e' costato ogni passo. Finisce nel resoconto che si legge nell'app:
     # "un po' lenta" da solo non si puo' inseguire, il tempo va misurato sul PC
     # di chi aspetta, non sul mio.

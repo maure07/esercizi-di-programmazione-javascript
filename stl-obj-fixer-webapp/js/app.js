@@ -1016,7 +1016,7 @@
   // Se le due si scollano l'app si blocca dando la colpa alla meta' sbagliata,
   // quindi il montaggio del file unico (test/build-artifact.js) le confronta e
   // si rifiuta di partire se non combaciano.
-  const TAGLIA_PRO_VERSIONE_ATTESA = 'perni-41';
+  const TAGLIA_PRO_VERSIONE_ATTESA = 'perni-42';
 
   // Le versioni di questo progetto finiscono con un numero che cresce
   // ("...-27", "...-29"): basta quello per sapere QUALE delle due meta' e'
@@ -2255,9 +2255,9 @@
         if (!silenzioso) {
           alert('Il taglio e\' riuscito, ma NON a nocciolo: e\' venuto un taglio normale.\n\n'
             + (spiega.length ? 'Motivo: ' + spiega.join('\n') + '\n\n' : '')
-            + 'Guarda il resoconto del pezzo per le righe di diagnostica. '
-            + 'Di solito si rimedia allargando un po\' la selezione, oppure passando '
-            + 'da "Ripara e solidifica" se il pezzo viene da un taglio precedente.');
+            + 'La riparazione l\'ho gia\' provata da solo, MeshLab compreso: se non e\' '
+            + 'bastata, di solito si rimedia allargando un po\' la selezione. '
+            + 'Le righe di diagnostica sono nel resoconto del pezzo.');
         }
       } else {
         if (!silenzioso) alert('Taglio piatto riuscito: le due facce che si toccano sono piane e combaciano.' +
