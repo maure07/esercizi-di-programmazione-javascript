@@ -1016,6 +1016,9 @@
   // Se le due si scollano l'app si blocca dando la colpa alla meta' sbagliata,
   // quindi il montaggio del file unico (test/build-artifact.js) le confronta e
   // si rifiuta di partire se non combaciano.
+  // L'avviso "le due meta' non combaciano" si da' una volta per apertura della
+  // pagina, non a ogni taglio.
+  let avvisatoVersioni = false;
   const TAGLIA_PRO_VERSIONE_ATTESA = 'perni-42';
 
   // Le versioni di questo progetto finiscono con un numero che cresce
@@ -2050,17 +2053,25 @@
            '  3. riapri "avvia.bat";\n' +
            '  4. per controllare, apri in una scheda:  http://127.0.0.1:8760/health\n' +
            '     deve dire  "taglia_pro_versione":"' + TAGLIA_PRO_VERSIONE_ATTESA + '"');
-      const continua = confirm(
-        'I due pezzi dell\'app non combaciano.\n\n' +
-        '  questo file HTML vuole:   ' + TAGLIA_PRO_VERSIONE_ATTESA + '\n' +
-        '  la cartella "ai-segmentation" sul PC e\':   ' +
-        (health.taglia_pro_versione || 'cosi\' vecchia che non lo dice') + '\n\n' +
-        cosaFare + '\n\n' +
-        (htmlVecchio
-          ? 'Vuoi provare comunque il taglio adesso? Di solito funziona lo stesso: la cartella\nnuova sa fare tutto quello che sapeva la vecchia.'
-          : 'Vuoi provare comunque il taglio adesso (con la cartella vecchia)?')
-      );
-      if (!continua) return;
+      // L'AVVISO NON FERMA PIU' IL TAGLIO, E LO DA' UNA VOLTA SOLA.
+      //
+      // Prima era una domanda ("vuoi provare comunque?") e compariva a ogni
+      // taglio: chi rispondeva "no" - o chi la chiudeva per togliersela di
+      // torno - restava senza taglio e senza capire perche'. Segnalato
+      // dall'uso, giustamente incavolato: "non li fa i tagli punto". Un
+      // disallineamento fra le due meta' e' una cosa da sapere, non un motivo
+      // per non lavorare: il taglio si fa lo stesso.
+      if (!avvisatoVersioni) {
+        avvisatoVersioni = true;
+        alert(
+          'Nota: i due pezzi dell\'app non combaciano.\n\n' +
+          '  questo file HTML vuole:   ' + TAGLIA_PRO_VERSIONE_ATTESA + '\n' +
+          '  la cartella "ai-segmentation" sul PC e\':   ' +
+          (health.taglia_pro_versione || 'cosi\' vecchia che non lo dice') + '\n\n' +
+          cosaFare + '\n\n' +
+          'Il taglio lo faccio lo stesso, adesso e da qui in avanti: questo avviso non ' +
+          'torna piu\' finche\' non ricarichi la pagina.');
+      }
     }
     // Il taglio non avviene qui: il pezzo viene spedito tutto intero alla
     // cartella sul PC, scritto numero per numero. Su un modello da milioni di
