@@ -1,0 +1,30 @@
+# il personaggio di prova pesa 19 MB: sta fuori dal repository, e i test che
+# lo usano si saltano da soli quando manca (vedi LEGGIMI.md)
+modelli/goku_vero.stl
+# il modello da 130 MB per provare il caso "pagina lenta": si rifa' con
+# test/fai-modello-pesante.py, non si conserva
+modelli/pesante.stl
+# roba prodotta dalla batteria, non da conservare
+modelli/stl-obj-fixer.html
+modelli/index.html
+modelli/artifact-bundle.html
+modelli/*-A.stl
+modelli/*-B.stl
+
+# Roba PRODOTTA dai test mentre girano: schermate, export, progetti di prova.
+# Non sono sorgenti, cambiano a ogni giro e sporcherebbero la storia.
+modelli/*-shot.png
+modelli/e2e-screenshot.png
+modelli/e2e-texture-screenshot.png
+modelli/*.zip
+modelli/progetto_test.json
+modelli/nocciolo-*.stl
+modelli/macchia-*.stl
+modelli/contorno-*.stl
+modelli/su-*.stl
+modelli/fin-*.stl
+modelli/faccia-su.stl
+
+# il modello da 500.000 triangoli per cronometrare il clic sulle zone:
+# si rifa con test/fai-modello-pesante.py (righe/colonne a 500)
+modelli/pesante500k.stl

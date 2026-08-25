@@ -1,0 +1,495 @@
+"""
+segmenta_ai.py  —  MOTORE AI (SAM multi-vista), usa la GPU (RTX 3060)
+
+Idea: rende il modello da tante angolazioni, su ogni immagine fa girare
+"Segment Anything" (SAM) che trova le regioni coerenti, poi RIPROIETTA le maschere
+sul 3D leggendo un buffer con l'ID di ogni triangolo. Le facce che finiscono
+spesso nella stessa maschera (viste diverse) diventano la stessa parte. Alla fine
+si raggruppa nel numero di parti richiesto.
+
+Funziona anche su modelli SENZA colore (SAM lavora sull'ombreggiatura/forma).
+
+Dipendenze (installate da install_ai.bat):
+    torch (con CUDA), segment-anything, pyrender, pillow, scikit-learn
+    + il checkpoint del modello SAM (sam_vit_b_01ec64.pth)
+
+NOTA: questo motore va collaudato la prima volta sul PC con la GPU. Se qualcosa
+non va, il server ripiega automaticamente sul motore geometrico.
+"""
+import os
+import sys
+import numpy as np
+
+_MODEL_PATH = os.environ.get("SAM_CHECKPOINT", os.path.join(os.path.dirname(__file__), "models", "sam_vit_b_01ec64.pth"))
+_MODEL_TYPE = os.environ.get("SAM_MODEL_TYPE", "vit_b")
+
+
+def is_available():
+    """True solo se torch+CUDA, SAM, pyrender e il checkpoint ci sono."""
+    try:
+        import torch
+        import segment_anything  # noqa: F401
+        import pyrender  # noqa: F401
+        if not torch.cuda.is_available():
+            return False
+        return os.path.exists(_MODEL_PATH)
+    except Exception:
+        return False
+
+
+def _camera_poses(n_views, radius):
+    """n_views telecamere distribuite su una sfera che guardano l'origine."""
+    poses = []
+    golden = np.pi * (3 - np.sqrt(5))
+    for i in range(n_views):
+        y = 1 - (i / max(1, n_views - 1)) * 2
+        r = np.sqrt(max(0.0, 1 - y * y))
+        theta = golden * i
+        dir_ = np.array([np.cos(theta) * r, y, np.sin(theta) * r])
+        eye = dir_ * radius
+        # matrice look-at (verso l'origine)
+        f = -dir_ / (np.linalg.norm(dir_) + 1e-9)
+        up = np.array([0, 1, 0.0])
+        if abs(f[1]) > 0.99:
+            up = np.array([0, 0, 1.0])
+        s = np.cross(f, up); s /= np.linalg.norm(s) + 1e-9
+        u = np.cross(s, f)
+        M = np.eye(4)
+        M[:3, 0] = s; M[:3, 1] = u; M[:3, 2] = -f; M[:3, 3] = eye
+        poses.append(M)
+    return poses
+
+
+def _render_views(vertices, faces, n_views=12, res=1024):
+    """Per ogni vista restituisce (immagine_shaded RGB, buffer_id_faccia)."""
+    import trimesh
+    import pyrender
+
+    mesh_t = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+    center = mesh_t.bounds.mean(axis=0)
+    mesh_t.apply_translation(-center)
+    # RAGGIO VERO della sfera che contiene il modello. Prima si usava la
+    # diagonale dell'ingombro moltiplicata per 1.1, cioe' circa il doppio del
+    # necessario: la telecamera finiva quasi al doppio della distanza giusta e
+    # il modello riempiva solo il 16% dell'immagine. SAM campiona su una
+    # griglia regolare, quindi l'84% dei suoi punti cadeva sullo sfondo nero e
+    # trovava pochissime regioni. Inquadrando stretto i punti utili si
+    # moltiplicano per oltre tre.
+    radius = float(np.linalg.norm(np.asarray(mesh_t.vertices), axis=1).max()) + 1e-6
+
+    # mesh ombreggiata (grigia) per SAM
+    shaded = pyrender.Mesh.from_trimesh(mesh_t, smooth=False)
+
+    # mesh con ID faccia codificato nel colore (unlit): ogni faccia 3 vertici unici
+    fid = np.arange(len(faces))
+    col = np.empty((len(faces), 3), dtype=np.uint8)
+    col[:, 0] = (fid & 255)
+    col[:, 1] = ((fid >> 8) & 255)
+    col[:, 2] = ((fid >> 16) & 255)
+    vcol = np.repeat(col, 3, axis=0)
+    tv = mesh_t.vertices[mesh_t.faces].reshape(-1, 3)
+    tf = np.arange(len(tv)).reshape(-1, 3)
+    id_trim = trimesh.Trimesh(vertices=tv, faces=tf, process=False)
+    id_trim.visual.vertex_colors = np.concatenate([vcol, np.full((len(vcol), 1), 255, np.uint8)], axis=1)
+    id_mesh = pyrender.Mesh.from_trimesh(id_trim, smooth=False)
+
+    r = pyrender.OffscreenRenderer(res, res)
+    cam = pyrender.PerspectiveCamera(yfov=np.pi / 3.0)
+    # distanza che fa riempire l'inquadratura al modello (con un filo di
+    # margine): raggio / sin(mezzo campo visivo)
+    distanza = radius / np.sin(np.pi / 6.0) * 1.06
+    poses = _camera_poses(n_views, distanza)
+    out = []
+    for pose in poses:
+        sc = pyrender.Scene(bg_color=[0, 0, 0, 0], ambient_light=[0.4, 0.4, 0.4])
+        sc.add(shaded)
+        sc.add(cam, pose=pose)
+        light = pyrender.DirectionalLight(color=[1, 1, 1], intensity=3.0)
+        sc.add(light, pose=pose)
+        color, _ = r.render(sc)
+
+        sc2 = pyrender.Scene(bg_color=[0, 0, 0, 0], ambient_light=[1, 1, 1])
+        sc2.add(id_mesh)
+        sc2.add(cam, pose=pose)
+        idimg, _ = r.render(sc2, flags=pyrender.RenderFlags.FLAT)
+        face_id = idimg[:, :, 0].astype(np.int64) | (idimg[:, :, 1].astype(np.int64) << 8) | (idimg[:, :, 2].astype(np.int64) << 16)
+        # sfondo (nero) -> -1
+        bg = (idimg.sum(axis=2) == 0)
+        face_id[bg] = -1
+        out.append((color, face_id))
+    r.delete()
+    return out
+
+
+def _riduci_a_n_parti(labels, adj, n_parti):
+    """Scende al numero di parti richiesto fondendo ogni volta il gruppo piu'
+    PICCOLO nel vicino con cui condivide piu' confine. Cosi' i pezzi restano
+    attaccati e non si perdono le parti importanti."""
+    labels = np.asarray(labels, dtype=np.int64).copy()
+    if n_parti <= 0:
+        return labels
+    for _ in range(len(np.unique(labels))):
+        gruppi, conteggi = np.unique(labels, return_counts=True)
+        if len(gruppi) <= n_parti:
+            break
+        piccolo = gruppi[int(np.argmin(conteggi))]
+        # quanto confina con ciascun altro gruppo
+        confini = {}
+        if len(adj):
+            la = labels[adj[:, 0]]
+            lb = labels[adj[:, 1]]
+            m1 = (la == piccolo) & (lb != piccolo)
+            m2 = (lb == piccolo) & (la != piccolo)
+            for etichetta in np.concatenate([lb[m1], la[m2]]):
+                confini[int(etichetta)] = confini.get(int(etichetta), 0) + 1
+        if confini:
+            destinazione = max(confini, key=confini.get)
+        else:
+            # isolato: attaccalo al gruppo piu' grande
+            destinazione = int(gruppi[int(np.argmax(conteggi))])
+            if destinazione == piccolo:
+                break
+        labels[labels == piccolo] = destinazione
+    # rinumera da 0
+    _, labels = np.unique(labels, return_inverse=True)
+    return labels.astype(np.int64)
+
+
+def _riduci_a_griglia(vertices, faces, obiettivo_facce):
+    """Riduzione dei triangoli SENZA dipendenze esterne (raggruppamento su
+    griglia): i vertici vicini vengono fusi in uno solo e i triangoli che
+    collassano vengono buttati. Non e' raffinata come una decimazione a
+    quadriche, ma qui serve solo a dare a SAM una mesh leggera su cui
+    ragionare: le etichette vengono poi riportate sulla mesh piena.
+    Soprattutto: funziona sempre, e quindi non si rischia piu' di ritrovarsi
+    con la mesh intera e un'allocazione da terabyte.
+    """
+    V = np.asarray(vertices, dtype=np.float64)
+    F = np.asarray(faces, dtype=np.int64)
+    nF = len(F)
+    if nF <= obiettivo_facce:
+        return V, F
+    lo = V.min(axis=0); hi = V.max(axis=0)
+    diag = float(np.linalg.norm(hi - lo)) or 1.0
+    # parti da una griglia proporzionale al numero di facce desiderate e
+    # stringi finche' non si scende sotto l'obiettivo
+    n = max(8, int(round((obiettivo_facce * 2.0) ** (1.0 / 3.0) * 3)))
+    for _ in range(24):
+        passo = diag / n
+        chiavi = np.floor((V - lo) / passo).astype(np.int64)
+        _, inv = np.unique(chiavi, axis=0, return_inverse=True)
+        # posizione media di ogni cella
+        nuovo_n = int(inv.max()) + 1
+        somma = np.zeros((nuovo_n, 3)); conta = np.zeros(nuovo_n)
+        np.add.at(somma, inv, V); np.add.at(conta, inv, 1.0)
+        NV = somma / np.maximum(conta, 1)[:, None]
+        NF = inv[F]
+        # butta i triangoli degeneri (due o tre vertici finiti nella stessa cella)
+        ok = (NF[:, 0] != NF[:, 1]) & (NF[:, 1] != NF[:, 2]) & (NF[:, 0] != NF[:, 2])
+        NF = NF[ok]
+        # e i doppioni
+        if len(NF):
+            NF = np.unique(np.sort(NF, axis=1), axis=0)
+        if len(NF) <= obiettivo_facce or n <= 8:
+            return NV, NF
+        n = max(8, int(n * 0.75))
+    return NV, NF
+
+
+def _riduci_mesh(full_mesh, obiettivo_facce):
+    """Prova le riduzioni buone; se non ci sono, usa quella a griglia.
+    Non ritorna MAI la mesh intera: e' proprio quello che causava il crash."""
+    import trimesh
+    V = np.asarray(full_mesh.vertices, dtype=np.float64)
+    F = np.asarray(full_mesh.faces, dtype=np.int64)
+    if len(F) <= obiettivo_facce:
+        return V, F
+    # 1) decimazione a quadriche di trimesh (serve 'fast_simplification')
+    for kw in ({"face_count": int(obiettivo_facce)}, {"percent": float(obiettivo_facce) / len(F)}):
+        try:
+            r = full_mesh.simplify_quadric_decimation(**kw)
+            if 0 < len(r.faces) <= obiettivo_facce * 1.5:
+                return np.asarray(r.vertices, dtype=np.float64), np.asarray(r.faces, dtype=np.int64)
+        except Exception:
+            pass
+    # 2) open3d, se c'e'
+    try:
+        import open3d as o3d
+        m = o3d.geometry.TriangleMesh(
+            o3d.utility.Vector3dVector(V), o3d.utility.Vector3iVector(F))
+        m = m.simplify_quadric_decimation(int(obiettivo_facce))
+        NF = np.asarray(m.triangles, dtype=np.int64)
+        if 0 < len(NF) <= obiettivo_facce * 1.5:
+            return np.asarray(m.vertices, dtype=np.float64), NF
+    except Exception:
+        pass
+    # 3) ripiego che funziona sempre
+    return _riduci_a_griglia(V, F, obiettivo_facce)
+
+
+def segment(vertices, faces, target_parts=8, n_views=12, work_faces=6000):
+    import torch
+    import trimesh
+    from segment_anything import sam_model_registry, SamAutomaticMaskGenerator
+    from sklearn.cluster import AgglomerativeClustering
+
+    vertices_full = np.asarray(vertices, dtype=np.float64)
+    faces_full = np.asarray(faces, dtype=np.int64)
+    nF_full = len(faces_full)
+
+    # DECIMAZIONE: SAM+affinita' lavorano su una mesh piu' leggera (la matrice
+    # di affinita' e' O(facce^2)); poi le etichette si trasferiscono alla mesh
+    # piena per faccia piu' vicina. Indispensabile sui modelli densi (800k tri).
+    full_mesh = trimesh.Trimesh(vertices=vertices_full, faces=faces_full, process=False)
+    vertices, faces = _riduci_mesh(full_mesh, work_faces)
+    nF = len(faces)
+    print(f"[AI] mesh ridotta da {nF_full} a {nF} facce per l'analisi", flush=True)
+
+    # BARRIERA DI SICUREZZA: la tabella delle affinita' occupa facce^2 x 4 byte.
+    # Prima qui si arrivava a chiedere 2.41 TiB (con 813.448 facce) e il PC
+    # andava in crisi. Ora si controlla PRIMA di allocare: se non ci sta in un
+    # tetto ragionevole, si stringe ancora la mesh invece di provarci e morire.
+    TETTO_GB = 1.5
+    while nF > 1 and (nF * nF * 4) / (1024 ** 3) > TETTO_GB:
+        nuovo = int(nF * 0.7)
+        print(f"[AI] {nF} facce chiederebbero {(nF*nF*4)/(1024**3):.1f} GB: riduco a {nuovo}", flush=True)
+        vertices, faces = _riduci_a_griglia(vertices, faces, nuovo)
+        if len(faces) >= nF:      # non sta scendendo: fermati qui
+            break
+        nF = len(faces)
+
+    # --- GPU: consumo di memoria video tenuto sotto controllo ---
+    # Su una scheda da 8 GB, SAM con troppi punti per immagine in un colpo solo
+    # riempie la memoria video e fa cadere tutto. Si limita quanti punti vengono
+    # elaborati insieme (points_per_batch): il risultato e' identico, cambia solo
+    # che il lavoro viene fatto a scaglioni. In piu' si dice a PyTorch di non
+    # superare una quota della scheda, e si libera la memoria dopo ogni vista.
+    libera_gb = 8.0
+    try:
+        libera_gb = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+    except Exception:
+        pass
+    # Quanti punti SAM campiona sull'immagine. La memoria video NON dipende da
+    # quanti punti sono in tutto, ma da quanti se ne elaborano insieme
+    # (punti_lotto): si puo' quindi campionare fitto restando leggeri, facendo
+    # il lavoro a scaglioni. Con pochi punti SAM trovava 2-3 regioni per vista,
+    # troppo poche per dividere qualcosa.
+    if libera_gb <= 9:            # 8 GB (es. RTX 3060)
+        punti_lato, punti_lotto = 32, 24
+    else:
+        punti_lato, punti_lotto = 48, 64
+    try:
+        # non usare piu' dell'80% della scheda: lascia respirare Windows
+        torch.cuda.set_per_process_memory_fraction(0.8, 0)
+    except Exception:
+        pass
+    print(f"[AI] scheda video da {libera_gb:.1f} GB -> {punti_lato}x{punti_lato} punti, "
+          f"lotti da {punti_lotto}", flush=True)
+
+    sam = sam_model_registry[_MODEL_TYPE](checkpoint=_MODEL_PATH).to("cuda")
+    # Soglie di qualita' piu' permissive di quelle predefinite: SAM e' nato per
+    # le fotografie, dove conviene essere selettivi. Qui le immagini sono rese
+    # grigie di un oggetto, con meno contrasto: con le soglie di fabbrica scarta
+    # quasi tutto. Abbassandole trova molte piu' regioni, e a scremare ci
+    # pensano i controlli successivi.
+    opzioni = dict(points_per_side=punti_lato, points_per_batch=punti_lotto,
+                   pred_iou_thresh=0.80, stability_score_thresh=0.85,
+                   min_mask_region_area=64)
+    # Si prova dalla configurazione migliore e si scende: alcune opzioni non
+    # esistono nelle versioni piu' vecchie di SAM (TypeError) e altre tirano
+    # dentro librerie che possono mancare — min_mask_region_area vuole OpenCV e
+    # senza quello fallisce con ImportError. Si cattura QUALSIASI errore,
+    # altrimenti basta una libreria assente per far saltare tutto il motore.
+    gen = None
+    for etichetta, tentativo in (
+            ("completa", opzioni),
+            ("senza pulizia regioni", {k: v for k, v in opzioni.items()
+                                       if k != "min_mask_region_area"}),
+            ("essenziale", dict(points_per_side=punti_lato,
+                                points_per_batch=punti_lotto)),
+            ("minima", dict(points_per_side=punti_lato)),
+            ("predefinita", {})):
+        try:
+            gen = SamAutomaticMaskGenerator(sam, **tentativo)
+            if etichetta != "completa":
+                print(f"[AI] configurazione SAM: {etichetta}", flush=True)
+            break
+        except Exception as e:
+            print(f"[AI] configurazione '{etichetta}' non utilizzabile ({e})",
+                  file=sys.stderr, flush=True)
+            continue
+    if gen is None:
+        raise RuntimeError("non riesco a inizializzare SAM")
+
+    # affinita' tra facce: quante volte finiscono nella stessa maschera
+    aff = np.zeros((nF, nF), dtype=np.float32)
+    seen = np.zeros(nF, dtype=np.float32)
+
+    tot_maschere = 0
+    tot_maschere_utili = 0
+    tot_pixel_validi = 0
+    tot_pixel_modello = 0
+    for iv, (color, face_id) in enumerate(_render_views(vertices, faces, n_views=n_views)):
+        with torch.inference_mode():     # niente gradienti: meta' memoria video
+            masks = gen.generate(color[:, :, :3])
+        tot_maschere += len(masks)
+        sul_modello = int((face_id >= 0).sum())
+        validi = int(((face_id >= 0) & (face_id < nF)).sum())
+        tot_pixel_modello += sul_modello
+        tot_pixel_validi += validi
+        usate = 0
+        scartate_grandi = 0
+        for m in masks:
+            seg = m["segmentation"]
+            # Le maschere che coprono quasi tutta la figura non dicono nulla:
+            # mettono ogni faccia insieme a ogni altra. Se restano dentro,
+            # l'affinita' diventa uniforme e il raggruppamento impasta tutto in
+            # un pezzo unico (e sembra che l'AI non abbia fatto niente).
+            # Interessano le maschere che ritagliano una PARTE.
+            copertura = (int((seg & (face_id >= 0)).sum()) / sul_modello) if sul_modello else 0.0
+            if copertura > 0.80 or copertura < 0.0015:
+                scartate_grandi += 1
+                continue
+            fids = face_id[seg]
+            # L'identificativo della faccia viaggia dentro il COLORE del pixel e
+            # il renderer lo sfuma sui bordi fra un triangolo e l'altro: quei
+            # pixel decodificano numeri che non esistono (es. 6012 su 6000
+            # facce) e prima facevano cadere tutto. Si tengono solo i valori
+            # validi: i pixel interni, che sono la stragrande maggioranza.
+            fids = fids[(fids >= 0) & (fids < nF)]
+            if len(fids) < 3:
+                continue
+            usate += 1
+            tot_maschere_utili += 1
+            uniq = np.unique(fids)
+            seen[uniq] += 1
+            # incrementa l'affinita' tra tutte le facce di questa maschera
+            aff[np.ix_(uniq, uniq)] += 1.0
+        del masks
+        try:
+            torch.cuda.empty_cache()     # restituisci la memoria video tra una vista e l'altra
+        except Exception:
+            pass
+        pct = (100.0 * validi / sul_modello) if sul_modello else 0.0
+        print(f"[AI] vista {iv + 1}/{n_views}: {usate} maschere utili "
+              f"({scartate_grandi} scartate perche' troppo grandi o minuscole), "
+              f"{pct:.0f}% dei pixel del modello leggibili", flush=True)
+
+    viste_ok = float((seen > 0).mean()) * 100.0
+    print(f"[AI] riepilogo: {tot_maschere} maschere, "
+          f"{viste_ok:.0f}% delle facce riconosciute almeno una volta", flush=True)
+    if tot_pixel_modello and tot_pixel_validi / tot_pixel_modello < 0.5:
+        print("[AI] ATTENZIONE: la maggior parte dei pixel non e' leggibile "
+              "(il renderer altera i colori che portano il numero della faccia)",
+              file=sys.stderr, flush=True)
+
+    # il modello non serve piu': libera subito la scheda
+    try:
+        del gen, sam
+        torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+    # RETE DI SICUREZZA: se l'AI non ha visto abbastanza superficie, qualunque
+    # raggruppamento sarebbe campato per aria e uscirebbe un pezzo unico che
+    # sembra "non aver fatto niente". Meglio dirlo e lasciare il posto al
+    # motore per forma, che un risultato lo da' sempre.
+    coperto = float((seen > 0).mean())
+    if coperto < 0.75:
+        raise RuntimeError(
+            "l'AI ha riconosciuto solo il %.0f%% delle facce (ne servirebbe "
+            "almeno il 75%%): con cosi' poche informazioni i pezzi verrebbero "
+            "a caso" % (100.0 * coperto))
+    if tot_maschere_utili < 8 * max(1, n_views) // 4:
+        raise RuntimeError(
+            "SAM ha trovato solo %d regioni utili in %d viste: troppo poche "
+            "per dividere il modello in modo sensato"
+            % (tot_maschere_utili, n_views))
+
+    # facce mai viste: attaccale via geometria alla fine
+    np.fill_diagonal(aff, 0)
+    denom = np.maximum(seen[:, None] + seen[None, :], 1.0)
+    affn = aff / denom  # normalizza
+
+    # distanza = 1 - affinita'
+    dist = 1.0 - affn
+    np.fill_diagonal(dist, 0)
+    k = max(1, min(target_parts, nF))
+
+    import trimesh
+    mt = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+    adj = mt.face_adjacency
+
+    # VINCOLO DI CONTIGUITA': si possono unire solo facce ATTACCATE fra loro.
+    # Senza questo vincolo il raggruppamento guarda unicamente "quante volte due
+    # facce sono finite nella stessa maschera", e quando quel segnale e' povero
+    # finisce per impastare tutto in un pezzo solo — che e' il caso in cui
+    # sembra che l'AI non abbia fatto niente. In piu' un pezzo da stampare deve
+    # essere per forza tutto attaccato, quindi il vincolo e' anche giusto.
+    connettivita = None
+    try:
+        from scipy.sparse import coo_matrix
+        if len(adj):
+            righe = np.concatenate([adj[:, 0], adj[:, 1]])
+            colonne = np.concatenate([adj[:, 1], adj[:, 0]])
+            dati = np.ones(len(righe), dtype=np.float64)
+            connettivita = coo_matrix((dati, (righe, colonne)), shape=(nF, nF)).tocsr()
+    except Exception as e:
+        print("[AI] vincolo di contiguita' non applicabile:", e, file=sys.stderr)
+
+    # NIENTE numero di parti forzato in questa fase. L'affinita' e' quasi
+    # binaria ("le due facce sono finite insieme" oppure no): appena i gruppi
+    # naturali si sono formati, tutte le fusioni successive valgono uguale e
+    # verrebbero fatte a caso, impastando l'intero modello in un pezzo solo.
+    # Si taglia invece a una distanza significativa, e solo dopo si scende al
+    # numero di parti richiesto fondendo i gruppi piu' piccoli nel vicino con
+    # cui confinano di piu'.
+    cl = AgglomerativeClustering(n_clusters=None, distance_threshold=0.9,
+                                 metric="precomputed", linkage="average",
+                                 connectivity=connettivita)
+    labels = cl.fit_predict(dist)
+    print(f"[AI] gruppi naturali trovati: {len(np.unique(labels))}", flush=True)
+    labels = _riduci_a_n_parti(labels, adj, k)
+
+    # facce non viste (seen==0): assegnale alla parte del vicino piu' votato
+    for _ in range(6):
+        unseen = np.where(seen == 0)[0]
+        if len(unseen) == 0:
+            break
+        changed = False
+        us = set(unseen.tolist())
+        for a, b in adj:
+            if a in us and b not in us:
+                labels[a] = labels[b]; seen[a] = 1e-6; us.discard(a); changed = True
+            elif b in us and a not in us:
+                labels[b] = labels[a]; seen[b] = 1e-6; us.discard(b); changed = True
+        if not changed:
+            break
+
+    labels = labels.astype(np.int64)
+
+    # trasferimento alla mesh PIENA: ogni faccia originale prende l'etichetta
+    # della faccia lavorata piu' vicina (per baricentro)
+    if nF != nF_full:
+        from scipy.spatial import cKDTree
+        # baricentri della mesh ridotta, calcolati direttamente dai dati che
+        # abbiamo usato per l'analisi
+        work_centroids = vertices[faces].mean(axis=1)
+        full_centroids = np.asarray(full_mesh.triangles_center)
+        tree = cKDTree(work_centroids)
+        _, idx = tree.query(full_centroids, k=1)
+        labels = labels[idx]
+        print(f"[AI] etichette riportate su {nF_full} facce", flush=True)
+
+    # secondo controllo: se una sola parte si mangia quasi tutto, l'AI non ha
+    # diviso niente di utile. Anche qui e' piu' onesto passare la mano.
+    conteggi = np.bincount(labels.astype(np.int64))
+    dominante = conteggi.max() / float(len(labels))
+    print(f"[AI] parti ottenute: {int((conteggi > 0).sum())}, "
+          f"la piu' grande copre il {100 * dominante:.0f}%", flush=True)
+    if dominante > 0.97 and target_parts > 1:
+        raise RuntimeError(
+            "l'AI ha messo il %.0f%% del modello in un pezzo solo: non ha "
+            "diviso nulla" % (100 * dominante))
+
+    return labels.astype(np.int64)
