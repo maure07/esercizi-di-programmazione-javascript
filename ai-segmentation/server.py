@@ -211,7 +211,7 @@ def taglia():
 
     return jsonify({
         "a": pack(r["a"]), "b": pack(r["b"]),
-        "log": r["log"], "connettore": r.get("connettore"),
+        "log": r["log"], "connettore": r.get("connettore"), "perno_no": r.get("perno_no"),
     })
 
 
@@ -248,7 +248,8 @@ def taglia_selezione():
         }
 
     return jsonify({"a": pack(r["a"]), "b": pack(r["b"]),
-                    "log": r["log"], "connettore": r.get("connettore")})
+                    "log": r["log"], "connettore": r.get("connettore"),
+                    "perno_no": r.get("perno_no")})
 
 
 @app.route("/taglia_coperta", methods=["POST", "OPTIONS"])
@@ -285,7 +286,8 @@ def taglia_coperta():
         }
 
     return jsonify({"a": pack(r["a"]), "b": pack(r["b"]),
-                    "log": r["log"], "connettore": r.get("connettore")})
+                    "log": r["log"], "connettore": r.get("connettore"),
+                    "perno_no": r.get("perno_no")})
 
 
 @app.route("/connettore", methods=["POST", "OPTIONS"])

@@ -1016,7 +1016,7 @@
   // Se le due si scollano l'app si blocca dando la colpa alla meta' sbagliata,
   // quindi il montaggio del file unico (test/build-artifact.js) le confronta e
   // si rifiuta di partire se non combaciano.
-  const TAGLIA_PRO_VERSIONE_ATTESA = 'perni-40';
+  const TAGLIA_PRO_VERSIONE_ATTESA = 'perni-41';
 
   // Le versioni di questo progetto finiscono con un numero che cresce
   // ("...-27", "...-29"): basta quello per sapere QUALE delle due meta' e'
@@ -2224,10 +2224,21 @@
         // Il taglio riesce, i pezzi combaciano, e il perno non c'e': il motivo
         // il motore lo scrive nel resoconto, ma a schermo usciva lo stesso
         // "Taglio piatto riuscito" e sembrava che il menu non contasse niente.
-        const spiega = (out.log || []).filter((l) => /niente perno|Niente perno|Nessun perno|senza connettore/.test(l));
+        // IL MOTIVO LO DICE IL MOTORE, non lo si va piu' a pescare col setaccio.
+        // Prima queste righe si cercavano nel resoconto con un elenco di parole
+        // ("niente perno", "Nessun perno"...), e bastava che il motore scrivesse
+        // il motivo con altre parole perche' sparisse. E' successo: sul fiocco di
+        // Minnie il motivo era "La faccia di taglio e' larga solo X mm", che in
+        // quell'elenco non c'era, e a schermo usciva "perno non messo" e basta -
+        // senza dire ne' perche' ne' cosa fare. Adesso il motore lo restituisce
+        // in un campo suo, e qui si legge quello.
+        const spiega = out.perno_no
+          || (out.log || []).filter((l) => /niente perno|Niente perno|Nessun perno|senza connettore/.test(l)).join('\n');
         if (!silenzioso) {
           alert('Il taglio e\' riuscito, ma NON ci ho messo perno e foro.\n\n'
-            + (spiega.length ? 'Motivo: ' + spiega.join('\n') + '\n\n' : '')
+            + (spiega ? 'Motivo: ' + spiega + '\n\n'
+                      : 'Il motivo non e\' arrivato dal motore: guarda il resoconto '
+                        + 'del pezzo, le righe di diagnostica sono li\'.\n\n')
             + 'I due pezzi combaciano lo stesso e si possono incollare. Se ti serve '
             + 'l\'aggancio, prova "Perno e foro" dal pannello del pezzo: lo mette fra '
             + 'due pezzi gia\' tagliati.');

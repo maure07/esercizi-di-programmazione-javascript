@@ -17,7 +17,7 @@ import numpy as np
 # Marcatore di versione: serve SOLO a capire, guardando il log del taglio
 # o /health, se il companion in esecuzione e' quello aggiornato (taglio
 # LOCALE alla selezione) o una copia vecchia rimasta avviata da prima.
-VERSIONE = "perni-40"
+VERSIONE = "perni-41"
 
 
 # ---------------------------------------------------------------------------
@@ -2911,9 +2911,11 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
     # modello. Prima un `max(4.0, ...)` scavalcava il limite e su una lamina da
     # 1,7 mm usciva comunque un perno da 4 mm.
     if niente_perno:
-        log.append("Nessun perno: il pezzo si incastra da solo nella sua sede.")
+        _motivo = "Nessun perno: il pezzo si incastra da solo nella sua sede."
+        log.append(_motivo)
         return {"a": _pack(np.asarray(ma.vertices), np.asarray(ma.faces)),
-                "b": _pack(np.asarray(mb.vertices), np.asarray(mb.faces)), "log": log}
+                "b": _pack(np.asarray(mb.vertices), np.asarray(mb.faces)),
+                "log": log, "perno_no": _motivo}
 
     # QUANT'E' LARGO. Il perno sporge dalla faccia di taglio del pezzo staccato:
     # non puo' essere piu' largo della faccia, e non ha senso che sia piu' grosso
@@ -2931,11 +2933,25 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
         tetto_lato = max(2.5, min(0.45 * minore, 0.45 * spessore))
         lato = float(np.clip(0.28 * minore, 2.5, tetto_lato))
     if minore < 3.0:
-        log.append(f"La faccia di taglio e' larga solo {minore:.1f} mm: non c'e' "
-                   "posto per un perno. I due pezzi combaciano comunque e si "
-                   "uniscono con la colla.")
+        # QUI NON C'E' NIENTE DA MIGLIORARE NEL PERNO: sotto i 3 mm un perno
+        # quadrato non e' stampabile con l'ugello da 0,4, e nemmeno uno stretto
+        # e lungo servirebbe - la misura che manca e' proprio la piu' corta.
+        # Quello che serve e' dire cosa fare al posto suo, e per un pezzo
+        # appoggiato (un fiocco, un orecchio, un bottone) la risposta e' il
+        # NOCCIOLO: la zona scelta diventa tutta un blocchetto che si infila
+        # nella sua sede, e di perno non ne ha bisogno.
+        _motivo = (f"La faccia di taglio e' larga solo {minore:.1f} mm: sotto i 3 mm "
+                   "un perno non ci sta, e cosi' sottile non uscirebbe nemmeno "
+                   "dalla stampante (ugello da 0,4). "
+                   "Per un pezzo appoggiato come questo usa \"A NOCCIOLO\" invece di "
+                   "\"perno e foro\": tutta la zona che hai scelto diventa un blocchetto "
+                   "che si infila nella sua sede, tiene molto meglio di un perno e non "
+                   "ha bisogno di spazio sulla faccia di taglio. "
+                   "Altrimenti sposta il taglio dove il pezzo e' piu' grosso.")
+        log.append(_motivo)
         return {"a": _pack(np.asarray(ma.vertices), np.asarray(ma.faces)),
-                "b": _pack(np.asarray(mb.vertices), np.asarray(mb.faces)), "log": log}
+                "b": _pack(np.asarray(mb.vertices), np.asarray(mb.faces)),
+                "log": log, "perno_no": _motivo}
 
     # QUANT'E' LUNGO. Segnalato dall'uso: "entrano con una minima difficolta' ma
     # sono troppo corti, quindi non danno abbastanza struttura". Giusto, e il
@@ -3004,12 +3020,14 @@ def taglia_sulla_selezione(vertices, faces, selezione, connettore=True, gioco=0.
                                 log, "resto")
     if A is None or B is None:
         quale = "il pezzo staccato" if A is None else "il resto"
-        log.append(f"Niente perno e foro: {quale} non e' un solido chiuso e non "
+        _motivo = (f"Niente perno e foro: {quale} non e' un solido chiuso e non "
                    "ci sono riuscito nemmeno riparandolo. I due pezzi combaciano "
                    "lo stesso e si uniscono con la colla; se ti serve l'aggancio, "
                    "passa da \"Ripara e solidifica\" e rifai il taglio.")
+        log.append(_motivo)
         return {"a": _pack(np.asarray(ma.vertices), np.asarray(ma.faces)),
-                "b": _pack(np.asarray(mb.vertices), np.asarray(mb.faces)), "log": log}
+                "b": _pack(np.asarray(mb.vertices), np.asarray(mb.faces)),
+                "log": log, "perno_no": _motivo}
     if _ripA or _ripB:
         log.append("Per fare perno e foro ho dovuto rimettere a posto i pezzi ("
                    + "; ".join(x for x in (_ripA, _ripB) if x) + ").")
