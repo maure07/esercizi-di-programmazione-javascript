@@ -63,6 +63,33 @@ def _passo(testo):
     print(testo, file=sys.stderr, flush=True)
 
 
+_FILTRI = None
+
+
+def _filtri_disponibili():
+    """I filtri che questa copia di MeshLab ha DAVVERO.
+
+    Non e' scontato, ed e' costato caro. MeshLab carica i filtri come plugin, e
+    un plugin che non si carica sparisce senza far rumore: qui dentro, per
+    esempio, `filter_meshing` non parte e con lui se ne va
+    `meshing_close_holes`, cioe' PROPRIO il passo che chiude i buchi.
+    Chiedendo un filtro che non c'e', pymeshlab alza un'eccezione con scritto
+    "Filter does not exists" - che finiva in una riga di log fra le altre. Il
+    risultato: il passo che chiude i buchi non veniva eseguito, il modello
+    restava aperto, e niente lo diceva. Segnalato dall'uso come "non sembra
+    chiudere bene", e aveva ragione.
+    """
+    global _FILTRI
+    if _FILTRI is None:
+        import pymeshlab
+        try:
+            _FILTRI = set(pymeshlab.filter_list())
+        except Exception:
+            # versione che non sa elencarli: si prova e basta, come prima
+            _FILTRI = set()
+    return _FILTRI
+
+
 def pulisci_meshlab(vertices, faces, merge_frac=2e-4, max_hole_edges=600, log=None):
     """Salda micro-gap, toglie degeneri/doppioni, ripara non-manifold, chiude buchi."""
     import pymeshlab
@@ -77,7 +104,24 @@ def pulisci_meshlab(vertices, faces, merge_frac=2e-4, max_hole_edges=600, log=No
     diag = _diagonal(vertices)
     n0 = ms.current_mesh().face_number()
 
+    disponibili = _filtri_disponibili()
+
+    def scegli(*nomi):
+        """Il primo nome che questa MeshLab conosce davvero.
+
+        I nomi dei filtri cambiano da una versione all'altra, e un plugin non
+        caricato li fa sparire del tutto. None = nessuno di questi c'e'.
+        """
+        if not disponibili:
+            return nomi[0]        # non so elencarli: provo il primo, come prima
+        for n in nomi:
+            if n in disponibili:
+                return n
+        return None
+
     def run(name, **kw):
+        if name is None:
+            return False
         _passo(f"   ... {name}")
         _t = time.time()
         try:
@@ -112,12 +156,39 @@ def pulisci_meshlab(vertices, faces, merge_frac=2e-4, max_hole_edges=600, log=No
     # triangoli costa 0,3 secondi. Il limite invece lasciava buchi aperti, e un
     # modello che resta aperto finisce sul ripiego a VOXEL, che su quella
     # stazza dura minuti. Meglio tappare qui, dove costa niente.
-    run("meshing_close_holes", maxholesize=int(max_hole_edges),
-        newfaceselected=False, selfintersection=False)
+    nome_buchi = scegli("meshing_close_holes", "close_holes")
+    if nome_buchi is None:
+        log.append("Questa MeshLab non ha il filtro che chiude i buchi "
+                   "(il plugin 'filter_meshing' non si e' caricato): i buchi "
+                   "li tappo con l'altro motore.")
+        _passo("   ... il filtro dei buchi qui non c'e': li tappo con trimesh")
+    buchi_chiusi = run(nome_buchi, maxholesize=int(max_hole_edges),
+                       newfaceselected=False, selfintersection=False)
 
     m = ms.current_mesh()
     V = np.asarray(m.vertex_matrix(), dtype=np.float64)
     F = np.asarray(m.face_matrix(), dtype=np.int64)
+
+    # SE MESHLAB NON HA POTUTO CHIUDERE I BUCHI, li chiude trimesh.
+    # Non e' bravo uguale - tira una membrana piatta sul giro del buco invece di
+    # seguire la curvatura - ma un buco tappato cosi' e' quello che decide se il
+    # modello si chiude o no, e il passo dopo lavora solo sui solidi chiusi.
+    # Prima, senza quel filtro, il buco restava li' e tutta la catena finiva sul
+    # "non sono riuscito a chiuderlo".
+    if not buchi_chiusi:
+        _t = time.time()
+        try:
+            mm = _to_trimesh(V, F)
+            if not mm.is_watertight:
+                mm.fill_holes()
+                V = np.asarray(mm.vertices, dtype=np.float64)
+                F = np.asarray(mm.faces, dtype=np.int64)
+                log.append(f"Buchi tappati con trimesh: {len(F)} facce")
+                _passo(f"       buchi tappati con trimesh in {time.time() - _t:.1f} s")
+        except Exception as e:
+            log.append(f"(tappatura buchi con trimesh saltata: {e})")
+            _passo(f"       tappatura con trimesh saltata ({str(e)[:50]})")
+
     log.append(f"MeshLab: {n0} -> {len(F)} facce (saldature, degeneri, non-manifold, buchi)")
     return V, F
 
@@ -206,14 +277,53 @@ def solido_esatto(vertices, faces, log=None):
     if len(bodies) == 0:
         bodies = [mesh]
 
+    # Sotto questa taglia un corpo e' una briciola (una scaglia staccata, un
+    # triangolo orfano): quelle si buttano e va bene cosi'. Sopra, e' un PEZZO
+    # del modello e non si butta in silenzio.
+    soglia_pezzo = max(50, int(0.005 * len(mesh.faces)))
+
     solidi = []
+    persi = briciole = riparati = 0
     for b in bodies:
+        mm = None
         try:
             mm = _manifold_da_mesh(b.vertices, b.faces)
-            if mm.status().name == "NoError" and mm.volume() > 0:
-                solidi.append(mm)
+            if mm.status().name != "NoError" or mm.volume() <= 0:
+                mm = None
         except Exception:
+            mm = None
+        if mm is None and len(b.faces) >= soglia_pezzo:
+            # UN PEZZO NON SI BUTTA VIA IN SILENZIO. Prima un corpo che non
+            # passava veniva scartato e basta: il modello tornava indietro senza
+            # quel pezzo, e se erano parecchi non si chiudeva piu' niente ne' si
+            # capiva perche'. Si prova la scaletta che CONSERVA i triangoli - la
+            # stessa che rimette in piedi i pezzi per il nocciolo - e solo se
+            # fallisce anche lei il pezzo resta fuori, ma scritto nel resoconto.
+            try:
+                import taglia_pro
+                mm2, _ = taglia_pro._manifold_solido(
+                    np.asarray(b.vertices), np.asarray(b.faces), [], "pezzo")
+                if mm2 is not None and mm2.status().name == "NoError" and mm2.volume() > 0:
+                    mm = mm2
+                    riparati += 1
+            except Exception:
+                mm = None
+        if mm is None:
+            if len(b.faces) >= soglia_pezzo:
+                persi += 1
+            else:
+                briciole += 1
             continue
+        solidi.append(mm)
+
+    if riparati:
+        log.append(f"{riparati} pezzi rimessi in piedi conservando i triangoli")
+    if briciole:
+        log.append(f"Briciole scartate: {briciole} (scaglie staccate, sotto {soglia_pezzo} facce)")
+    if persi:
+        log.append(f"ATTENZIONE: {persi} pezzi grossi non si sono potuti chiudere e sono "
+                   f"rimasti FUORI dal solido. Se al modello manca qualcosa, e' questo.")
+        _passo(f"   attenzione: {persi} pezzi grossi restano fuori dal solido")
     if not solidi:
         return None
 
@@ -301,6 +411,10 @@ def ripara(vertices, faces, aggressivita="auto", risoluzione_voxel=256):
     """
     log = []
     _t0 = time.time()
+    # Quanto e' costato ogni passo. Finisce nel resoconto che si legge nell'app:
+    # "un po' lenta" da solo non si puo' inseguire, il tempo va misurato sul PC
+    # di chi aspetta, non sul mio.
+    tempi = []
     V = np.asarray(vertices, dtype=np.float64)
     F = np.asarray(faces, dtype=np.int64)
     _passo(f"\n=== RIPARAZIONE di {len(F)} triangoli ===")
@@ -310,6 +424,7 @@ def ripara(vertices, faces, aggressivita="auto", risoluzione_voxel=256):
 
     if aggressivita == "voxel":
         V, F = voxel_fallback(V, F, risoluzione_voxel, log)
+        _tempi(log, tempi, _t0)
         return _risultato(V, F, log)
 
     # 1. pulizia MeshLab (sempre: e' quella che salva i micro-triangoli)
@@ -317,11 +432,13 @@ def ripara(vertices, faces, aggressivita="auto", risoluzione_voxel=256):
         _passo("-> 1 di 3: pulizia MeshLab")
         _t = time.time()
         V, F = pulisci_meshlab(V, F, log=log)
+        tempi.append(("MeshLab", time.time() - _t))
         _passo(f"   1 di 3: pulizia MeshLab: {time.time() - _t:.1f} s")
     except Exception as e:
         log.append(f"MeshLab non disponibile ({e}), proseguo")
 
     if aggressivita == "leggera":
+        _tempi(log, tempi, _t0)
         return _risultato(V, F, log)
 
     # 2. via i gusci interni
@@ -329,6 +446,7 @@ def ripara(vertices, faces, aggressivita="auto", risoluzione_voxel=256):
         _passo("-> 2 di 3: via i gusci interni")
         _t = time.time()
         V, F = togli_gusci_interni(V, F, log=log)
+        tempi.append(("gusci interni", time.time() - _t))
         _passo(f"   2 di 3: via i gusci interni: {time.time() - _t:.1f} s")
     except Exception as e:
         log.append(f"(gusci interni: {e})")
@@ -338,11 +456,13 @@ def ripara(vertices, faces, aggressivita="auto", risoluzione_voxel=256):
         _passo("-> 3 di 3: solido esatto")
         _t = time.time()
         res = solido_esatto(V, F, log=log)
+        tempi.append(("solido esatto", time.time() - _t))
         _passo(f"   3 di 3: solido esatto: {time.time() - _t:.1f} s")
         if res is not None:
             V2, F2 = res
             m2 = _to_trimesh(V2, F2)
             if m2.is_watertight and len(F2) > 0:
+                _tempi(log, tempi, _t0)
                 return _risultato(V2, F2, log)
             log.append("manifold3d non ha dato un solido chiuso, provo i voxel")
     except Exception as e:
@@ -378,6 +498,7 @@ def ripara(vertices, faces, aggressivita="auto", risoluzione_voxel=256):
                         log.append("Chiuso conservando i triangoli: niente voxel.")
                     _passo(f"   riuscito in {time.time() - _t:.1f} s, {len(F4)} facce: niente voxel")
                     _passo(f"=== FINITO in {time.time() - _t0:.1f} s ===")
+                    _tempi(log, tempi, _t0)
                     return _risultato(V4, F4, log)
         except Exception as e:
             log.append(f"(riparazione che conserva i triangoli: {e})")
@@ -404,6 +525,7 @@ def ripara(vertices, faces, aggressivita="auto", risoluzione_voxel=256):
                         log.append("Chiuso tappando i buchi rimasti: niente voxel.")
                         _passo(f"   riuscito in {time.time() - _t:.1f} s: niente voxel")
                         _passo(f"=== FINITO in {time.time() - _t0:.1f} s ===")
+                        _tempi(log, tempi, _t0)
                         return _risultato(V3, F3, log)
         except Exception as e:
             log.append(f"(tappatura buchi: {e})")
@@ -428,8 +550,10 @@ def ripara(vertices, faces, aggressivita="auto", risoluzione_voxel=256):
         _passo("-> non si chiude senza rifare la geometria: mi fermo qui e lo dico "
                "(i voxel rovinerebbero i dettagli, si chiedono a parte)")
         _passo(f"=== FINITO in {time.time() - _t0:.1f} s ===")
+        _tempi(log, tempi, _t0)
         return _risultato(V, F, log)
     _passo(f"=== FINITO in {time.time() - _t0:.1f} s ===")
+    _tempi(log, tempi, _t0)
     return _risultato(V, F, log)
 
 
@@ -438,6 +562,16 @@ def _corpi(m):
         return m.body_count
     except Exception:
         return -1
+
+
+def _tempi(log, tempi, _t0):
+    """La riga dei tempi, in fondo al resoconto.
+
+    Serve a rispondere a "e' lenta" con un numero invece che con un'idea: si
+    legge nell'app, sul PC di chi ha aspettato."""
+    if tempi:
+        log.append("Tempi: " + " \u00b7 ".join(f"{n} {s:.1f}s" for n, s in tempi)
+                   + f" \u00b7 totale {time.time() - _t0:.1f}s")
 
 
 def _risultato(V, F, log):
